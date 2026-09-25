@@ -4,7 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
   "keywords": [],
   "author": "",
@@ -23,8 +29,10 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
     "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@types/node": "26.6.2",
     "oxlint": "^1.85.0",
     "oxlint-tsgolint": "^7.0.2003",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
   }
 }
