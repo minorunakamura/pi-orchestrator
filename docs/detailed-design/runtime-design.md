@@ -1,6 +1,6 @@
 # Pi Orchestrator Runtime Design
 
-Version: 1.2
+Version: 1.3
 
 ## 1. Purpose
 
@@ -116,7 +116,25 @@ simplicity-reviewer  ponytail-reviewer
 
 Jev must not be launched as an agent.
 
-### Fresh-context policy
+### Product custom Agent vs development-time agent
+
+`workflow-scout`, `planner`, and `ponytail-reviewer` are product custom Agent definitions supplied by pi-orchestrator under `agents/`. They are not assumed to exist before the Story that introduces each definition.
+
+During development, a new Pi session may use currently available pi-subagents builtin agents as development-time helpers, for example:
+
+```text
+builtin scout
+    → read-only repository investigation
+
+builtin reviewer
+    → read-only correctness review
+```
+
+This development-time usage does not satisfy or replace the product custom Agent definitions. A generic reviewer may be used as an explicitly labeled advisory fallback, but it must not be reported as execution of `ponytail-reviewer`.
+
+The product runtime must use the configured Agent Mapping only after the corresponding custom Agent definition exists.
+
+### Product runtime fresh-context policy
 
 Default policy:
 

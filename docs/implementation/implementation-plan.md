@@ -1,6 +1,6 @@
 # Pi Orchestrator v1 Implementation Plan
 
-Version: 1.3
+Version: 1.4
 
 ## 1. Goal
 
@@ -97,6 +97,32 @@ Rules:
 - Unit tests, fake-adapter tests, and ordinary command-validation tests do not require Herdr.
 - Herdr-specific code belongs under the test/development harness, not `src/runtime/`.
 - Successful smoke runs should clean up their dedicated tab. On failure, the harness may preserve the tab and print the tab/pane/agent identity for inspection.
+
+## 2.3 Development-time Agent Policy
+
+Each Story may start in a new Pi session. Development-time repository investigation and review may use agents already available from the installed pi-subagents package.
+
+Default development-time helpers:
+
+```text
+builtin scout
+    → read-only repository investigation
+
+builtin reviewer
+    → read-only correctness review
+```
+
+The following are **product custom Agent definitions** and must not be assumed to be installed before their implementation Story:
+
+```text
+workflow-scout       → introduced by ORCH-007
+planner              → introduced by ORCH-008
+ponytail-reviewer    → introduced by ORCH-014
+```
+
+A generic reviewer is not equivalent to `ponytail-reviewer`. If a Ponytail-style advisory review is performed before `ponytail-reviewer` exists, it must be reported as a fallback/advisory review rather than as execution of the product Agent.
+
+Development-time agent usage does not change the Third-Party Modification Policy and does not count as pi-orchestrator product integration.
 
 ## 3. Phase Overview
 
@@ -472,6 +498,7 @@ Before Phase B begins:
 - persistence fault tests pass.
 - runtime ports/fakes exist.
 - no real external integration is required to test orchestration logic.
+- product custom Agents are not assumed to exist before their assigned Stories.
 
 ---
 
@@ -492,6 +519,7 @@ startWorkflow
 workflow ID creation
 task artifact
 initial state
+workflow-scout custom Agent definition
 workflow-scout execution
 pi-ketch.researcher execution according to playbook policy
 context artifact persistence
@@ -501,6 +529,7 @@ CONTEXT_READY / CLARIFICATION_REQUIRED derivation
 ### Main files
 
 ```text
+agents/workflow-scout.md
 src/runtime/orchestrator/start-workflow.ts
 src/runtime/orchestrator/planning-orchestrator.ts
 src/runtime/orchestrator/advance-workflow.ts
@@ -508,6 +537,7 @@ src/runtime/orchestrator/advance-workflow.ts
 
 ### Acceptance criteria
 
+- `agents/workflow-scout.md` exists as the pi-orchestrator product Scout definition; a development-time builtin scout is not treated as this deliverable.
 - initial state is persisted before child-agent side effects.
 - scout/research output becomes artifacts before state references are updated.
 - v1 Context Routing does not call Jev.
@@ -540,6 +570,7 @@ Implement:
 ```text
 clarification invocation
 clarification artifact
+planner custom Agent definition
 planner invocation
 plan versioning
 plan parser
@@ -552,6 +583,7 @@ Planner inputs must use explicit artifact refs.
 ### Main files
 
 ```text
+agents/planner.md
 src/runtime/orchestrator/planning-orchestrator.ts
 src/core/planning/policy.ts
 src/runtime/planning/plan-parser.ts
@@ -560,6 +592,7 @@ src/runtime/validation/contract-parser.ts
 
 ### Acceptance criteria
 
+- `agents/planner.md` exists as the pi-orchestrator product Planner definition and does not implement source code.
 - decisions requiring Human input go through ClarificationPort.
 - facts are not converted into Human product decisions.
 - plan contains Scope/Requirements, Architecture/Design where needed, Implementation Plan, and Validation Contract.
@@ -630,6 +663,7 @@ ORCH-008.
 
 ### Phase B exit criteria
 
+- `workflow-scout` and `planner` product Agent definitions exist.
 - workflow can reach `implementing` only through Human Plan Approval.
 - feedback produces a new plan version.
 - no implementation side effect exists yet.
@@ -848,11 +882,13 @@ Run the fixed v1 reviewer set and persist structured review evidence.
 
 ### Scope
 
-Implement parallel:
+Implement:
 
 ```text
-reviewer
-ponytail-reviewer
+ponytail-reviewer custom Agent definition
+parallel reviewer execution:
+  reviewer
+  ponytail-reviewer
 ```
 
 Normalize and validate ReviewFinding artifacts.
@@ -860,12 +896,15 @@ Normalize and validate ReviewFinding artifacts.
 ### Main files
 
 ```text
+agents/ponytail-reviewer.md
 src/runtime/orchestrator/review-runner.ts
 src/runtime/integrations/subagents.ts
 ```
 
 ### Acceptance criteria
 
+- `agents/ponytail-reviewer.md` exists as the pi-orchestrator product simplicity reviewer definition; a generic development-time reviewer is not treated as this deliverable.
+- Ponytail Reviewer produces structured findings only and has no Fix/State authority.
 - review runs only after validation pass.
 - both reviewers receive fresh review context.
 - reviewer set is fixed in v1; no dynamic selection.
@@ -1053,6 +1092,8 @@ Planning
 ```
 
 All retry/escalation branches are bounded.
+
+`ponytail-reviewer` product Agent definition exists and participates in the fixed v1 reviewer set.
 
 ---
 

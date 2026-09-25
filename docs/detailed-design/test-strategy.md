@@ -1,6 +1,6 @@
 # Pi Orchestrator Test Strategy
 
-Version: 1.1
+Version: 1.2
 
 ## 1. Purpose
 
@@ -104,6 +104,24 @@ parallel reviewer partial infrastructure failure
 ```
 
 Strong retry must never accidentally resume a weaker retained Worker.
+
+### Product custom Agent definition tests
+
+When each custom Agent is introduced, add agent-definition/contract tests for:
+
+```text
+workflow-scout
+planner
+ponytail-reviewer
+```
+
+Assertions should verify the role boundaries defined by the design, including:
+
+- `workflow-scout` is an evidence-gathering product Agent, not State authority.
+- `planner` produces Plan/Architecture/Validation Contract content but does not implement source code.
+- `ponytail-reviewer` produces structured review findings and has no Fix/State authority.
+- development-time builtin scout/reviewer usage is not treated as proof that the corresponding product custom Agent exists.
+- a generic reviewer fallback is never labeled as execution of `ponytail-reviewer`.
 
 ## 7. Plannotator Adapter Tests
 

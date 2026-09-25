@@ -1,6 +1,6 @@
 # Directory Structure
 
-Version: 1.0
+Version: 1.1
 
 ## 1. 目的
 
@@ -276,6 +276,14 @@ workflow-scout
 planner
 ponytail-reviewer
 ```
+
+これらは pi-orchestrator package が提供する **product custom Agent definition** であり、実装開始前から development environment に登録済みであることを前提にしない。
+
+Development-time の repository 調査や correctness review では、その時点で利用可能な pi-subagents builtin agent を使用してよい。ただし builtin agent は上記 custom Agent の実装物ではなく、product runtime の Agent Mapping を満たしたことにはならない。
+
+特に generic reviewer を `ponytail-reviewer` と同一視してはならない。代替レビューを行った場合は、その事実を development evidence として明示する。
+
+各 custom Agent definition を導入する Story は [Implementation Plan](../implementation/implementation-plan.md) を正本とする。
 
 Finding evaluator Agent は作成しない。
 
