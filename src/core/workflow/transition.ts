@@ -94,6 +94,22 @@ function clearCurrentRoundEvidence(state: WorkflowState): void {
   delete state.coding.roundDecisionRef;
 }
 
+function setContextRefs(
+  state: WorkflowState,
+  event: Extract<
+    WorkflowEvent,
+    {
+      type:
+        | "CONTEXT_EVIDENCE_PERSISTED"
+        | "CONTEXT_READY"
+        | "CLARIFICATION_REQUIRED";
+    }
+  >,
+): void {
+  if (event.scoutRef) state.planning.context.scoutRef = event.scoutRef;
+  if (event.researchRef) state.planning.context.researchRef = event.researchRef;
+}
+
 function applyTransition(
   state: WorkflowState,
   event: WorkflowEvent,
@@ -101,9 +117,19 @@ function applyTransition(
   const next = cloneState(state);
 
   switch (event.type) {
+    case "CONTEXT_EVIDENCE_PERSISTED":
+      if (state.phase !== "gathering-context") {
+        fail(
+          "CONTEXT_EVIDENCE_PERSISTED is only valid while gathering context",
+        );
+      }
+      setContextRefs(next, event);
+      return next;
+
     case "CONTEXT_READY":
       if (state.phase !== "gathering-context")
         fail("CONTEXT_READY is only valid while gathering context");
+      setContextRefs(next, event);
       next.phase = "planning";
       return next;
 
@@ -115,6 +141,7 @@ function applyTransition(
       ) {
         fail("CLARIFICATION_REQUIRED is not valid in the current phase");
       }
+      setContextRefs(next, event);
       if (isRoundDecisionRef(event.reasonRef)) {
         next.coding.roundDecisionRef = event.reasonRef;
       }

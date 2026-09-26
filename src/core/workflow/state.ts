@@ -124,8 +124,22 @@ export interface WorkflowState {
 }
 
 export type WorkflowEvent =
-  | { type: "CONTEXT_READY" }
-  | { type: "CLARIFICATION_REQUIRED"; reasonRef?: ArtifactRef }
+  | {
+      type: "CONTEXT_EVIDENCE_PERSISTED";
+      scoutRef?: ArtifactRef<"scout">;
+      researchRef?: ArtifactRef<"research">;
+    }
+  | {
+      type: "CONTEXT_READY";
+      scoutRef?: ArtifactRef<"scout">;
+      researchRef?: ArtifactRef<"research">;
+    }
+  | {
+      type: "CLARIFICATION_REQUIRED";
+      reasonRef?: ArtifactRef;
+      scoutRef?: ArtifactRef<"scout">;
+      researchRef?: ArtifactRef<"research">;
+    }
   | {
       type: "CLARIFICATION_COMPLETE";
       clarificationRef: ArtifactRef<"clarification">;
@@ -359,12 +373,36 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
   }
 
   switch (value.type) {
+    case "CONTEXT_EVIDENCE_PERSISTED":
+      return (
+        isEvent(value, ["type", "scoutRef", "researchRef"]) &&
+        optional(value, "scoutRef", (candidate) =>
+          isArtifactOfKind(candidate, "scout"),
+        ) &&
+        optional(value, "researchRef", (candidate) =>
+          isArtifactOfKind(candidate, "research"),
+        )
+      );
     case "CONTEXT_READY":
-      return isEvent(value, ["type"]);
+      return (
+        isEvent(value, ["type", "scoutRef", "researchRef"]) &&
+        optional(value, "scoutRef", (candidate) =>
+          isArtifactOfKind(candidate, "scout"),
+        ) &&
+        optional(value, "researchRef", (candidate) =>
+          isArtifactOfKind(candidate, "research"),
+        )
+      );
     case "CLARIFICATION_REQUIRED":
       return (
-        isEvent(value, ["type", "reasonRef"]) &&
-        optional(value, "reasonRef", isArtifactRef)
+        isEvent(value, ["type", "reasonRef", "scoutRef", "researchRef"]) &&
+        optional(value, "reasonRef", isArtifactRef) &&
+        optional(value, "scoutRef", (candidate) =>
+          isArtifactOfKind(candidate, "scout"),
+        ) &&
+        optional(value, "researchRef", (candidate) =>
+          isArtifactOfKind(candidate, "research"),
+        )
       );
     case "CLARIFICATION_COMPLETE":
       return (
