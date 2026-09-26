@@ -1,6 +1,6 @@
 # Pi Orchestrator Test Strategy
 
-Version: 1.2
+Version: 1.3
 
 ## 1. Purpose
 
@@ -156,6 +156,9 @@ malformed Validation Contract
 
 Assert:
 
+- `ValidationExecutor` result contains execution status/checks only and does not own `implementationRevision`
+- `ValidationRunner` attaches the exact current Workflow implementation revision to `ValidationResult`
+- no hidden Workflow State access or fabricated revision exists in the executor
 - deterministic exit-code mapping
 - Jev never decides pass/fail
 - ordinary command failure is not terminal workflow failure

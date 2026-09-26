@@ -1,6 +1,6 @@
 # Pi Orchestrator Runtime Design
 
-Version: 1.4
+Version: 1.5
 
 ## 1. Purpose
 
@@ -92,14 +92,31 @@ export interface PlannotatorGate {
   getCodeReview(reviewId: PlannotatorReviewId): Promise<CodeReviewStatus>;
 }
 
+export interface ValidationExecutionResult {
+  status: "passed" | "failed" | "infrastructure-error";
+  checks: ValidationCheckResult[];
+}
+
 export interface ValidationExecutor {
-  execute(contract: ValidationContract): Promise<ValidationResult>;
+  execute(contract: ValidationContract): Promise<ValidationExecutionResult>;
 }
 
 export interface ClarificationPort {
   request(input: ClarificationRequest): Promise<ClarificationResult>;
 }
 ```
+
+`ValidationExecutor` is intentionally unaware of Workflow State and implementation revision. It owns deterministic execution of the Validation Contract only. `validation-runner.ts`, which owns the current Workflow context, attaches `state.coding.implementationRevision` when constructing the authoritative `ValidationResult` artifact.
+
+```text
+ValidationExecutor
+    → ValidationExecutionResult (status / checks)
+
+ValidationRunner + current WorkflowState
+    → ValidationResult (implementationRevision / status / checks)
+```
+
+This prevents hidden State access or fabricated revision values inside the execution port.
 
 ## 6. pi-subagents Integration
 

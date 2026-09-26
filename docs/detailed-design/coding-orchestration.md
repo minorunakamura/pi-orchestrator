@@ -1,6 +1,6 @@
 # Coding Orchestration Detailed Design
 
-Version: 1.0
+Version: 1.1
 
 ## 1. Purpose
 
@@ -105,6 +105,11 @@ export type ValidationCheckStatus =
   | "failed"
   | "infrastructure-error";
 
+export interface ValidationExecutionResult {
+  status: "passed" | "failed" | "infrastructure-error";
+  checks: ValidationCheckResult[];
+}
+
 export interface ValidationResult {
   schemaVersion: 1;
   implementationRevision: number;
@@ -112,6 +117,21 @@ export interface ValidationResult {
   checks: ValidationCheckResult[];
 }
 ```
+
+Responsibility boundary:
+
+```text
+ValidationExecutor
+    → executes Validation Contract
+    → returns ValidationExecutionResult
+
+ValidationRunner
+    → reads current implementationRevision from Workflow State
+    → combines it with ValidationExecutionResult
+    → persists authoritative ValidationResult artifact
+```
+
+`ValidationExecutor` must not read Workflow State or invent an implementation revision.
 
 Rules:
 

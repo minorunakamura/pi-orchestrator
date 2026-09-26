@@ -1,6 +1,6 @@
 # Pi Orchestrator v1 Implementation Plan
 
-Version: 1.5
+Version: 1.6
 
 ## 1. Goal
 
@@ -853,10 +853,13 @@ Execute the Approved Plan Validation Contract and persist deterministic evidence
 Implement:
 
 ```text
+ValidationExecutor port/fake contract update
 command execution
 cwd/timeout handling
 required check aggregation
 passed/failed/infrastructure-error classification
+ValidationExecutionResult
+ValidationRunner attaches current implementationRevision
 validation artifact
 VALIDATION_PASSED
 failed-validation → Round Decision input
@@ -865,14 +868,19 @@ failed-validation → Round Decision input
 ### Main files
 
 ```text
+src/runtime/ports/validation-executor.ts
 src/runtime/orchestrator/validation-runner.ts
 src/runtime/validation/command-executor.ts
+tests/fakes/*                         # update ValidationExecutor fake contract as needed
 ```
 
 ### Acceptance criteria
 
 - commands come from the approved plan's parsed Validation Contract.
 - configuration cannot silently add/remove task-specific checks.
+- `ValidationExecutor` returns execution status/checks only and has no hidden Workflow State dependency.
+- `ValidationRunner` attaches the exact current `implementationRevision` when constructing `ValidationResult`.
+- existing ORCH-006 port/fakes are updated to the finalized contract; no revision is fabricated inside the executor.
 - exit code determines command pass/fail deterministically.
 - infrastructure error is distinct from test/build/lint failure.
 - validation failure never directly emits `RETRY_REQUIRED` without Round Decision policy.
@@ -880,6 +888,8 @@ src/runtime/validation/command-executor.ts
 
 ### Tests
 
+- executor result contains no implementation revision.
+- runner binds the current implementation revision to the persisted ValidationResult.
 - all checks pass.
 - required check fails.
 - optional/non-required semantics if supported by contract.
