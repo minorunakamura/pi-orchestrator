@@ -313,11 +313,37 @@ export function isValidationCheckResult(
   );
 }
 
-export interface ValidationResult {
+export interface ValidationExecutionResult {
+  status: ValidationCheckStatus;
+  checks: ValidationCheckResult[];
+}
+
+export function isValidationExecutionResult(
+  value: unknown,
+): value is ValidationExecutionResult {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["status", "checks"]) &&
+    isOneOf(validationCheckStatuses, value.status) &&
+    Array.isArray(value.checks) &&
+    value.checks.length > 0 &&
+    value.checks.every(isValidationCheckResult)
+  );
+}
+
+export function parseValidationExecutionResult(
+  value: unknown,
+): ValidationExecutionResult {
+  return parseSchema(
+    value,
+    isValidationExecutionResult,
+    "ValidationExecutionResult",
+  );
+}
+
+export interface ValidationResult extends ValidationExecutionResult {
   schemaVersion: 1;
   implementationRevision: number;
-  status: "passed" | "failed" | "infrastructure-error";
-  checks: ValidationCheckResult[];
 }
 
 export function isValidationResult(value: unknown): value is ValidationResult {

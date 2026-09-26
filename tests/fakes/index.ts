@@ -29,7 +29,7 @@ import {
 import type { SubagentRunId, PlannotatorReviewId } from "../../src/types.ts";
 import type {
   ValidationContract,
-  ValidationResult,
+  ValidationExecutionResult,
 } from "../../src/core/decisions/types.ts";
 
 export type FakeOutcome<T> =
@@ -224,7 +224,7 @@ export class FakePlannotatorGate implements PlannotatorGate {
 }
 
 export interface FakeValidationExecutorOptions {
-  execute?: FakeSequence<ValidationResult>;
+  execute?: FakeSequence<ValidationExecutionResult>;
 }
 
 export class FakeValidationExecutor implements ValidationExecutor {
@@ -232,7 +232,7 @@ export class FakeValidationExecutor implements ValidationExecutor {
 
   constructor(private readonly outcomes: FakeValidationExecutorOptions = {}) {}
 
-  execute(contract: ValidationContract): Promise<ValidationResult> {
+  execute(contract: ValidationContract): Promise<ValidationExecutionResult> {
     this.calls.push(contract);
     return resolve(
       "ValidationExecutor.execute",

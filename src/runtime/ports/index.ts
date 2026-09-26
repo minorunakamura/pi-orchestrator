@@ -31,7 +31,10 @@ export {
   type PlanReviewStatus,
   type PlannotatorGate,
 } from "./plannotator-gate.ts";
-export { type ValidationExecutor } from "./validation-executor.ts";
+export {
+  type ValidationExecutor,
+  type ValidationExecutionResult,
+} from "./validation-executor.ts";
 export {
   type ClarificationPort,
   type ClarificationRequest,

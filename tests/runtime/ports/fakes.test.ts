@@ -311,8 +311,6 @@ describe("fake runtime ports", () => {
 
   test("keeps validation outcomes deterministic and allows clarification failures", async () => {
     const validation = {
-      schemaVersion: 1 as const,
-      implementationRevision: 1,
       status: "failed" as const,
       checks: [{ id: "tests", status: "failed" as const, exitCode: 1 }],
     };
