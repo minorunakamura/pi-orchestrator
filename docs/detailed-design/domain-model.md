@@ -111,6 +111,9 @@ export interface PlanningState {
     clarificationRef?: ArtifactRef<"clarification">;
   };
 
+  // Resolved Playbook policy; keeps Architecture / Design requirements stable across resume.
+  architectureRequired?: boolean;
+
   currentPlanRef?: ArtifactRef<"plan">;
   currentPlanVersion: number;
 

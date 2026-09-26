@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
   playbookKinds,
+  resolvePlaybookPolicy,
   type PlaybookContext,
 } from "../../core/playbooks/policy.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
@@ -97,6 +98,9 @@ export async function startWorkflow(
     taskRef,
     planning: {
       context: {},
+      architectureRequired:
+        resolvePlaybookPolicy(input.playbook, input.context).architecture ===
+        "required",
       currentPlanVersion: 0,
     },
     coding: {

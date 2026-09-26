@@ -229,14 +229,19 @@ export function isValidationCheck(value: unknown): value is ValidationCheck {
 export function isValidationContract(
   value: unknown,
 ): value is ValidationContract {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, ["schemaVersion", "checks"]) &&
-    isSchemaVersion(value.schemaVersion) &&
-    Array.isArray(value.checks) &&
-    value.checks.length > 0 &&
-    value.checks.every(isValidationCheck)
-  );
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["schemaVersion", "checks"]) ||
+    !isSchemaVersion(value.schemaVersion) ||
+    !Array.isArray(value.checks) ||
+    value.checks.length === 0 ||
+    !value.checks.every(isValidationCheck)
+  ) {
+    return false;
+  }
+
+  const ids = value.checks.map((check) => check.id);
+  return new Set(ids).size === ids.length;
 }
 
 export function parseValidationContract(value: unknown): ValidationContract {

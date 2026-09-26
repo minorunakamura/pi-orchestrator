@@ -66,6 +66,8 @@ export interface PlanningState {
     researchRef?: ArtifactRef<"research">;
     clarificationRef?: ArtifactRef<"clarification">;
   };
+  /** Resolved at workflow start so plan parsing cannot silently change policy. */
+  architectureRequired?: boolean;
   currentPlanRef?: ArtifactRef<"plan">;
   currentPlanVersion: number;
   approvedPlanRef?: ArtifactRef<"plan">;
@@ -207,12 +209,18 @@ function isPlanningState(value: unknown): value is PlanningState {
     !isRecord(value) ||
     !hasOnlyKeys(value, [
       "context",
+      "architectureRequired",
       "currentPlanRef",
       "currentPlanVersion",
       "approvedPlanRef",
       "approvedPlanVersion",
       "latestPlanReviewRef",
     ]) ||
+    !optional(
+      value,
+      "architectureRequired",
+      (candidate) => typeof candidate === "boolean",
+    ) ||
     !isNonNegativeInteger(value.currentPlanVersion) ||
     !optional(value, "currentPlanRef", (candidate) =>
       isArtifactOfKind(candidate, "plan"),

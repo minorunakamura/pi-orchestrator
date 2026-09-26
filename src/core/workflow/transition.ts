@@ -166,6 +166,7 @@ function applyTransition(
       }
       next.planning.currentPlanRef = event.planRef;
       next.planning.currentPlanVersion = event.version;
+      delete next.planning.latestPlanReviewRef;
       invalidatePlan(next);
       next.phase = "awaiting-plan-review";
       return next;
@@ -199,6 +200,7 @@ function applyTransition(
         fail("REPLAN_REQUIRED is only valid while validating or reviewing");
       }
       next.coding.roundDecisionRef = event.decisionRef;
+      delete next.planning.latestPlanReviewRef;
       invalidatePlan(next);
       next.phase = "planning";
       return next;
