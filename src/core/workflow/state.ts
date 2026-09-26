@@ -204,6 +204,7 @@ export type WorkflowEvent =
       type: "STRONGER_RETRY_REQUIRED";
       decisionRef: ArtifactRef<"round-decision">;
       findingsRef?: ArtifactRef<"accepted-findings">;
+      executionRoutingRef?: ArtifactRef<"execution-routing">;
     }
   | { type: "REVIEW_COMPLETE"; decisionRef: ArtifactRef<"round-decision"> }
   | { type: "CODE_APPROVED"; reviewRef: ArtifactRef<"code-review"> }
@@ -538,12 +539,27 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
         )
       );
     case "REVIEW_RETRY_REQUIRED":
-    case "STRONGER_RETRY_REQUIRED":
       return (
         isEvent(value, ["type", "decisionRef", "findingsRef"]) &&
         isArtifactOfKind(value.decisionRef, "round-decision") &&
         optional(value, "findingsRef", (candidate) =>
           isArtifactOfKind(candidate, "accepted-findings"),
+        )
+      );
+    case "STRONGER_RETRY_REQUIRED":
+      return (
+        isEvent(value, [
+          "type",
+          "decisionRef",
+          "findingsRef",
+          "executionRoutingRef",
+        ]) &&
+        isArtifactOfKind(value.decisionRef, "round-decision") &&
+        optional(value, "findingsRef", (candidate) =>
+          isArtifactOfKind(candidate, "accepted-findings"),
+        ) &&
+        optional(value, "executionRoutingRef", (candidate) =>
+          isArtifactOfKind(candidate, "execution-routing"),
         )
       );
     case "REVIEW_COMPLETE":

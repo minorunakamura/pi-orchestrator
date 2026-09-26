@@ -580,7 +580,8 @@ async function blockAndThrow(
   reason:
     | "integration-unavailable"
     | "agent-infrastructure-unavailable"
-    | "agent-execution-ambiguous",
+    | "agent-execution-ambiguous"
+    | "retry-budget-exhausted",
   stateStore: WorkflowStateWriter,
   error: unknown,
 ): Promise<never> {
@@ -595,6 +596,20 @@ export class CodingOrchestrator {
   async execute(input: CodingEntryInput): Promise<CodingExecutionResult> {
     const store = requireArtifactStore(this.dependencies.artifactStore);
     const approvedPlanRef = requireApprovedPlan(input.state);
+    if (
+      input.state.phase === "implementing" &&
+      input.state.counters.automatedFixRoundsUsed >=
+        this.dependencies.configuration.retries.maxAutomatedFixRounds
+    ) {
+      return blockAndThrow(
+        input.state,
+        "retry-budget-exhausted",
+        this.dependencies.stateStore,
+        new CodingOrchestrationError(
+          "Automated retry budget is exhausted before Worker launch",
+        ),
+      );
+    }
     const planContent = await readAuthoritativeText(
       store,
       approvedPlanRef,

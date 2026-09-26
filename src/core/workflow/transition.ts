@@ -289,6 +289,9 @@ function applyTransition(
         );
       }
       requireImplementation(state);
+      if (event.executionRoutingRef) {
+        next.coding.executionRoutingRef = event.executionRoutingRef;
+      }
       beginFix(next, event.decisionRef, event.findingsRef, true);
       return next;
 

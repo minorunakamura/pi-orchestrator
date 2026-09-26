@@ -234,6 +234,27 @@ describe("CodingOrchestrator ORCH-012", () => {
     ).resolves.toContain("implemented");
   });
 
+  test("blocks before Worker when a new automated retry would exceed the budget", async () => {
+    const started = await makeApproved();
+    const exhausted = structuredClone(started.state);
+    exhausted.counters.automatedFixRoundsUsed =
+      configuration.retries.maxAutomatedFixRounds;
+    const worker = new FakeSubagentExecutor({
+      run: succeeded("should not run"),
+    });
+
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: worker }),
+      ).execute({ state: exhausted }),
+    ).rejects.toThrow(/retry budget/i);
+
+    expect(worker.calls.run).toHaveLength(0);
+    const persisted = await persistedState(started.runDirectory);
+    expect(persisted.phase).toBe("blocked");
+    expect(persisted.block?.reason).toBe("retry-budget-exhausted");
+  });
+
   test("does not launch Jev or Worker without a current approved plan artifact", async () => {
     const started = await makeApproved();
     const jev = new FakeJevDecisionClient({

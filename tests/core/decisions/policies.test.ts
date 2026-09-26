@@ -18,7 +18,11 @@ import {
   isDecisionFreshness,
   type DecisionFreshnessExpectation,
 } from "../../../src/core/decisions/decision-freshness.ts";
-import { decideRound } from "../../../src/core/decisions/round-decision.ts";
+import {
+  decideRound,
+  routeRoundDecision,
+  strongerExecutionProfile,
+} from "../../../src/core/decisions/round-decision.ts";
 import type {
   Decision,
   ModelTier,
@@ -370,6 +374,187 @@ describe("round decision", () => {
       confidence: 0.95,
       escalationReason: "human-decision",
     });
+  });
+});
+
+describe("round routing and retry budgets", () => {
+  const decisionRef: ArtifactRef<"round-decision"> = {
+    kind: "round-decision",
+    path: "reviews/round-decision-1.json",
+    schemaVersion: 1,
+    sha256: "d".repeat(64),
+  };
+  const validationRef: ArtifactRef<"validation"> = {
+    kind: "validation",
+    path: "validation/validation-1.json",
+    schemaVersion: 1,
+    sha256: "e".repeat(64),
+  };
+  const findingsRef: ArtifactRef<"accepted-findings"> = {
+    kind: "accepted-findings",
+    path: "reviews/accepted-findings-1.json",
+    schemaVersion: 1,
+    sha256: "f".repeat(64),
+  };
+  const retries = { maxAutomatedFixRounds: 3, maxStrongerRetries: 1 };
+
+  test.each([
+    ["ECONOMY", "LOW", "STANDARD", "MEDIUM"],
+    ["STANDARD", "MEDIUM", "STRONG", "HIGH"],
+    ["STRONG", "HIGH", "STRONG", "HIGH"],
+  ] as const)(
+    "calculates monotonic stronger profile from %s + %s",
+    (modelTier, reasoningTier, expectedModelTier, expectedReasoningTier) => {
+      expect(strongerExecutionProfile({ modelTier, reasoningTier })).toEqual({
+        modelTier: expectedModelTier,
+        reasoningTier: expectedReasoningTier,
+      });
+    },
+  );
+
+  test("routes a validation retry while max-1 budget remains", () => {
+    expect(
+      routeRoundDecision({
+        phase: "validating",
+        counters: {
+          automatedFixRoundsUsed: 2,
+          strongerRetriesUsed: 0,
+          humanCodeFeedbackRounds: 0,
+        },
+        retries,
+        decision: { decision: "RETRY", confidence: 0.95 },
+        decisionRef,
+        validationRef,
+      }),
+    ).toEqual({
+      type: "RETRY_REQUIRED",
+      decisionRef,
+      validationRef,
+    });
+  });
+
+  test("blocks the next automated retry at the exact max budget", () => {
+    expect(
+      routeRoundDecision({
+        phase: "validating",
+        counters: {
+          automatedFixRoundsUsed: 3,
+          strongerRetriesUsed: 0,
+          humanCodeFeedbackRounds: 0,
+        },
+        retries,
+        decision: { decision: "RETRY", confidence: 0.95 },
+        decisionRef,
+        validationRef,
+      }),
+    ).toEqual({
+      type: "BLOCK",
+      reason: "retry-budget-exhausted",
+      evidenceRef: decisionRef,
+    });
+  });
+
+  test("requires both budgets for a stronger retry", () => {
+    expect(
+      routeRoundDecision({
+        phase: "reviewing",
+        counters: {
+          automatedFixRoundsUsed: 2,
+          strongerRetriesUsed: 0,
+          humanCodeFeedbackRounds: 4,
+        },
+        retries,
+        decision: {
+          decision: "ESCALATE",
+          confidence: 0.95,
+          escalationReason: "implementation-capability",
+        },
+        decisionRef,
+        findingsRef,
+      }),
+    ).toEqual({
+      type: "STRONGER_RETRY_REQUIRED",
+      decisionRef,
+      findingsRef,
+    });
+
+    expect(
+      routeRoundDecision({
+        phase: "reviewing",
+        counters: {
+          automatedFixRoundsUsed: 2,
+          strongerRetriesUsed: 1,
+          humanCodeFeedbackRounds: 4,
+        },
+        retries,
+        decision: {
+          decision: "ESCALATE",
+          confidence: 0.95,
+          escalationReason: "implementation-capability",
+        },
+        decisionRef,
+        findingsRef,
+      }),
+    ).toEqual({
+      type: "BLOCK",
+      reason: "retry-budget-exhausted",
+      evidenceRef: decisionRef,
+    });
+  });
+
+  test("blocks stronger escalation when already at STRONG + HIGH", () => {
+    expect(
+      routeRoundDecision({
+        phase: "reviewing",
+        counters: {
+          automatedFixRoundsUsed: 0,
+          strongerRetriesUsed: 0,
+          humanCodeFeedbackRounds: 0,
+        },
+        retries,
+        currentProfile: { modelTier: "STRONG", reasoningTier: "HIGH" },
+        decision: {
+          decision: "ESCALATE",
+          confidence: 0.95,
+          escalationReason: "implementation-capability",
+        },
+        decisionRef,
+      }),
+    ).toEqual({
+      type: "BLOCK",
+      reason: "stronger-profile-unavailable",
+      evidenceRef: decisionRef,
+    });
+  });
+
+  test.each([
+    ["plan-conflict", "REPLAN_REQUIRED"],
+    ["human-decision", "CLARIFICATION_REQUIRED"],
+    ["uncertain", "CLARIFICATION_REQUIRED"],
+  ] as const)("routes %s without silently continuing", (reason, type) => {
+    const event = routeRoundDecision({
+      phase: "reviewing",
+      counters: {
+        automatedFixRoundsUsed: 0,
+        strongerRetriesUsed: 0,
+        humanCodeFeedbackRounds: 0,
+      },
+      retries,
+      decision: {
+        decision: "ESCALATE",
+        confidence: 0.95,
+        escalationReason: reason,
+      },
+      decisionRef,
+    });
+    expect(event.type).toBe(type);
+    if ("reasonRef" in event) {
+      expect(event.reasonRef).toEqual(decisionRef);
+    } else {
+      expect("decisionRef" in event).toBe(true);
+      if ("decisionRef" in event)
+        expect(event.decisionRef).toEqual(decisionRef);
+    }
   });
 });
 

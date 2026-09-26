@@ -13,9 +13,11 @@ import {
   isFindingEvaluation,
   isFindingEvaluationArtifact,
   isRoundDecision,
+  isRoundDecisionArtifact,
   parseExecutionRoutingDecision,
   parseFindingEvaluation,
   parseRoundDecision,
+  parseRoundDecisionArtifact,
   parseValidationContract,
   parseValidationResult,
 } from "../../src/core/decisions/types.ts";
@@ -237,6 +239,14 @@ test("validates decision and validation contracts at runtime", () => {
     confidence: 0.9,
     reason: "accepted-blocking-findings",
   } as const;
+  const roundArtifact = {
+    schemaVersion: 1,
+    round: 1,
+    planVersion: 1,
+    implementationRevision: 1,
+    approvedPlanRef: planRef,
+    ...round,
+  } as const;
   const contract = {
     schemaVersion: 1,
     checks: [
@@ -263,6 +273,8 @@ test("validates decision and validation contracts at runtime", () => {
   expect(parseExecutionRoutingDecision(routing)).toEqual(routing);
   expect(parseFindingEvaluation(evaluation)).toEqual(evaluation);
   expect(parseRoundDecision(round)).toEqual(round);
+  expect(isRoundDecisionArtifact(roundArtifact)).toBe(true);
+  expect(parseRoundDecisionArtifact(roundArtifact)).toEqual(roundArtifact);
   expect(parseValidationContract(contract)).toEqual(contract);
   expect(parseValidationResult(result)).toEqual(result);
   expect(isRoundDecision({ ...round, confidence: 2 })).toBe(false);

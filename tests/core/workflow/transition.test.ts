@@ -262,9 +262,16 @@ test("routes coding clarification and review escalation events", () => {
   state = apply(state, {
     type: "STRONGER_RETRY_REQUIRED",
     decisionRef,
+    executionRoutingRef: ref(
+      "execution-routing",
+      "decisions/execution-routing-stronger.json",
+    ),
   });
   expect(state.phase).toBe("fixing");
   expect(state.counters.strongerRetriesUsed).toBe(1);
+  expect(state.coding.executionRoutingRef?.path).toBe(
+    "decisions/execution-routing-stronger.json",
+  );
 
   state = reviewingState();
   state = apply(state, { type: "REPLAN_REQUIRED", decisionRef });

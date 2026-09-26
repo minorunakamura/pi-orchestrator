@@ -328,6 +328,58 @@ export function parseRoundDecision(value: unknown): RoundDecision {
   return parseSchema(value, isRoundDecision, "RoundDecision");
 }
 
+export type RoundDecisionArtifact = {
+  schemaVersion: 1;
+  round: number;
+  planVersion: number;
+  implementationRevision: number;
+  approvedPlanRef: ArtifactRef<"plan">;
+} & RoundDecision;
+
+export function isRoundDecisionArtifact(
+  value: unknown,
+): value is RoundDecisionArtifact {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "schemaVersion",
+      "round",
+      "planVersion",
+      "implementationRevision",
+      "approvedPlanRef",
+      "decision",
+      "confidence",
+      "reason",
+      "escalationReason",
+    ]) ||
+    !isSchemaVersion(value.schemaVersion) ||
+    !isNonNegativeInteger(value.round) ||
+    value.round <= 0 ||
+    !isNonNegativeInteger(value.planVersion) ||
+    value.planVersion <= 0 ||
+    !isNonNegativeInteger(value.implementationRevision) ||
+    !isArtifactRef(value.approvedPlanRef) ||
+    value.approvedPlanRef.kind !== "plan"
+  ) {
+    return false;
+  }
+
+  return isRoundDecision({
+    decision: value.decision,
+    confidence: value.confidence,
+    ...(value.reason === undefined ? {} : { reason: value.reason }),
+    ...(value.escalationReason === undefined
+      ? {}
+      : { escalationReason: value.escalationReason }),
+  });
+}
+
+export function parseRoundDecisionArtifact(
+  value: unknown,
+): RoundDecisionArtifact {
+  return parseSchema(value, isRoundDecisionArtifact, "RoundDecisionArtifact");
+}
+
 export interface ValidationContract {
   schemaVersion: 1;
   checks: ValidationCheck[];
