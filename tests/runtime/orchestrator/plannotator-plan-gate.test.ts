@@ -252,6 +252,17 @@ describe("ORCH-009 Plannotator plan gate", () => {
       started.stateStore,
     );
     const second = await firstOrchestrator.createPlan({ state: planning });
+    second.state = await started.stateStore.saveState(
+      {
+        ...second.state,
+        planning: {
+          ...second.state.planning,
+          planReview: { reviewId, planRef: second.planRef, planVersion: 2 },
+        },
+        external: { "plannotator.plan-review.v2": reviewId },
+      },
+      second.state.stateRevision,
+    );
     const gate = new FakePlannotatorGate({
       getPlanReview: {
         type: "result",
@@ -332,7 +343,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
       reviewId,
     });
     const second = await orchestrator.reconcilePlanReview({
-      state: created.state,
+      state: first.state,
       reviewId,
     });
 
@@ -426,6 +437,10 @@ describe("ORCH-009 Plannotator plan gate", () => {
     }).createPlan({ state: started.state });
     const expectedRef = planRef();
     const gate = new FakePlannotatorGate({
+      openPlanReview: {
+        type: "result",
+        value: { reviewId, planRef: expectedRef, planVersion: 1 },
+      },
       getPlanReview: {
         type: "result",
         value: {
@@ -436,6 +451,12 @@ describe("ORCH-009 Plannotator plan gate", () => {
         },
       },
     });
+    const opened = await new PlanningOrchestrator({
+      artifactStore: started.artifactStore,
+      stateStore: started.stateStore,
+      subagentExecutor: executor,
+      plannotatorGate: gate,
+    }).openPlanReview({ state: created.state });
     const orchestrator = new PlanningOrchestrator({
       artifactStore: {
         writeText: async () => {
@@ -448,7 +469,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
     });
 
     await expect(
-      orchestrator.reconcilePlanReview({ state: created.state, reviewId }),
+      orchestrator.reconcilePlanReview({ state: opened.state, reviewId }),
     ).rejects.toThrow("disk full");
     expect(
       (await new StateStore(join(root, "workflow-1")).loadState()).phase,

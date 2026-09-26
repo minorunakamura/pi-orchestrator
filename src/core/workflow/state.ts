@@ -1,4 +1,9 @@
-import type { PlaybookKind, SubagentRunId, WorkflowId } from "../../types.ts";
+import type {
+  PlaybookKind,
+  PlannotatorReviewId,
+  SubagentRunId,
+  WorkflowId,
+} from "../../types.ts";
 import type { ArtifactRef } from "../artifacts/references.ts";
 import { isArtifactRef } from "../artifacts/references.ts";
 import {
@@ -60,14 +65,23 @@ export const failureReasons: readonly FailureReason[] = [
   "persistence-consistency-failure",
 ];
 
+export interface PlanReviewBinding {
+  reviewId: PlannotatorReviewId;
+  planRef: ArtifactRef<"plan">;
+  planVersion: number;
+}
+
 export interface PlanningState {
   context: {
     scoutRef?: ArtifactRef<"scout">;
     researchRef?: ArtifactRef<"research">;
     clarificationRef?: ArtifactRef<"clarification">;
   };
-  /** Resolved at workflow start so plan parsing cannot silently change policy. */
+  /** Resolved and persisted before the first child. Missing legacy policy fails closed. */
+  researchRequired?: boolean;
+  clarificationRequired?: boolean;
   architectureRequired?: boolean;
+  planReview?: PlanReviewBinding;
   currentPlanRef?: ArtifactRef<"plan">;
   currentPlanVersion: number;
   approvedPlanRef?: ArtifactRef<"plan">;
@@ -147,7 +161,12 @@ export type WorkflowEvent =
       clarificationRef: ArtifactRef<"clarification">;
     }
   | { type: "PLAN_CREATED"; planRef: ArtifactRef<"plan">; version: number }
-  | { type: "PLAN_APPROVED"; planRef: ArtifactRef<"plan">; version: number }
+  | {
+      type: "PLAN_APPROVED";
+      planRef: ArtifactRef<"plan">;
+      version: number;
+      reviewRef: ArtifactRef<"plan-review">;
+    }
   | { type: "PLAN_FEEDBACK"; feedbackRef: ArtifactRef<"plan-review"> }
   | { type: "REPLAN_REQUIRED"; decisionRef: ArtifactRef<"round-decision"> }
   | {
@@ -204,23 +223,43 @@ function isExternalIdentities(value: unknown): value is ExternalIdentities {
   );
 }
 
+export function isPlanReviewBinding(
+  value: unknown,
+): value is PlanReviewBinding {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["reviewId", "planRef", "planVersion"]) &&
+    isNonEmptyString(value.reviewId) &&
+    isArtifactOfKind(value.planRef, "plan") &&
+    Number.isSafeInteger(value.planVersion) &&
+    typeof value.planVersion === "number" &&
+    value.planVersion > 0
+  );
+}
+
 function isPlanningState(value: unknown): value is PlanningState {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, [
       "context",
       "architectureRequired",
+      "researchRequired",
+      "clarificationRequired",
+      "planReview",
       "currentPlanRef",
       "currentPlanVersion",
       "approvedPlanRef",
       "approvedPlanVersion",
       "latestPlanReviewRef",
     ]) ||
-    !optional(
-      value,
+    ![
       "architectureRequired",
-      (candidate) => typeof candidate === "boolean",
+      "researchRequired",
+      "clarificationRequired",
+    ].every((key) =>
+      optional(value, key, (candidate) => typeof candidate === "boolean"),
     ) ||
+    !optional(value, "planReview", isPlanReviewBinding) ||
     !isNonNegativeInteger(value.currentPlanVersion) ||
     !optional(value, "currentPlanRef", (candidate) =>
       isArtifactOfKind(candidate, "plan"),
@@ -418,11 +457,17 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
         isArtifactOfKind(value.clarificationRef, "clarification")
       );
     case "PLAN_CREATED":
-    case "PLAN_APPROVED":
       return (
         isEvent(value, ["type", "planRef", "version"]) &&
         isArtifactOfKind(value.planRef, "plan") &&
         isNonNegativeInteger(value.version)
+      );
+    case "PLAN_APPROVED":
+      return (
+        isEvent(value, ["type", "planRef", "version", "reviewRef"]) &&
+        isArtifactOfKind(value.planRef, "plan") &&
+        isNonNegativeInteger(value.version) &&
+        isArtifactOfKind(value.reviewRef, "plan-review")
       );
     case "PLAN_FEEDBACK":
       return (

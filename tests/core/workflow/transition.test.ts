@@ -52,6 +52,7 @@ function apply(state: WorkflowState, event: WorkflowEvent): WorkflowState {
 
 const planRef = ref("plan", "plans/plan-v1.md");
 const planV2Ref = ref("plan", "plans/plan-v2.md");
+const reviewRef = ref("plan-review", "plan-reviews/review-1.md");
 const routingRef = ref(
   "execution-routing",
   "decisions/execution-routing-1.json",
@@ -72,7 +73,12 @@ const reconciliationRef = ref("reconciliation", "reconciliation/1.json");
 function approvedState(): WorkflowState {
   let state = apply(initialState(), { type: "CONTEXT_READY" });
   state = apply(state, { type: "PLAN_CREATED", planRef, version: 1 });
-  return apply(state, { type: "PLAN_APPROVED", planRef, version: 1 });
+  return apply(state, {
+    type: "PLAN_APPROVED",
+    planRef,
+    version: 1,
+    reviewRef,
+  });
 }
 
 function validatingState(): WorkflowState {
@@ -162,6 +168,7 @@ test("requires PLAN_APPROVED to match the current plan and version", () => {
   });
   const result = transition(awaitingReview, {
     type: "PLAN_APPROVED",
+    reviewRef,
     planRef: planV2Ref,
     version: 2,
   });
@@ -173,7 +180,12 @@ test("requires PLAN_APPROVED to match the current plan and version", () => {
 test("requires sequential plan versions and invalidates old authority", () => {
   let state = apply(initialState(), { type: "CONTEXT_READY" });
   state = apply(state, { type: "PLAN_CREATED", planRef, version: 1 });
-  state = apply(state, { type: "PLAN_APPROVED", planRef, version: 1 });
+  state = apply(state, {
+    type: "PLAN_APPROVED",
+    planRef,
+    version: 1,
+    reviewRef,
+  });
   state = apply(state, { type: "EXECUTION_ROUTED", decisionRef: routingRef });
   state = apply(state, {
     type: "IMPLEMENTATION_COMPLETE",
@@ -196,6 +208,7 @@ test("requires sequential plan versions and invalidates old authority", () => {
   });
   state = apply(state, {
     type: "PLAN_APPROVED",
+    reviewRef,
     planRef: planV2Ref,
     version: 2,
   });
@@ -345,7 +358,8 @@ test("reaches terminal failed but never changes a terminal state", () => {
 test("rejects invalid events and structurally invalid states", () => {
   const state = initialState();
   expect(
-    transition(state, { type: "PLAN_APPROVED", planRef, version: 1 }).ok,
+    transition(state, { type: "PLAN_APPROVED", planRef, version: 1, reviewRef })
+      .ok,
   ).toBe(false);
   expect(() => assertStateInvariants({ ...state, phase: "blocked" })).toThrow();
 });

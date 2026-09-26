@@ -1,16 +1,13 @@
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { PlannotatorReviewId } from "../../types.ts";
+import type { PlanReviewBinding } from "../../core/workflow/state.ts";
 
 export interface PlanReviewRequest {
   planRef: ArtifactRef<"plan">;
   planVersion: number;
 }
 
-export interface PlanReviewHandle {
-  reviewId: PlannotatorReviewId;
-  planRef: ArtifactRef<"plan">;
-  planVersion: number;
-}
+export type PlanReviewHandle = PlanReviewBinding;
 
 export type PlanReviewStatus =
   | (PlanReviewHandle & { status: "pending" })
@@ -47,7 +44,7 @@ export interface PlannotatorGate {
   openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle>;
   getPlanReview(
     reviewId: PlannotatorReviewId,
-    expected?: PlanReviewRequest,
+    persistedBinding?: PlanReviewHandle,
   ): Promise<PlanReviewStatus>;
   openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle>;
   getCodeReview(reviewId: PlannotatorReviewId): Promise<CodeReviewStatus>;

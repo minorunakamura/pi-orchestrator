@@ -194,7 +194,7 @@ export class FakePlannotatorGate implements PlannotatorGate {
 
   getPlanReview(
     reviewId: PlannotatorReviewId,
-    _expected?: PlanReviewRequest,
+    _persistedBinding?: PlanReviewHandle,
   ): Promise<PlanReviewStatus> {
     this.calls.getPlanReview.push(reviewId);
     return resolve(

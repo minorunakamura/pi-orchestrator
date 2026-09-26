@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { PlannotatorReviewId } from "../../types.ts";
+import { isPlanReviewBinding } from "../../core/workflow/state.ts";
+import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import {
   RuntimePortError,
   type PlanReviewHandle,
@@ -231,28 +233,34 @@ export class PlannotatorIntegration implements PlannotatorGate {
 
   async getPlanReview(
     reviewId: PlannotatorReviewId,
-    expected?: PlanReviewRequest,
+    persistedBinding?: PlanReviewHandle,
   ): Promise<PlanReviewStatus> {
-    const handle =
-      this.reviews.get(reviewKey(reviewId)) ??
-      (expected
-        ? {
-            reviewId,
-            planRef: expected.planRef,
-            planVersion: expected.planVersion,
-          }
-        : undefined);
-    const result = parsePlanReviewStatusResult(
-      await this.request("review-status", { reviewId }),
-      reviewId,
-    );
+    const cached = this.reviews.get(reviewKey(reviewId));
+    if (
+      persistedBinding !== undefined &&
+      (!isPlanReviewBinding(persistedBinding) ||
+        persistedBinding.reviewId !== reviewId ||
+        (cached &&
+          (cached.planVersion !== persistedBinding.planVersion ||
+            !sameArtifactRef(cached.planRef, persistedBinding.planRef))))
+    ) {
+      throw new RuntimePortError(
+        "reconciliation",
+        "Persisted plan review binding does not match the review identity",
+      );
+    }
+    const handle = cached ?? persistedBinding;
     if (!handle) {
       return {
         reviewId,
         status: "unknown",
-        reason: "The review identity is not available in this adapter instance",
+        reason: "No exact plan review binding is available",
       };
     }
+    const result = parsePlanReviewStatusResult(
+      await this.request("review-status", { reviewId }),
+      reviewId,
+    );
     if (result.status === "pending") return { ...handle, status: "pending" };
     if (result.status === "missing") {
       return {

@@ -94,7 +94,7 @@ describe("PlannotatorIntegration", () => {
     });
   });
 
-  test("reconciles with a current plan binding after the adapter is recreated", async () => {
+  test("reconciles with an exact persisted review binding after the adapter is recreated", async () => {
     const events = new FakeEventBus([
       {
         status: "handled",
@@ -111,13 +111,63 @@ describe("PlannotatorIntegration", () => {
     });
 
     await expect(
-      gate.getPlanReview(reviewId, { planRef, planVersion: 1 }),
+      gate.getPlanReview(reviewId, { reviewId, planRef, planVersion: 1 }),
     ).resolves.toEqual({
       reviewId,
       planRef,
       planVersion: 1,
       status: "approved",
     });
+  });
+
+  test("does not synthesize a binding for an unknown review after restart", async () => {
+    const events = new FakeEventBus([
+      {
+        status: "handled",
+        result: { status: "completed", reviewId, approved: true },
+      },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+    expect((await gate.getPlanReview(reviewId)).status).toBe("unknown");
+    // Simulate the former current-plan-only runtime payload crossing the boundary.
+    await expect(
+      gate.getPlanReview(reviewId, { planRef, planVersion: 2 } as never),
+    ).rejects.toMatchObject({ kind: "reconciliation" });
+    await expect(
+      gate.getPlanReview(reviewId, {
+        reviewId: "different" as PlannotatorReviewId,
+        planRef,
+        planVersion: 1,
+      }),
+    ).rejects.toMatchObject({ kind: "reconciliation" });
+    expect(events.calls).toHaveLength(0);
+  });
+
+  test("rejects persisted binding conflicting with the handle opened by this adapter", async () => {
+    const events = new FakeEventBus([
+      { status: "handled", result: { status: "pending", reviewId } },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+    await gate.openPlanReview({ planRef, planVersion: 1 });
+    for (const binding of [
+      { reviewId, planRef, planVersion: 2 },
+      {
+        reviewId,
+        planRef: { ...planRef, sha256: "b".repeat(64) },
+        planVersion: 1,
+      },
+    ]) {
+      await expect(gate.getPlanReview(reviewId, binding)).rejects.toMatchObject(
+        { kind: "reconciliation" },
+      );
+    }
+    expect(events.calls).toHaveLength(1);
   });
 
   test("normalizes unavailable Plannotator to a port failure", async () => {

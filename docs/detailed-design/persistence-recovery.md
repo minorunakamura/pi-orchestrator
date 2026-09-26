@@ -179,6 +179,8 @@ persist State
 
 These are non-mutating child-agent stages.
 
+Resolved planning policy (`researchRequired`, `clarificationRequired`, `architectureRequired`) is durable State and survives `BLOCK_RESOLVED`. Resume must not recompute it from absent transient hints. Missing legacy policy requires explicit recovery; phase runners fail closed rather than treating it as skip. Persisted scout/research refs are reused.
+
 If the required output artifact is missing, a safe rerun is allowed.
 
 ### implementing / fixing
@@ -199,9 +201,11 @@ Otherwise deterministic validation may be rerun.
 
 ### awaiting-plan-review
 
-Reconcile the persisted Plannotator review identity.
+Reconcile the persisted Plannotator review identity plus its exact `planning.planReview` binding (`reviewId`, `planRef`, `planVersion`). Check both against the current Plan and versioned external identity before polling or applying a result. A legacy identity without the exact binding is insufficient; do not attach its result to the current Plan.
 
-If an authoritative settled review result is available, persist it and emit the normal Plan event.
+If an authoritative settled review result is available, persist it and emit the normal Plan event. Persist `latestPlanReviewRef` for both approval and feedback. An identical already-applied result returns the current State unchanged after ordinary phase advancement or blocking, while its settled ref remains current; in-memory State snapshots cannot restore authority. Explicit authority invalidation is an exception: `REPLAN_REQUIRED` clears the settled ref, so the old approval is rejected as stale even before the next Plan is created. It must never restore `approvedPlanRef`.
+
+Existing identity/binding prevents unconditional reopen or overwrite, including when external status is unknown. If gate open succeeds but identity persistence fails, stop without returning a usable handle or applying a result. An orphan external review is possible because the two systems are not transactional; it must not become authority through adapter memory or a guessed binding.
 
 Never infer approval from disappearance or UI state.
 

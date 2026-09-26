@@ -89,6 +89,7 @@ export async function startWorkflow(
 
   const taskRef = await artifactStore.writeText("task", "task.md", input.task);
   const timestamp = now();
+  const policy = resolvePlaybookPolicy(input.playbook, input.context);
   const initialState: WorkflowState = {
     schemaVersion: 1,
     workflowId,
@@ -98,9 +99,9 @@ export async function startWorkflow(
     taskRef,
     planning: {
       context: {},
-      architectureRequired:
-        resolvePlaybookPolicy(input.playbook, input.context).architecture ===
-        "required",
+      researchRequired: policy.research === "required",
+      clarificationRequired: policy.clarification === "required",
+      architectureRequired: policy.architecture === "required",
       currentPlanVersion: 0,
     },
     coding: {
@@ -125,7 +126,6 @@ export async function startWorkflow(
     subagentExecutor: options.subagentExecutor,
   }).gatherContext({
     state: persistedInitialState,
-    context: input.context,
     cwd: input.cwd,
   });
 

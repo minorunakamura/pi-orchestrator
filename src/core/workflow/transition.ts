@@ -167,6 +167,7 @@ function applyTransition(
       next.planning.currentPlanRef = event.planRef;
       next.planning.currentPlanVersion = event.version;
       delete next.planning.latestPlanReviewRef;
+      delete next.planning.planReview;
       invalidatePlan(next);
       next.phase = "awaiting-plan-review";
       return next;
@@ -191,6 +192,7 @@ function applyTransition(
       }
       next.planning.approvedPlanRef = event.planRef;
       next.planning.approvedPlanVersion = event.version;
+      next.planning.latestPlanReviewRef = event.reviewRef;
       next.phase = "implementing";
       return next;
     }

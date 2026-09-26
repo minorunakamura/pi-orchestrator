@@ -42,6 +42,18 @@ export function assertStateInvariants(state: WorkflowState): void {
   if (planning.currentPlanVersion > 0 && !planning.currentPlanRef) {
     fail("currentPlanVersion requires currentPlanRef");
   }
+  if (
+    planning.planReview &&
+    (!sameArtifactRef(planning.planReview.planRef, planning.currentPlanRef) ||
+      planning.planReview.planVersion !== planning.currentPlanVersion ||
+      state.external[
+        `plannotator.plan-review.v${planning.planReview.planVersion}`
+      ] !== planning.planReview.reviewId)
+  ) {
+    fail(
+      "planReview must match the current plan and persisted external identity",
+    );
+  }
   if (planning.approvedPlanRef) {
     if (
       planning.approvedPlanVersion === undefined ||

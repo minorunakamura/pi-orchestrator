@@ -92,10 +92,57 @@ test("accepts a state that stores references and rejects invalid required enums"
 });
 
 test("preserves event union validation and rejects malformed event payloads", () => {
-  const event = { type: "PLAN_APPROVED", planRef, version: 1 } as const;
+  const reviewRef = {
+    ...planRef,
+    kind: "plan-review",
+    path: "plan-reviews/review-1.md",
+  } as const;
+  const event = {
+    type: "PLAN_APPROVED",
+    planRef,
+    version: 1,
+    reviewRef,
+  } as const;
+  expect(isWorkflowEvent({ type: "PLAN_APPROVED", planRef, version: 1 })).toBe(
+    false,
+  );
   expect(isWorkflowEvent(event)).toBe(true);
   expect(parseWorkflowEvent(event)).toEqual(event);
   expect(isWorkflowEvent({ type: "PLAN_APPROVED", planRef })).toBe(false);
+});
+
+test("validates durable planning policy and exact review binding", () => {
+  const planning = {
+    ...state.planning,
+    researchRequired: true,
+    clarificationRequired: true,
+    architectureRequired: false,
+    planReview: { reviewId: "review-1", planRef, planVersion: 1 },
+  };
+  expect(parseWorkflowState({ ...state, planning }).planning).toEqual(planning);
+  for (const key of [
+    "researchRequired",
+    "clarificationRequired",
+    "architectureRequired",
+  ]) {
+    expect(
+      isWorkflowState({
+        ...state,
+        planning: { ...planning, [key]: "required" },
+      }),
+    ).toBe(false);
+  }
+  for (const planReview of [
+    { reviewId: "review-1", planVersion: 1 },
+    { ...planning.planReview, reviewId: "" },
+    { ...planning.planReview, planVersion: 0 },
+    { ...planning.planReview, planVersion: 1.5 },
+    { ...planning.planReview, planRef: taskRef },
+  ]) {
+    expect(
+      isWorkflowState({ ...state, planning: { ...planning, planReview } }),
+    ).toBe(false);
+  }
 });
 
 test("validates structured findings independently from fix authority", () => {

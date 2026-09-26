@@ -6,10 +6,7 @@ import {
   plannerInputRefs,
   type PlannerInput,
 } from "../../core/planning/policy.ts";
-import {
-  resolvePlaybookPolicy,
-  type PlaybookContext,
-} from "../../core/playbooks/policy.ts";
+import { isPlanReviewBinding } from "../../core/workflow/state.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import {
   ArtifactImmutableError,
@@ -48,7 +45,6 @@ export interface WorkflowArtifactWriter {
 
 export interface GatherContextInput {
   state: WorkflowState;
-  context?: PlaybookContext;
   cwd?: string;
 }
 
@@ -79,7 +75,6 @@ export type ClarificationOutcome =
 
 export interface CreatePlanInput {
   state: WorkflowState;
-  context?: PlaybookContext;
   cwd?: string;
   previousPlanRef?: ArtifactRef<"plan">;
   feedbackRef?: ArtifactRef<"plan-review">;
@@ -99,6 +94,7 @@ export interface OpenPlanReviewInput {
 
 export type OpenPlanReviewResult =
   | { status: "opened"; state: WorkflowState; handle: PlanReviewHandle }
+  | { status: "reconciled"; state: WorkflowState; outcome: PlanReviewOutcome }
   | { status: "blocked"; state: WorkflowState };
 
 export interface ReconcilePlanReviewInput {
@@ -144,14 +140,6 @@ interface PlanReviewArtifact {
   planRef: ArtifactRef<"plan">;
   planVersion: number;
   feedback?: string;
-}
-
-interface SettledPlanReview {
-  status: "approved" | "feedback";
-  planRef: ArtifactRef<"plan">;
-  planVersion: number;
-  reviewRef: ArtifactRef<"plan-review">;
-  state: WorkflowState;
 }
 
 export interface PlanningOrchestratorDependencies {
@@ -248,7 +236,7 @@ function currentPlan(state: WorkflowState): ArtifactRef<"plan"> {
 
 function assertSettledReviewMatchesCurrentPlan(
   state: WorkflowState,
-  status: Extract<PlanReviewStatus, { status: "approved" | "feedback" }>,
+  status: PlanReviewHandle,
 ): void {
   const plan = currentPlan(state);
   if (
@@ -259,9 +247,40 @@ function assertSettledReviewMatchesCurrentPlan(
   }
 }
 
-export class PlanningOrchestrator {
-  private readonly settledPlanReviews = new Map<string, SettledPlanReview>();
+function requirePlanReviewBinding(
+  state: WorkflowState,
+  reviewId: PlannotatorReviewId,
+): PlanReviewHandle {
+  const binding = state.planning.planReview;
+  if (
+    !isPlanReviewBinding(binding) ||
+    binding.reviewId !== reviewId ||
+    binding.planVersion !== state.planning.currentPlanVersion ||
+    !sameArtifactRef(binding.planRef, state.planning.currentPlanRef) ||
+    state.external[planReviewIdentityKey(binding.planVersion)] !== reviewId
+  ) {
+    throw new StalePlanReviewError(
+      "Persisted plan review binding is missing or does not match the current plan and version",
+    );
+  }
+  return binding;
+}
 
+function requirePlanningPolicy(state: WorkflowState): void {
+  const { researchRequired, clarificationRequired, architectureRequired } =
+    state.planning;
+  if (
+    [researchRequired, clarificationRequired, architectureRequired].some(
+      (value) => typeof value !== "boolean",
+    )
+  ) {
+    throw new Error(
+      "Persisted resolved planning policy is required; legacy policy must not be inferred",
+    );
+  }
+}
+
+export class PlanningOrchestrator {
   constructor(
     private readonly dependencies: PlanningOrchestratorDependencies,
   ) {}
@@ -273,35 +292,35 @@ export class PlanningOrchestrator {
       throw new Error("Context gathering requires gathering-context phase");
     }
 
+    requirePlanningPolicy(input.state);
     const taskRef = input.state.taskRef;
     let state = input.state;
-    const scoutResult = await this.run(
-      state,
-      request(
-        "workflow-scout",
-        "Gather repository-local facts and evidence for the task. Return paths, line ranges, constraints, and unknowns; do not make decisions or mutate State.",
-        [taskRef],
-        input.cwd,
-      ),
-    );
-    if ("state" in scoutResult) {
-      return { state: scoutResult.state };
+    let scoutRef = state.planning.context.scoutRef;
+    if (!scoutRef) {
+      const scoutResult = await this.run(
+        state,
+        request(
+          "workflow-scout",
+          "Gather repository-local facts and evidence for the task. Return paths, line ranges, constraints, and unknowns; do not make decisions or mutate State.",
+          [taskRef],
+          input.cwd,
+        ),
+      );
+      if ("state" in scoutResult) return { state: scoutResult.state };
+      scoutRef = await this.writeOutput(
+        "scout",
+        "scout.md",
+        scoutResult.result.output,
+      );
+      state = await advanceWorkflow(
+        state,
+        { type: "CONTEXT_EVIDENCE_PERSISTED", scoutRef },
+        this.dependencies.stateStore,
+      );
     }
 
-    const scoutRef = await this.writeOutput(
-      "scout",
-      "scout.md",
-      scoutResult.result.output,
-    );
-    state = await advanceWorkflow(
-      state,
-      { type: "CONTEXT_EVIDENCE_PERSISTED", scoutRef },
-      this.dependencies.stateStore,
-    );
-
-    const policy = resolvePlaybookPolicy(input.state.playbook, input.context);
-    let researchRef: ArtifactRef<"research"> | undefined;
-    if (policy.research === "required") {
+    let researchRef = state.planning.context.researchRef;
+    if (state.planning.researchRequired && !researchRef) {
       const researchResult = await this.run(
         state,
         request(
@@ -330,10 +349,9 @@ export class PlanningOrchestrator {
       );
     }
 
-    const event: WorkflowEvent =
-      policy.clarification === "required"
-        ? { type: "CLARIFICATION_REQUIRED" }
-        : { type: "CONTEXT_READY" };
+    const event: WorkflowEvent = state.planning.clarificationRequired
+      ? { type: "CLARIFICATION_REQUIRED" }
+      : { type: "CONTEXT_READY" };
     state = await advanceWorkflow(state, event, this.dependencies.stateStore);
 
     return { state, scoutRef, ...(researchRef ? { researchRef } : {}) };
@@ -401,12 +419,8 @@ export class PlanningOrchestrator {
     if (!Number.isSafeInteger(targetVersion)) {
       throw new Error("Plan version cannot be incremented safely");
     }
-    const architectureRequired =
-      input.state.planning.architectureRequired ??
-      (input.context
-        ? resolvePlaybookPolicy(input.state.playbook, input.context)
-            .architecture === "required"
-        : true);
+    requirePlanningPolicy(input.state);
+    const architectureRequired = input.state.planning.architectureRequired;
     const plannerInput: PlannerInput = {
       taskRef: input.state.taskRef,
       scoutRef,
@@ -476,6 +490,21 @@ export class PlanningOrchestrator {
     const gate = this.dependencies.plannotatorGate;
     if (!gate) throw new Error("PlannotatorGate is required");
     const planRef = currentPlan(input.state);
+    const existingId =
+      input.state.external[
+        planReviewIdentityKey(input.state.planning.currentPlanVersion)
+      ];
+    if (existingId || input.state.planning.planReview) {
+      const reviewId =
+        input.state.planning.planReview?.reviewId ??
+        (existingId as PlannotatorReviewId);
+      requirePlanReviewBinding(input.state, reviewId);
+      const outcome = await this.reconcilePlanReview({
+        state: input.state,
+        reviewId,
+      });
+      return { status: "reconciled", state: outcome.state, outcome };
+    }
     let handle: PlanReviewHandle;
     try {
       handle = await gate.openPlanReview({
@@ -491,6 +520,7 @@ export class PlanningOrchestrator {
       return { status: "blocked", state };
     }
     if (
+      !isPlanReviewBinding(handle) ||
       handle.planVersion !== input.state.planning.currentPlanVersion ||
       !sameArtifactRef(handle.planRef, planRef)
     ) {
@@ -502,6 +532,7 @@ export class PlanningOrchestrator {
       return { status: "blocked", state };
     }
     const stateWithIdentity = structuredClone(input.state);
+    stateWithIdentity.planning.planReview = structuredClone(handle);
     stateWithIdentity.external[planReviewIdentityKey(handle.planVersion)] =
       handle.reviewId;
     const state = await this.dependencies.stateStore.saveState(
@@ -517,24 +548,12 @@ export class PlanningOrchestrator {
     if (!this.dependencies.plannotatorGate) {
       throw new Error("PlannotatorGate is required");
     }
-    const planRef = currentPlan(input.state);
-    const expectedReviewId =
-      input.state.external[
-        planReviewIdentityKey(input.state.planning.currentPlanVersion)
-      ];
-    if (expectedReviewId && expectedReviewId !== input.reviewId) {
-      throw new StalePlanReviewError(
-        "Plan review identity does not match the current plan version",
-      );
-    }
+    const binding = requirePlanReviewBinding(input.state, input.reviewId);
     let status: PlanReviewStatus;
     try {
       status = await this.dependencies.plannotatorGate.getPlanReview(
         input.reviewId,
-        {
-          planRef,
-          planVersion: input.state.planning.currentPlanVersion,
-        },
+        binding,
       );
     } catch {
       const state = await advanceWorkflow(
@@ -553,12 +572,14 @@ export class PlanningOrchestrator {
     status: PlanReviewStatus;
   }): Promise<PlanReviewOutcome> {
     const { state, reviewId, status } = input;
+    requirePlanReviewBinding(state, reviewId);
     if (status.reviewId !== reviewId) {
       throw new StalePlanReviewError(
         "Plan review result has a different review identity",
       );
     }
     if (status.status === "pending") {
+      assertSettledReviewMatchesCurrentPlan(state, status);
       return { status: "pending", state, reviewId };
     }
     if (status.status === "unknown") {
@@ -571,14 +592,10 @@ export class PlanningOrchestrator {
     }
     assertSettledReviewMatchesCurrentPlan(state, status);
     const expectedReviewRef = reviewArtifactRef(reviewId, status);
-    const alreadyApplied =
-      (status.status === "approved" &&
-        state.phase === "implementing" &&
-        state.planning.approvedPlanVersion === status.planVersion &&
-        sameArtifactRef(state.planning.approvedPlanRef, status.planRef)) ||
-      (status.status === "feedback" &&
-        state.phase === "planning" &&
-        sameArtifactRef(state.planning.latestPlanReviewRef, expectedReviewRef));
+    const alreadyApplied = sameArtifactRef(
+      state.planning.latestPlanReviewRef,
+      expectedReviewRef,
+    );
     if (alreadyApplied) {
       return {
         status: status.status,
@@ -588,23 +605,15 @@ export class PlanningOrchestrator {
       };
     }
 
-    const cached = this.settledPlanReviews.get(reviewId);
-    if (cached) {
-      if (
-        cached.status !== status.status ||
-        !sameArtifactRef(cached.planRef, status.planRef) ||
-        cached.planVersion !== status.planVersion
-      ) {
-        throw new StalePlanReviewError(
-          "A settled review identity was reused for another result",
-        );
-      }
-      return {
-        status: cached.status,
-        state: cached.state,
-        reviewId,
-        reviewRef: cached.reviewRef,
-      };
+    if (state.planning.latestPlanReviewRef) {
+      throw new StalePlanReviewError(
+        "A settled review identity was reused for another result",
+      );
+    }
+    if (state.phase !== "awaiting-plan-review") {
+      throw new StalePlanReviewError(
+        "Unapplied plan review requires awaiting-plan-review phase",
+      );
     }
 
     const reviewRef = await this.persistPlanReview(reviewId, status);
@@ -614,6 +623,7 @@ export class PlanningOrchestrator {
             type: "PLAN_APPROVED",
             planRef: status.planRef,
             version: status.planVersion,
+            reviewRef,
           }
         : { type: "PLAN_FEEDBACK", feedbackRef: reviewRef };
     const nextState = await advanceWorkflow(
@@ -621,13 +631,6 @@ export class PlanningOrchestrator {
       event,
       this.dependencies.stateStore,
     );
-    this.settledPlanReviews.set(reviewId, {
-      status: status.status,
-      planRef: status.planRef,
-      planVersion: status.planVersion,
-      reviewRef,
-      state: nextState,
-    });
     return {
       status: status.status,
       state: nextState,

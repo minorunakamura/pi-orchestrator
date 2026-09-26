@@ -49,6 +49,8 @@ export type StagePolicy = "required" | "conditional" | "skip";
 
 For v1, `conditional` is resolved by explicit Playbook / Orchestrator policy only.
 
+`startWorkflow` resolves research, clarification, and architecture once and persists `researchRequired`, `clarificationRequired`, and `architectureRequired` in the initial State before launching the first child. Context gathering and plan creation consume only these persisted values, including after `BLOCK_RESOLVED`; they do not accept replacement policy hints on resume. Saved scout/research refs are reused rather than rerunning completed children. Missing legacy policy fails closed before child execution; no implicit skip or guessed migration is allowed.
+
 ## 4. Clarification
 
 Clarification is owned by the Main Pi Agent using grilling / ask-user-question.
@@ -204,6 +206,20 @@ PLAN_APPROVED
 ```
 
 Approval is valid only when Plan version and Artifact identity match the current Plan.
+
+The gate protocol is:
+
+1. Open only after the Plan State has been persisted.
+2. Persist the returned `{ reviewId, planRef, planVersion }` as `planning.planReview`, together with the versioned external identity. Only then return a usable review handle.
+3. Before polling or applying any result (including direct `applyPlanReview`), require the persisted binding and external identity to agree with the exact current Plan/version. Missing or mismatched binding fails closed before result persistence or event emission.
+4. On adapter restart, pass this verified binding, not a synthesized current-Plan request. A raw external result has no Plan authority and cannot be relabelled with the current Plan.
+5. Persist the matching settled result artifact before `PLAN_APPROVED` / `PLAN_FEEDBACK`. Both events record its ref as `latestPlanReviewRef`; only approval assigns `approvedPlanRef`.
+
+If the current Plan already has a binding or legacy external identity, `openPlanReview` must reconcile it or fail closed; it must not open a second review or overwrite the identity. An `unknown` status is not permission to reopen or infer approval.
+
+Duplicate settled results matching `latestPlanReviewRef` are no-ops that return the current input State, including newer phase, revision, counters, and block metadata. No cached State snapshot is authoritative. Changed results for the same settled identity are rejected. `REPLAN_REQUIRED` explicitly invalidates authority and clears the settled ref: subsequent delivery of the old approval is stale and rejected, even before the next Plan is created. Callers must supply the current persisted State, not a pre-settlement snapshot.
+
+Plan State save failure prevents gate open. Review identity save failure rejects the operation and prevents polling/application through the runtime; an adapter's in-memory handle cannot replace the missing durable binding. External open and local persistence are not atomic: an orphan browser review may remain, but it grants no authority. Full orphan reconciliation belongs to ORCH-018, not an inferred approval or automatic reopen.
 
 ## 10. Replan
 

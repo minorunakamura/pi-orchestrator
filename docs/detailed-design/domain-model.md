@@ -111,8 +111,14 @@ export interface PlanningState {
     clarificationRef?: ArtifactRef<"clarification">;
   };
 
-  // Resolved Playbook policy; keeps Architecture / Design requirements stable across resume.
+  // Resolved once at start and persisted before any child side effect.
+  // Optional only so legacy State can be loaded for diagnosis; runners fail closed if missing.
+  researchRequired?: boolean;
+  clarificationRequired?: boolean;
   architectureRequired?: boolean;
+
+  // Evidence binding for the current Plan, not implementation authority.
+  planReview?: PlanReviewBinding;
 
   currentPlanRef?: ArtifactRef<"plan">;
   currentPlanVersion: number;
@@ -124,9 +130,21 @@ export interface PlanningState {
 }
 ```
 
+```ts
+export interface PlanReviewBinding {
+  reviewId: PlannotatorReviewId;
+  planRef: ArtifactRef<"plan">;
+  planVersion: number;
+}
+```
+
+`planReview` must match `currentPlanRef` (including digest), `currentPlanVersion`, and `external["plannotator.plan-review.vN"]`. An external identity string alone is not sufficient to reconstruct the binding. `PLAN_CREATED` clears the current binding; historical external identities and immutable artifacts remain evidence.
+
+`latestPlanReviewRef` records the exact settled result artifact for either approval or feedback. Duplicate results compare this ref, including its digest, and return the caller's current State without mutation. It does not grant implementation authority.
+
 `approvedPlanRef` is the only implementation authority.
 
-On `REPLAN_REQUIRED`, approval authority is invalidated but historical artifacts are retained.
+On `REPLAN_REQUIRED`, approval authority and `latestPlanReviewRef` are cleared but historical artifacts are retained. An old approval delivered after this explicit invalidation is stale, not an ordinary duplicate no-op, and cannot restore implementation authority.
 
 ## 7. Coding State
 
@@ -178,7 +196,7 @@ export type WorkflowEvent =
   | { type: "CLARIFICATION_REQUIRED"; reasonRef?: ArtifactRef }
   | { type: "CLARIFICATION_COMPLETE"; clarificationRef: ArtifactRef<"clarification"> }
   | { type: "PLAN_CREATED"; planRef: ArtifactRef<"plan">; version: number }
-  | { type: "PLAN_APPROVED"; planRef: ArtifactRef<"plan">; version: number }
+  | { type: "PLAN_APPROVED"; planRef: ArtifactRef<"plan">; version: number; reviewRef: ArtifactRef<"plan-review"> }
   | { type: "PLAN_FEEDBACK"; feedbackRef: ArtifactRef<"plan-review"> }
   | { type: "REPLAN_REQUIRED"; decisionRef: ArtifactRef<"round-decision"> }
   | { type: "EXECUTION_ROUTED"; decisionRef: ArtifactRef<"execution-routing"> }
