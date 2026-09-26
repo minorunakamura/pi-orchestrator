@@ -210,6 +210,7 @@ export type WorkflowEvent =
   | { type: "EXECUTION_ROUTED"; decisionRef: ArtifactRef<"execution-routing"> }
   | { type: "IMPLEMENTATION_COMPLETE"; resultRef: ArtifactRef<"implementation">; runId?: SubagentRunId }
   | { type: "VALIDATION_PASSED"; resultRef: ArtifactRef<"validation"> }
+  | { type: "REVIEW_ARTIFACTS_PERSISTED"; correctnessReviewRef: ArtifactRef<"correctness-review">; ponytailReviewRef: ArtifactRef<"ponytail-review"> }
   | { type: "RETRY_REQUIRED"; decisionRef: ArtifactRef<"round-decision">; findingsRef?: ArtifactRef<"accepted-findings">; validationRef?: ArtifactRef<"validation"> }
   | { type: "REVIEW_RETRY_REQUIRED"; decisionRef: ArtifactRef<"round-decision">; findingsRef?: ArtifactRef<"accepted-findings"> }
   | { type: "STRONGER_RETRY_REQUIRED"; decisionRef: ArtifactRef<"round-decision">; findingsRef?: ArtifactRef<"accepted-findings"> }

@@ -62,6 +62,11 @@ const implementationRef = ref(
   "implementations/implementation-1.json",
 );
 const validationRef = ref("validation", "validation/validation-1.json");
+const correctnessReviewRef = ref(
+  "correctness-review",
+  "reviews/correctness-1.json",
+);
+const ponytailReviewRef = ref("ponytail-review", "reviews/ponytail-1.json");
 const decisionRef = ref("round-decision", "decisions/round-decision-1.json");
 const findingsRef = ref(
   "accepted-findings",
@@ -261,6 +266,19 @@ test("routes coding clarification and review escalation events", () => {
   state = apply(state, { type: "REPLAN_REQUIRED", decisionRef });
   expect(state.phase).toBe("planning");
   expect(state.planning.approvedPlanRef).toBeUndefined();
+});
+
+test("records raw review artifacts without granting Fix authority", () => {
+  const state = apply(reviewingState(), {
+    type: "REVIEW_ARTIFACTS_PERSISTED",
+    correctnessReviewRef,
+    ponytailReviewRef,
+  });
+
+  expect(state.phase).toBe("reviewing");
+  expect(state.coding.correctnessReviewRef).toEqual(correctnessReviewRef);
+  expect(state.coding.ponytailReviewRef).toEqual(ponytailReviewRef);
+  expect(state.coding.acceptedFindingsRef).toBeUndefined();
 });
 
 test("routes validation and review retries while accounting for counters", () => {

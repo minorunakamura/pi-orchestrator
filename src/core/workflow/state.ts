@@ -180,6 +180,11 @@ export type WorkflowEvent =
     }
   | { type: "VALIDATION_PASSED"; resultRef: ArtifactRef<"validation"> }
   | {
+      type: "REVIEW_ARTIFACTS_PERSISTED";
+      correctnessReviewRef: ArtifactRef<"correctness-review">;
+      ponytailReviewRef: ArtifactRef<"ponytail-review">;
+    }
+  | {
       type: "RETRY_REQUIRED";
       decisionRef: ArtifactRef<"round-decision">;
       findingsRef?: ArtifactRef<"accepted-findings">;
@@ -494,6 +499,12 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
       return (
         isEvent(value, ["type", "resultRef"]) &&
         isArtifactOfKind(value.resultRef, "validation")
+      );
+    case "REVIEW_ARTIFACTS_PERSISTED":
+      return (
+        isEvent(value, ["type", "correctnessReviewRef", "ponytailReviewRef"]) &&
+        isArtifactOfKind(value.correctnessReviewRef, "correctness-review") &&
+        isArtifactOfKind(value.ponytailReviewRef, "ponytail-review")
       );
     case "RETRY_REQUIRED":
       return (

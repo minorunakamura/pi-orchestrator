@@ -237,6 +237,21 @@ function applyTransition(
       next.phase = "reviewing";
       return next;
 
+    case "REVIEW_ARTIFACTS_PERSISTED":
+      if (state.phase !== "reviewing") {
+        fail("REVIEW_ARTIFACTS_PERSISTED is only valid while reviewing");
+      }
+      requireImplementation(state);
+      if (!state.coding.validationRef) {
+        fail(
+          "REVIEW_ARTIFACTS_PERSISTED requires validation evidence",
+          "invariant-violation",
+        );
+      }
+      next.coding.correctnessReviewRef = event.correctnessReviewRef;
+      next.coding.ponytailReviewRef = event.ponytailReviewRef;
+      return next;
+
     case "RETRY_REQUIRED":
       if (state.phase !== "validating")
         fail("RETRY_REQUIRED is only valid while validating");

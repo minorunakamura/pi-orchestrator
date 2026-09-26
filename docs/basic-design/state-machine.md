@@ -87,6 +87,7 @@ export type WorkflowEvent =
   | { type: "IMPLEMENTATION_COMPLETE"; resultRef: string; runId?: string }
 
   | { type: "VALIDATION_PASSED"; resultRef: string }
+  | { type: "REVIEW_ARTIFACTS_PERSISTED"; correctnessReviewRef: string; ponytailReviewRef: string }
 
   | { type: "RETRY_REQUIRED"; decisionRef: string; findingsRef?: string; validationRef?: string }
   | { type: "REVIEW_RETRY_REQUIRED"; decisionRef: string; findingsRef?: string }
@@ -158,6 +159,7 @@ gathering-context
 | `implementing` | `EXECUTION_ROUTED` | current approved plan 対象 | `implementing` | executionProfileRef 保存 |
 | `implementing` | `IMPLEMENTATION_COMPLETE` | execution profile 有効 | `validating` | revision/result 更新 |
 | `validating` | `VALIDATION_PASSED` | Validation Contract の required checks pass | `reviewing` | validationRef 保存 |
+| `reviewing` | `REVIEW_ARTIFACTS_PERSISTED` | correctness / Ponytail Artifact が schema-valid | `reviewing` | raw review refs 保存（Fix authority なし） |
 | `validating` | `RETRY_REQUIRED` | Jev Round Decision + policy が retry | `fixing` | validationRef / decisionRef 保存 |
 | `validating` | `STRONGER_RETRY_REQUIRED` | stronger retry budget あり | `fixing` | stronger profile / decisionRef 保存 |
 | `validating` | `REPLAN_REQUIRED` | approved plan conflict | `planning` | approvedPlanRef 無効化 |

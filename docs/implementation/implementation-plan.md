@@ -948,6 +948,8 @@ Normalize and validate ReviewFinding artifacts.
 
 ```text
 agents/ponytail-reviewer.md
+src/core/workflow/state.ts
+src/core/workflow/transition.ts
 src/runtime/orchestrator/review-runner.ts
 src/runtime/integrations/subagents.ts
 ```

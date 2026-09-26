@@ -59,6 +59,32 @@ class FakeEventBus implements EventBus {
 }
 
 describe("SubagentsIntegration", () => {
+  test("runs reviewer requests in parallel with a fresh context", async () => {
+    const events = new FakeEventBus();
+    const integration = new SubagentsIntegration(events, {
+      ownerRunId: "workflow-1",
+    });
+
+    await expect(
+      integration.runParallel([
+        { agent: "reviewer", task: "Return structured correctness findings." },
+        {
+          agent: "ponytail-reviewer",
+          task: "Return structured simplicity findings.",
+        },
+      ]),
+    ).resolves.toHaveLength(2);
+
+    const requests = events.emitted
+      .filter(({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+      .map(({ payload }) => payload as Record<string, unknown>);
+    expect(requests.map((request) => request.agent)).toEqual([
+      "reviewer",
+      "ponytail-reviewer",
+    ]);
+    expect(requests.every((request) => request.context === "fresh")).toBe(true);
+  });
+
   test("uses only the public delegation contract and carries refs/profile", async () => {
     const events = new FakeEventBus();
     const input: AgentRunRequest = {
