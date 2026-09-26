@@ -1,0 +1,351 @@
+import type { ArtifactRef } from "../artifacts/references.ts";
+import { TransitionError, type TransitionErrorCode } from "./errors.ts";
+import { assertStateInvariants, sameArtifactRef } from "./invariants.ts";
+import {
+  isWorkflowEvent,
+  type WorkflowEvent,
+  type WorkflowState,
+} from "./state.ts";
+
+export type TransitionResult =
+  | { ok: true; state: WorkflowState }
+  | { ok: false; error: TransitionError };
+
+function fail(
+  message: string,
+  code: TransitionErrorCode = "invalid-transition",
+): never {
+  throw new TransitionError(message, code);
+}
+
+function cloneState(state: WorkflowState): WorkflowState {
+  return structuredClone(state);
+}
+
+function requireCurrentPlan(state: WorkflowState): ArtifactRef<"plan"> {
+  if (!state.planning.currentPlanRef) {
+    fail("The workflow has no current plan", "invariant-violation");
+  }
+  return state.planning.currentPlanRef;
+}
+
+function requireApprovedPlan(state: WorkflowState): ArtifactRef<"plan"> {
+  if (!state.planning.approvedPlanRef) {
+    fail("The workflow has no approved plan", "invariant-violation");
+  }
+  return state.planning.approvedPlanRef;
+}
+
+function requireImplementation(state: WorkflowState): void {
+  if (!state.coding.implementationRef) {
+    fail("The workflow has no implementation result", "invariant-violation");
+  }
+}
+
+function requireExecutionRouting(state: WorkflowState): void {
+  if (!state.coding.executionRoutingRef) {
+    fail(
+      "The workflow has no execution routing decision",
+      "invariant-violation",
+    );
+  }
+}
+
+function isRoundDecisionRef(
+  ref: ArtifactRef | undefined,
+): ref is ArtifactRef<"round-decision"> {
+  return ref?.kind === "round-decision";
+}
+
+function setRoundDecision(
+  state: WorkflowState,
+  decisionRef: ArtifactRef<"round-decision">,
+  findingsRef?: ArtifactRef<"accepted-findings">,
+): void {
+  state.coding.roundDecisionRef = decisionRef;
+  if (findingsRef) state.coding.acceptedFindingsRef = findingsRef;
+  else delete state.coding.acceptedFindingsRef;
+}
+
+function beginFix(
+  state: WorkflowState,
+  decisionRef: ArtifactRef<"round-decision">,
+  findingsRef: ArtifactRef<"accepted-findings"> | undefined,
+  stronger: boolean,
+): void {
+  setRoundDecision(state, decisionRef, findingsRef);
+  state.counters.automatedFixRoundsUsed += 1;
+  if (stronger) state.counters.strongerRetriesUsed += 1;
+  state.phase = "fixing";
+}
+
+function invalidatePlan(state: WorkflowState): void {
+  delete state.planning.approvedPlanRef;
+  delete state.planning.approvedPlanVersion;
+  delete state.coding.executionRoutingRef;
+}
+
+function clearCurrentRoundEvidence(state: WorkflowState): void {
+  delete state.coding.validationRef;
+  delete state.coding.correctnessReviewRef;
+  delete state.coding.ponytailReviewRef;
+  delete state.coding.findingEvaluationRef;
+  delete state.coding.acceptedFindingsRef;
+  delete state.coding.roundDecisionRef;
+}
+
+function applyTransition(
+  state: WorkflowState,
+  event: WorkflowEvent,
+): WorkflowState {
+  const next = cloneState(state);
+
+  switch (event.type) {
+    case "CONTEXT_READY":
+      if (state.phase !== "gathering-context")
+        fail("CONTEXT_READY is only valid while gathering context");
+      next.phase = "planning";
+      return next;
+
+    case "CLARIFICATION_REQUIRED":
+      if (
+        state.phase !== "gathering-context" &&
+        state.phase !== "validating" &&
+        state.phase !== "reviewing"
+      ) {
+        fail("CLARIFICATION_REQUIRED is not valid in the current phase");
+      }
+      if (isRoundDecisionRef(event.reasonRef)) {
+        next.coding.roundDecisionRef = event.reasonRef;
+      }
+      next.phase = "clarifying";
+      return next;
+
+    case "CLARIFICATION_COMPLETE":
+      if (state.phase !== "clarifying")
+        fail("CLARIFICATION_COMPLETE is only valid while clarifying");
+      next.planning.context.clarificationRef = event.clarificationRef;
+      next.phase = "planning";
+      return next;
+
+    case "PLAN_CREATED": {
+      if (state.phase !== "planning")
+        fail("PLAN_CREATED is only valid while planning");
+      if (event.version <= state.planning.currentPlanVersion) {
+        fail("PLAN_CREATED must advance the plan version");
+      }
+      if (event.version !== state.planning.currentPlanVersion + 1) {
+        fail("PLAN_CREATED must use the next plan version");
+      }
+      next.planning.currentPlanRef = event.planRef;
+      next.planning.currentPlanVersion = event.version;
+      invalidatePlan(next);
+      next.phase = "awaiting-plan-review";
+      return next;
+    }
+
+    case "PLAN_FEEDBACK":
+      if (state.phase !== "awaiting-plan-review")
+        fail("PLAN_FEEDBACK is only valid while awaiting plan review");
+      next.planning.latestPlanReviewRef = event.feedbackRef;
+      next.phase = "planning";
+      return next;
+
+    case "PLAN_APPROVED": {
+      if (state.phase !== "awaiting-plan-review")
+        fail("PLAN_APPROVED is only valid while awaiting plan review");
+      const currentPlan = requireCurrentPlan(state);
+      if (
+        event.version !== state.planning.currentPlanVersion ||
+        !sameArtifactRef(event.planRef, currentPlan)
+      ) {
+        fail("PLAN_APPROVED must match the current plan and version");
+      }
+      next.planning.approvedPlanRef = event.planRef;
+      next.planning.approvedPlanVersion = event.version;
+      next.phase = "implementing";
+      return next;
+    }
+
+    case "REPLAN_REQUIRED":
+      if (state.phase !== "validating" && state.phase !== "reviewing") {
+        fail("REPLAN_REQUIRED is only valid while validating or reviewing");
+      }
+      next.coding.roundDecisionRef = event.decisionRef;
+      invalidatePlan(next);
+      next.phase = "planning";
+      return next;
+
+    case "EXECUTION_ROUTED":
+      if (state.phase !== "implementing")
+        fail("EXECUTION_ROUTED is only valid while implementing");
+      requireApprovedPlan(state);
+      next.coding.executionRoutingRef = event.decisionRef;
+      return next;
+
+    case "IMPLEMENTATION_COMPLETE":
+      if (state.phase !== "implementing" && state.phase !== "fixing") {
+        fail(
+          "IMPLEMENTATION_COMPLETE is only valid while implementing or fixing",
+        );
+      }
+      requireApprovedPlan(state);
+      requireExecutionRouting(state);
+      next.coding.implementationRef = event.resultRef;
+      next.coding.implementationRevision += 1;
+      clearCurrentRoundEvidence(next);
+      next.phase = "validating";
+      return next;
+
+    case "VALIDATION_PASSED":
+      if (state.phase !== "validating")
+        fail("VALIDATION_PASSED is only valid while validating");
+      requireImplementation(state);
+      next.coding.validationRef = event.resultRef;
+      next.coding.reviewRound += 1;
+      next.phase = "reviewing";
+      return next;
+
+    case "RETRY_REQUIRED":
+      if (state.phase !== "validating")
+        fail("RETRY_REQUIRED is only valid while validating");
+      requireImplementation(state);
+      beginFix(next, event.decisionRef, event.findingsRef, false);
+      if (event.validationRef) next.coding.validationRef = event.validationRef;
+      return next;
+
+    case "REVIEW_RETRY_REQUIRED":
+      if (state.phase !== "reviewing")
+        fail("REVIEW_RETRY_REQUIRED is only valid while reviewing");
+      requireImplementation(state);
+      beginFix(next, event.decisionRef, event.findingsRef, false);
+      return next;
+
+    case "STRONGER_RETRY_REQUIRED":
+      if (state.phase !== "validating" && state.phase !== "reviewing") {
+        fail(
+          "STRONGER_RETRY_REQUIRED is only valid while validating or reviewing",
+        );
+      }
+      requireImplementation(state);
+      beginFix(next, event.decisionRef, event.findingsRef, true);
+      return next;
+
+    case "REVIEW_COMPLETE":
+      if (state.phase !== "reviewing")
+        fail("REVIEW_COMPLETE is only valid while reviewing");
+      requireImplementation(state);
+      if (!state.coding.validationRef) {
+        fail(
+          "REVIEW_COMPLETE requires validation evidence",
+          "invariant-violation",
+        );
+      }
+      if (state.coding.acceptedFindingsRef) {
+        fail(
+          "REVIEW_COMPLETE cannot follow accepted findings",
+          "invariant-violation",
+        );
+      }
+      next.coding.roundDecisionRef = event.decisionRef;
+      next.phase = "awaiting-code-review";
+      return next;
+
+    case "CODE_FEEDBACK":
+      if (state.phase !== "awaiting-code-review")
+        fail("CODE_FEEDBACK is only valid while awaiting code review");
+      requireImplementation(state);
+      next.coding.latestCodeReviewRef = event.feedbackRef;
+      next.counters.humanCodeFeedbackRounds += 1;
+      next.phase = "fixing";
+      return next;
+
+    case "CODE_APPROVED":
+      if (state.phase !== "awaiting-code-review")
+        fail("CODE_APPROVED is only valid while awaiting code review");
+      requireImplementation(state);
+      next.coding.latestCodeReviewRef = event.reviewRef;
+      next.phase = "completed";
+      return next;
+
+    case "BLOCK":
+      if (
+        state.phase === "blocked" ||
+        state.phase === "completed" ||
+        state.phase === "failed"
+      ) {
+        fail("BLOCK is only valid from a recoverable active phase");
+      }
+      next.block = {
+        blockedFrom: state.phase,
+        reason: event.reason,
+        ...(event.evidenceRef ? { evidenceRef: event.evidenceRef } : {}),
+      };
+      next.phase = "blocked";
+      return next;
+
+    case "BLOCK_RESOLVED":
+      if (state.phase !== "blocked" || !state.block) {
+        fail("BLOCK_RESOLVED requires blocked state");
+      }
+      next.phase = state.block.blockedFrom;
+      delete next.block;
+      return next;
+
+    case "FAIL":
+      if (
+        state.phase === "blocked" ||
+        state.phase === "completed" ||
+        state.phase === "failed"
+      ) {
+        fail("FAIL is only valid from an active phase");
+      }
+      next.failure = {
+        reason: event.reason,
+        ...(event.evidenceRef ? { evidenceRef: event.evidenceRef } : {}),
+      };
+      delete next.block;
+      next.phase = "failed";
+      return next;
+  }
+
+  return fail("Unsupported workflow event", "invalid-event");
+}
+
+export function transition(
+  state: WorkflowState,
+  event: WorkflowEvent,
+): TransitionResult {
+  try {
+    assertStateInvariants(state);
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof TransitionError
+          ? error
+          : new TransitionError("Invalid workflow state", "invalid-state"),
+    };
+  }
+
+  if (!isWorkflowEvent(event)) {
+    return {
+      ok: false,
+      error: new TransitionError("Invalid workflow event", "invalid-event"),
+    };
+  }
+
+  try {
+    const next = applyTransition(state, event);
+    assertStateInvariants(next);
+    return { ok: true, state: next };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof TransitionError
+          ? error
+          : new TransitionError("Transition failed"),
+    };
+  }
+}
