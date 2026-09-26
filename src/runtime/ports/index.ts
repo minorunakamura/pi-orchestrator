@@ -11,7 +11,10 @@ export {
   type SubagentExecutor,
 } from "./subagent-executor.ts";
 export {
+  type ExecutionRoutingContextEvidence,
   type ExecutionRoutingInput,
+  type ExecutionRoutingPlanEvidence,
+  type ExecutionRoutingPlanSectionEvidence,
   type ExecutionRoutingRawDecision,
   type FindingEvaluationInput,
   type FindingEvaluationRawDecision,

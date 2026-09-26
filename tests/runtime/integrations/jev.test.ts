@@ -12,6 +12,7 @@ import {
   JevIntegration,
   type JevClient,
 } from "../../../src/runtime/integrations/jev.ts";
+import type { ExecutionRoutingInput } from "../../../src/runtime/ports/jev-decision-client.ts";
 
 const planRef: ArtifactRef<"plan"> = {
   kind: "plan",
@@ -25,6 +26,41 @@ const contextRef: ArtifactRef<"scout"> = {
   schemaVersion: 1,
   sha256: "b".repeat(64),
 };
+const planEvidence = {
+  summary: "A small feature with a bounded implementation scope.",
+  relevantSections: [
+    {
+      title: "Scope / Requirements" as const,
+      content:
+        "Add the requested feature without changing the public contract.",
+    },
+    {
+      title: "Architecture / Design" as const,
+      content: "Keep the runtime adapter behind the existing port.",
+    },
+  ],
+};
+const contextEvidence = [
+  {
+    ref: contextRef,
+    content: "The repository uses TypeScript and Vitest for runtime tests.",
+  },
+];
+
+function routingInput(
+  overrides: Partial<ExecutionRoutingInput> = {},
+): ExecutionRoutingInput {
+  return {
+    approvedPlanRef: planRef,
+    planEvidence,
+    playbook: "feature",
+    changeScope: "scope",
+    contextRefs: [contextRef],
+    contextEvidence,
+    priorRetryCount: 0,
+    ...overrides,
+  };
+}
 const finding = {
   id: "C1",
   source: "correctness" as const,
@@ -130,16 +166,21 @@ describe("JevIntegration", () => {
     const integration = new JevIntegration({ client, timeoutMs: 100 });
 
     await expect(
-      integration.routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "a small feature",
-        contextRefs: [contextRef],
-        priorRetryCount: 0,
-      }),
+      integration.routeExecution(
+        routingInput({ changeScope: "a small feature" }),
+      ),
     ).resolves.toEqual({
       modelTier: { value: "STANDARD", confidence: 0.91 },
       reasoningTier: { value: "HIGH", confidence: 0.84 },
+    });
+    expect(client.calls[0].request.state).toMatchObject({
+      approvedPlanRef: planRef,
+      planEvidence,
+      playbook: "feature",
+      changeScope: "a small feature",
+      contextRefs: [contextRef],
+      contextEvidence,
+      priorRetryCount: 0,
     });
 
     await expect(
@@ -217,13 +258,15 @@ describe("JevIntegration", () => {
     ]);
 
     await expect(
-      new JevIntegration({ client }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "bugfix",
-        changeScope: "a bug fix",
-        contextRefs: [],
-        priorRetryCount: 1,
-      }),
+      new JevIntegration({ client }).routeExecution(
+        routingInput({
+          playbook: "bugfix",
+          changeScope: "a bug fix",
+          contextRefs: [],
+          contextEvidence: [],
+          priorRetryCount: 1,
+        }),
+      ),
     ).resolves.toEqual({
       modelTier: { value: "ECONOMY", confidence: 0.2 },
       reasoningTier: { value: "LOW", confidence: 0.3 },
@@ -253,13 +296,9 @@ describe("JevIntegration", () => {
     const client = new FakeJevClient([outcome]);
 
     await expect(
-      new JevIntegration({ client }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      new JevIntegration({ client }).routeExecution(
+        routingInput({ contextRefs: [], contextEvidence: [] }),
+      ),
     ).rejects.toMatchObject({
       name: "RuntimePortError",
       kind: "infrastructure",
@@ -273,13 +312,9 @@ describe("JevIntegration", () => {
       },
     });
     await expect(
-      unavailable.routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      unavailable.routeExecution(
+        routingInput({ contextRefs: [], contextEvidence: [] }),
+      ),
     ).rejects.toMatchObject({
       kind: "infrastructure",
       name: "RuntimePortError",
@@ -289,13 +324,9 @@ describe("JevIntegration", () => {
       new TypeSafeIntegrationError("http", "TypeSafe returned HTTP 401.", 401),
     ]);
     await expect(
-      new JevIntegration({ client: rejected }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      new JevIntegration({ client: rejected }).routeExecution(
+        routingInput({ contextRefs: [], contextEvidence: [] }),
+      ),
     ).rejects.toMatchObject({
       kind: "infrastructure",
       name: "RuntimePortError",
@@ -305,13 +336,9 @@ describe("JevIntegration", () => {
       new TypeSafeIntegrationError("budget", "daily request cap reached"),
     ]);
     await expect(
-      new JevIntegration({ client: budget }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      new JevIntegration({ client: budget }).routeExecution(
+        routingInput({ contextRefs: [], contextEvidence: [] }),
+      ),
     ).rejects.toMatchObject({
       kind: "infrastructure",
       name: "RuntimePortError",
@@ -328,13 +355,9 @@ describe("JevIntegration", () => {
     ]);
 
     await expect(
-      new JevIntegration({ client }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      new JevIntegration({ client }).routeExecution(
+        routingInput({ contextRefs: [], contextEvidence: [] }),
+      ),
     ).rejects.toMatchObject({
       kind: code === "timeout" ? "timeout" : "infrastructure",
       name: "RuntimePortError",
@@ -374,13 +397,9 @@ describe("JevIntegration", () => {
           endpoint: "https://jev.example.test/base",
           transport,
           timeoutMs: 100,
-        }).routeExecution({
-          approvedPlanRef: planRef,
-          playbook: "feature",
-          changeScope: "scope",
-          contextRefs: [],
-          priorRetryCount: 0,
-        }),
+        }).routeExecution(
+          routingInput({ contextRefs: [], contextEvidence: [] }),
+        ),
       ).resolves.toMatchObject({
         modelTier: { value: "STANDARD" },
         reasoningTier: { value: "HIGH" },
@@ -405,13 +424,9 @@ describe("JevIntegration", () => {
     ]);
 
     await expect(
-      new JevIntegration({ client, maxTransportRetries: 1 }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      new JevIntegration({ client, maxTransportRetries: 1 }).routeExecution(
+        routingInput({ contextRefs: [], contextEvidence: [] }),
+      ),
     ).resolves.toEqual({
       modelTier: { value: "STANDARD", confidence: 0.91 },
       reasoningTier: { value: "HIGH", confidence: 0.91 },
@@ -429,13 +444,7 @@ describe("JevIntegration", () => {
       new JevIntegration({
         client: budget,
         maxTransportRetries: 1,
-      }).routeExecution({
-        approvedPlanRef: planRef,
-        playbook: "feature",
-        changeScope: "scope",
-        contextRefs: [],
-        priorRetryCount: 0,
-      }),
+      }).routeExecution(routingInput({ contextRefs: [], contextEvidence: [] })),
     ).rejects.toMatchObject({ kind: "infrastructure" });
     expect(budget.calls).toHaveLength(1);
   });

@@ -62,6 +62,33 @@ const effectiveConfidence = Math.min(
 
 Concrete provider/model/thinking is resolved by Configuration.
 
+### Execution Routing Input Evidence
+
+The Orchestrator/runtime assembles the Jev input after reading the immutable artifacts through its `ArtifactStore` boundary. The input preserves the authoritative refs and carries bounded evidence without making the adapter responsible for artifact access:
+
+```ts
+interface ExecutionRoutingInput {
+  approvedPlanRef: ArtifactRef<"plan">;
+  planEvidence: {
+    summary: string;
+    relevantSections: readonly {
+      title: PlanSection;
+      content: string;
+    }[];
+  };
+  playbook: PlaybookKind;
+  changeScope: string;
+  contextRefs: readonly ArtifactRef[];
+  contextEvidence: readonly {
+    ref: ArtifactRef;
+    content: string;
+  }[];
+  priorRetryCount: number;
+}
+```
+
+`planEvidence` contains the Approved Plan summary and only relevant sections. `contextEvidence` contains bounded repository/context excerpts paired with their source refs. The adapter forwards these values; it does not read, hash, summarize, truncate, or substitute artifacts. Missing or unassembled evidence is an Orchestrator contract failure, not an invitation for Jev to infer from refs.
+
 ## 4. Execution Routing Confidence
 
 If confidence is at or above `autoDecisionThreshold`, use the selected logical profile.

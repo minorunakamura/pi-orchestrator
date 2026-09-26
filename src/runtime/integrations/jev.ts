@@ -82,9 +82,11 @@ function findingState(finding: ReviewFinding): Record<string, unknown> {
 function routeState(input: ExecutionRoutingInput): Record<string, unknown> {
   return {
     approvedPlanRef: input.approvedPlanRef,
+    planEvidence: input.planEvidence,
     playbook: input.playbook,
     changeScope: input.changeScope,
     contextRefs: input.contextRefs,
+    contextEvidence: input.contextEvidence,
     priorRetryCount: input.priorRetryCount,
   };
 }

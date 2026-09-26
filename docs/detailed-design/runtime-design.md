@@ -79,6 +79,31 @@ export interface SubagentExecutor {
   resume(runId: SubagentRunId, task: string): Promise<AgentRunResult>;
 }
 
+export interface ExecutionRoutingPlanSectionEvidence {
+  title: PlanSection;
+  content: string;
+}
+
+export interface ExecutionRoutingPlanEvidence {
+  summary: string;
+  relevantSections: readonly ExecutionRoutingPlanSectionEvidence[];
+}
+
+export interface ExecutionRoutingContextEvidence {
+  ref: ArtifactRef;
+  content: string;
+}
+
+export interface ExecutionRoutingInput {
+  approvedPlanRef: ArtifactRef<"plan">;
+  planEvidence: ExecutionRoutingPlanEvidence;
+  playbook: PlaybookKind;
+  changeScope: string;
+  contextRefs: readonly ArtifactRef[];
+  contextEvidence: readonly ExecutionRoutingContextEvidence[];
+  priorRetryCount: number;
+}
+
 export interface JevDecisionClient {
   routeExecution(input: ExecutionRoutingInput): Promise<ExecutionRoutingRawDecision>;
   evaluateFindings(input: FindingEvaluationInput): Promise<FindingEvaluationRawDecision[]>;
@@ -214,6 +239,8 @@ Where the domain requires `Decision<T>.confidence`, use a confidence-bearing bou
 The adapter converts `pi-typesafe` success/failure results into the existing `JevDecisionClient` contract and domain integration errors. `pi-typesafe` result/error types must not escape into `core/`.
 
 pi-orchestrator owns its own consent and budget policy for Product Runtime use. The package's agent-tool opt-in state is not Workflow authority.
+
+For Coding Entry Routing, the Orchestrator/runtime assembles bounded `planEvidence` and `contextEvidence` after reading and validating the referenced immutable artifacts. The `JevDecisionClient` input carries both the authoritative refs and those excerpts. `runtime/integrations/jev.ts` only forwards the supplied evidence; it never reads `ArtifactStore`, resolves refs, or invents missing context.
 
 It does not own:
 

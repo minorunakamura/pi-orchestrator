@@ -31,6 +31,24 @@ const planRef: ArtifactRef<"plan"> = {
   schemaVersion: 1,
   sha256: "a".repeat(64),
 };
+const contextRef: ArtifactRef<"scout"> = {
+  kind: "scout",
+  path: "context/scout-v1.json",
+  schemaVersion: 1,
+  sha256: "b".repeat(64),
+};
+const planEvidence = {
+  summary: "A small feature with a bounded implementation scope.",
+  relevantSections: [
+    {
+      title: "Scope / Requirements" as const,
+      content: "Add the requested feature.",
+    },
+  ],
+};
+const contextEvidence = [
+  { ref: contextRef, content: "Repository context from the scout artifact." },
+];
 const implementationRef: ArtifactRef<"implementation"> = {
   kind: "implementation",
   path: "implementations/implementation-1.json",
@@ -80,9 +98,11 @@ const findingEvaluation: FindingEvaluation = {
 };
 const routingInput = {
   approvedPlanRef: planRef,
+  planEvidence,
   playbook: "feature" as const,
   changeScope: "a small feature",
-  contextRefs: [],
+  contextRefs: [contextRef],
+  contextEvidence,
   priorRetryCount: 0,
 };
 const findingInput = {
