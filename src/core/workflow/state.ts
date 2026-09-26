@@ -185,6 +185,11 @@ export type WorkflowEvent =
       ponytailReviewRef: ArtifactRef<"ponytail-review">;
     }
   | {
+      type: "FINDING_EVALUATION_PERSISTED";
+      findingEvaluationRef: ArtifactRef<"finding-evaluation">;
+      acceptedFindingsRef: ArtifactRef<"accepted-findings">;
+    }
+  | {
       type: "RETRY_REQUIRED";
       decisionRef: ArtifactRef<"round-decision">;
       findingsRef?: ArtifactRef<"accepted-findings">;
@@ -505,6 +510,16 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
         isEvent(value, ["type", "correctnessReviewRef", "ponytailReviewRef"]) &&
         isArtifactOfKind(value.correctnessReviewRef, "correctness-review") &&
         isArtifactOfKind(value.ponytailReviewRef, "ponytail-review")
+      );
+    case "FINDING_EVALUATION_PERSISTED":
+      return (
+        isEvent(value, [
+          "type",
+          "findingEvaluationRef",
+          "acceptedFindingsRef",
+        ]) &&
+        isArtifactOfKind(value.findingEvaluationRef, "finding-evaluation") &&
+        isArtifactOfKind(value.acceptedFindingsRef, "accepted-findings")
       );
     case "RETRY_REQUIRED":
       return (

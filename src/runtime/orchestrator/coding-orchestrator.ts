@@ -7,6 +7,7 @@ import {
 } from "../../core/configuration.ts";
 import { resolveExecutionRouting } from "../../core/decisions/execution-routing.ts";
 import {
+  isAcceptedFindingsArtifact,
   isModelTier,
   isReasoningTier,
   type Decision,
@@ -710,7 +711,27 @@ export class CodingOrchestrator {
             "Fix Worker requires an accepted-findings artifact reference",
           );
         }
-        await readAuthoritativeText(store, candidate, "accepted findings");
+        const acceptedContent = await readAuthoritativeText(
+          store,
+          candidate,
+          "accepted findings",
+        );
+        const acceptedArtifact = parseArtifact(
+          acceptedContent,
+          isAcceptedFindingsArtifact,
+          "accepted findings",
+        );
+        if (
+          !sameArtifactRef(acceptedArtifact.approvedPlanRef, approvedPlanRef) ||
+          acceptedArtifact.planVersion !==
+            input.state.planning.currentPlanVersion ||
+          acceptedArtifact.implementationRevision !==
+            routedState.coding.implementationRevision
+        ) {
+          throw new CodingOrchestrationError(
+            "Accepted findings artifact does not match the current coding authority",
+          );
+        }
         acceptedFindingsRef = candidate;
       }
     }

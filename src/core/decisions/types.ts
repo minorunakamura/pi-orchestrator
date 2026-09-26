@@ -1,3 +1,6 @@
+import type { ArtifactRef } from "../artifacts/references.ts";
+import { isArtifactRef } from "../artifacts/references.ts";
+import { isReviewFinding, type ReviewFinding } from "../coding/finding.ts";
 import {
   hasKey,
   hasOnlyKeys,
@@ -183,6 +186,109 @@ export type NormalizedRoundDecision =
     };
 
 export type EvaluatedFinding = FindingEvaluation & { blocking: boolean };
+
+export interface FindingEvaluationArtifact {
+  schemaVersion: 1;
+  round: number;
+  planVersion: number;
+  implementationRevision: number;
+  approvedPlanRef: ArtifactRef<"plan">;
+  findings: EvaluatedFinding[];
+}
+
+export interface AcceptedFindingsArtifact {
+  schemaVersion: 1;
+  round: number;
+  planVersion: number;
+  implementationRevision: number;
+  approvedPlanRef: ArtifactRef<"plan">;
+  /** The only findings that may be supplied to a Fix Worker. */
+  accepted: ReviewFinding[];
+}
+
+function hasUniqueFindingIds(
+  findings: readonly { findingId?: string; id?: string }[],
+): boolean {
+  const ids = findings.map((finding) => finding.findingId ?? finding.id);
+  return new Set(ids).size === ids.length;
+}
+
+export function isFindingEvaluationArtifact(
+  value: unknown,
+): value is FindingEvaluationArtifact {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "schemaVersion",
+      "round",
+      "planVersion",
+      "implementationRevision",
+      "approvedPlanRef",
+      "findings",
+    ]) &&
+    isSchemaVersion(value.schemaVersion) &&
+    isNonNegativeInteger(value.round) &&
+    value.round > 0 &&
+    isNonNegativeInteger(value.planVersion) &&
+    value.planVersion > 0 &&
+    isNonNegativeInteger(value.implementationRevision) &&
+    isArtifactRef(value.approvedPlanRef) &&
+    value.approvedPlanRef.kind === "plan" &&
+    Array.isArray(value.findings) &&
+    value.findings.every(
+      (finding) =>
+        isFindingEvaluation(finding) && typeof finding.blocking === "boolean",
+    ) &&
+    hasUniqueFindingIds(value.findings)
+  );
+}
+
+export function parseFindingEvaluationArtifact(
+  value: unknown,
+): FindingEvaluationArtifact {
+  return parseSchema(
+    value,
+    isFindingEvaluationArtifact,
+    "FindingEvaluationArtifact",
+  );
+}
+
+export function isAcceptedFindingsArtifact(
+  value: unknown,
+): value is AcceptedFindingsArtifact {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "schemaVersion",
+      "round",
+      "planVersion",
+      "implementationRevision",
+      "approvedPlanRef",
+      "accepted",
+    ]) &&
+    isSchemaVersion(value.schemaVersion) &&
+    isNonNegativeInteger(value.round) &&
+    value.round > 0 &&
+    isNonNegativeInteger(value.planVersion) &&
+    value.planVersion > 0 &&
+    isNonNegativeInteger(value.implementationRevision) &&
+    isArtifactRef(value.approvedPlanRef) &&
+    value.approvedPlanRef.kind === "plan" &&
+    Array.isArray(value.accepted) &&
+    value.accepted.every((finding) => isReviewFinding(finding)) &&
+    hasUniqueFindingIds(value.accepted)
+  );
+}
+
+export function parseAcceptedFindingsArtifact(
+  value: unknown,
+): AcceptedFindingsArtifact {
+  return parseSchema(
+    value,
+    isAcceptedFindingsArtifact,
+    "AcceptedFindingsArtifact",
+  );
+}
 
 export type RoundDecision =
   | {

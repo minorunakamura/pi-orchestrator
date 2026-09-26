@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { OrchestratorConfiguration } from "../../../src/core/configuration.ts";
+import { parseAcceptedFindingsArtifact } from "../../../src/core/decisions/types.ts";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import {
   CodingOrchestrator,
@@ -430,10 +431,30 @@ describe("CodingOrchestrator ORCH-012", () => {
       "round-1.md",
       "retry",
     );
+    const acceptedFindings = {
+      schemaVersion: 1,
+      round: 1,
+      planVersion: 1,
+      implementationRevision: 1,
+      approvedPlanRef: started.state.planning.approvedPlanRef,
+      accepted: [
+        {
+          id: "C1",
+          source: "correctness",
+          category: "regression",
+          summary: "accepted finding",
+          evidence: "accepted evidence",
+          blocking: true,
+        },
+      ],
+    } as const;
+    expect(parseAcceptedFindingsArtifact(acceptedFindings)).toEqual(
+      acceptedFindings,
+    );
     const acceptedFindingsRef = await started.artifactStore.writeText(
       "accepted-findings",
-      "accepted-1.md",
-      "accepted finding only",
+      "accepted-findings-1.md",
+      JSON.stringify(acceptedFindings),
     );
     const fixing = await advanceWorkflow(
       initial.state,

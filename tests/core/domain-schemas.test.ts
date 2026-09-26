@@ -8,8 +8,10 @@ import {
   parseReviewFinding,
 } from "../../src/core/coding/finding.ts";
 import {
+  isAcceptedFindingsArtifact,
   isExecutionRoutingDecision,
   isFindingEvaluation,
+  isFindingEvaluationArtifact,
   isRoundDecision,
   parseExecutionRoutingDecision,
   parseFindingEvaluation,
@@ -157,6 +159,61 @@ test("validates structured findings independently from fix authority", () => {
   expect(isReviewFinding(finding)).toBe(true);
   expect(parseReviewFinding(finding)).toEqual(finding);
   expect(isReviewFinding({ ...finding, source: "unknown" })).toBe(false);
+});
+
+test("validates authoritative finding artifacts and preserves accepted-only authority", () => {
+  const evaluation = {
+    schemaVersion: 1,
+    round: 1,
+    planVersion: 1,
+    implementationRevision: 1,
+    approvedPlanRef: planRef,
+    findings: [
+      {
+        findingId: "C1",
+        blocking: true,
+        evidenceSupported: { value: true, confidence: 0.9 },
+        conflictsWithApprovedPlan: { value: false, confidence: 0.9 },
+        conflictsWithArchitecture: { value: false, confidence: 0.9 },
+        inScope: { value: true, confidence: 0.9 },
+        requiresHumanDecision: { value: false, confidence: 0.9 },
+        decision: "ACCEPT",
+        reasonCode: "accepted",
+      },
+    ],
+  } as const;
+  const accepted = {
+    schemaVersion: 1,
+    round: 1,
+    planVersion: 1,
+    implementationRevision: 1,
+    approvedPlanRef: planRef,
+    accepted: [
+      {
+        id: "C1",
+        source: "correctness",
+        category: "regression",
+        summary: "A regression",
+        evidence: "Observed in the changed path.",
+        blocking: true,
+      },
+    ],
+  } as const;
+
+  expect(isFindingEvaluationArtifact(evaluation)).toBe(true);
+  expect(isAcceptedFindingsArtifact(accepted)).toBe(true);
+  expect(
+    isAcceptedFindingsArtifact({
+      ...accepted,
+      rejected: [{ id: "P1", source: "ponytail", reason: "out-of-scope" }],
+    }),
+  ).toBe(false);
+  expect(
+    isFindingEvaluationArtifact({
+      ...evaluation,
+      findings: [evaluation.findings[0], evaluation.findings[0]],
+    }),
+  ).toBe(false);
 });
 
 test("validates decision and validation contracts at runtime", () => {

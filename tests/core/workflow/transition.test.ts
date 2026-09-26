@@ -67,6 +67,10 @@ const correctnessReviewRef = ref(
   "reviews/correctness-1.json",
 );
 const ponytailReviewRef = ref("ponytail-review", "reviews/ponytail-1.json");
+const findingEvaluationRef = ref(
+  "finding-evaluation",
+  "reviews/finding-evaluation-1.json",
+);
 const decisionRef = ref("round-decision", "decisions/round-decision-1.json");
 const findingsRef = ref(
   "accepted-findings",
@@ -279,6 +283,18 @@ test("records raw review artifacts without granting Fix authority", () => {
   expect(state.coding.correctnessReviewRef).toEqual(correctnessReviewRef);
   expect(state.coding.ponytailReviewRef).toEqual(ponytailReviewRef);
   expect(state.coding.acceptedFindingsRef).toBeUndefined();
+});
+
+test("publishes evaluation and accepted refs without changing the reviewing phase", () => {
+  const state = apply(reviewingState(), {
+    type: "FINDING_EVALUATION_PERSISTED",
+    findingEvaluationRef,
+    acceptedFindingsRef: findingsRef,
+  });
+
+  expect(state.phase).toBe("reviewing");
+  expect(state.coding.findingEvaluationRef).toEqual(findingEvaluationRef);
+  expect(state.coding.acceptedFindingsRef).toEqual(findingsRef);
 });
 
 test("routes validation and review retries while accounting for counters", () => {
