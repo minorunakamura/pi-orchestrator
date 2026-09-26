@@ -101,15 +101,6 @@ function parseLockMetadata(content: Uint8Array): LockMetadata | undefined {
   }
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return errorCode(error) !== "ESRCH";
-  }
-}
-
 export class WorkflowLock {
   readonly rootDirectory: string;
   readonly lockPath: string;
@@ -129,21 +120,9 @@ export class WorkflowLock {
     try {
       return await this.createLease();
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") {
-        throw asLockError(
-          error,
-          `Unable to acquire workflow lock at ${this.lockPath}`,
-        );
-      }
-      if (!(await this.reclaimDeadOwner())) {
-        throw new WorkflowLockUnavailableError(this.lockPath);
-      }
-    }
-
-    try {
-      return await this.createLease();
-    } catch (error) {
       if (errorCode(error) === "EEXIST") {
+        // Fail closed even for stale locks: unlinking by path could delete a
+        // replacement owner's lock. Recovery is outside acquisition in v1.
         throw new WorkflowLockUnavailableError(this.lockPath);
       }
       throw asLockError(
@@ -266,23 +245,6 @@ export class WorkflowLock {
         closeError,
         `Unable to close workflow lock at ${this.lockPath}`,
       );
-    }
-  }
-
-  private async reclaimDeadOwner(): Promise<boolean> {
-    let content: Uint8Array;
-    try {
-      content = await this.filesystem.readFile(this.lockPath);
-    } catch (error) {
-      return errorCode(error) === "ENOENT";
-    }
-    const metadata = parseLockMetadata(content);
-    if (!metadata || isProcessAlive(metadata.pid)) return false;
-    try {
-      await this.filesystem.unlink(this.lockPath);
-      return true;
-    } catch (error) {
-      return errorCode(error) === "ENOENT";
     }
   }
 

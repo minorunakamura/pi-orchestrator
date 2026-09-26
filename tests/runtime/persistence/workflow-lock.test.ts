@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   WorkflowLock,
   WorkflowLockUnavailableError,
@@ -17,7 +17,16 @@ async function makeRunDirectory(): Promise<string> {
   return root;
 }
 
+function barrier(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true })),
   );
@@ -64,6 +73,87 @@ describe("WorkflowLock", () => {
       fs.readFile(join(root, ".workflow.lock"), "utf8"),
     ).resolves.toBe("owner");
   });
+
+  test.each(["hard-link", "exclusive-open"])(
+    "fails closed for concurrent dead-owner reclamation (%s)",
+    async (publication) => {
+      const root = await makeRunDirectory();
+      const lockPath = join(root, ".workflow.lock");
+      const deadPid = 2_147_483_647;
+      const staleMetadata = JSON.stringify({
+        pid: deadPid,
+        token: "dead-owner",
+        acquiredAt: "2026-01-01T00:00:00.000Z",
+      });
+      await fs.writeFile(lockPath, staleMetadata);
+      const kill = process.kill.bind(process);
+      vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid === deadPid) {
+          throw Object.assign(new Error("dead owner"), { code: "ESRCH" });
+        }
+        return kill(pid, signal);
+      });
+
+      const bothRead = barrier();
+      const firstSettled = barrier();
+      let staleReads = 0;
+      let lockUnlinks = 0;
+      const attempts = [0, 1].map((index) => {
+        const filesystem: WorkflowLockFileSystem = {
+          mkdir: fs.mkdir,
+          open: fs.open,
+          ...(publication === "hard-link" ? { link: fs.link } : {}),
+          lstat: fs.lstat,
+          readFile: async (path) => {
+            const bytes = await fs.readFile(path);
+            if (path === lockPath && bytes.toString() === staleMetadata) {
+              // Old code: both contenders read the same dead owner.
+              staleReads += 1;
+              if (staleReads === 2) bothRead.resolve();
+              await bothRead.promise;
+            }
+            return bytes;
+          },
+          unlink: async (path) => {
+            if (path === lockPath) {
+              lockUnlinks += 1;
+              // Old code: B deletes A's replacement only after A acquires it.
+              if (index === 1) await firstSettled.promise;
+            }
+            await fs.unlink(path);
+          },
+        };
+        return new WorkflowLock(root, { filesystem }).acquire().finally(() => {
+          // Fail-closed acquisition never reads metadata; do not wait for it.
+          bothRead.resolve();
+          if (index === 0) firstSettled.resolve();
+        });
+      });
+      const results = await Promise.allSettled(attempts);
+      try {
+        expect(
+          results.filter((result) => result.status === "fulfilled"),
+        ).toHaveLength(0);
+        for (const result of results) {
+          if (result.status === "rejected") {
+            expect(result.reason).toBeInstanceOf(WorkflowLockUnavailableError);
+          }
+        }
+        expect(lockUnlinks).toBe(0);
+        expect(await fs.readFile(lockPath, "utf8")).toBe(staleMetadata);
+      } finally {
+        bothRead.resolve();
+        firstSettled.resolve();
+        await Promise.all(
+          results.map((result) =>
+            result.status === "fulfilled"
+              ? result.value().catch(() => undefined)
+              : Promise.resolve(),
+          ),
+        );
+      }
+    },
+  );
 
   test("cleans up a lock when writing its owner metadata fails", async () => {
     const root = await makeRunDirectory();

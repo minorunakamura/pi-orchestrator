@@ -129,6 +129,10 @@ Resume and normal advance both acquire the same workflow lock before reading aut
 
 If exclusive locking cannot be guaranteed, stateRevision compare-and-swap behavior must be used to reject stale writers.
 
+In v1, lock acquisition fails closed whenever a lock already exists, including a stale/dead-owner lock. Acquisition never automatically removes a lock based on PID liveness or age: competing reclaimers could delete a replacement owner's lock. A lock left after a crash prevents further mutation until safely resolved outside acquisition; no automatic recovery mechanism is introduced here.
+
+The current StateStore revision check runs inside this exclusive lock. It is not an independent atomic filesystem compare-and-swap and must not be used to bypass locking.
+
 ## 10. Resume Philosophy
 
 Resume does not mean blindly rerunning the current phase.
@@ -224,7 +228,6 @@ export interface BlockState {
   blockedFrom: WorkflowPhase;
   reason: BlockedReason;
   evidenceRef?: ArtifactRef;
-  blockedAt: string;
 }
 ```
 

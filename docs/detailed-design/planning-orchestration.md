@@ -170,10 +170,13 @@ After Planner completion:
 1. Validate required sections.
 2. Parse Validation Contract.
 3. Validate Validation Contract schema.
-4. Persist `plan-vN.md`.
-5. Update `currentPlanRef` / `currentPlanVersion`.
-6. Persist State.
-7. Emit `PLAN_CREATED` transition to `awaiting-plan-review`.
+4. Persist the immutable `plan-vN.md` artifact and obtain its ArtifactRef.
+5. Call `transition(state, { type: "PLAN_CREATED", planRef, version })` using the current State and the next Plan version.
+6. On success, use the returned State: the transition updates `currentPlanRef` / `currentPlanVersion` and moves the phase to `awaiting-plan-review`.
+7. Persist that State and use the State returned by persistence, including its updated `stateRevision`.
+8. Begin the Human Plan Gate side effect only after State persistence succeeds.
+
+Do not manually update `currentPlanRef` / `currentPlanVersion` before `PLAN_CREATED`. The transition owns these updates and requires `version === currentPlanVersion + 1`. If transition or persistence fails, do not open the Human Plan Gate.
 
 ## 9. Human Plan Gate
 
