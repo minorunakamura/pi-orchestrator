@@ -272,12 +272,8 @@ function applyTransition(
           "invariant-violation",
         );
       }
-      if (state.coding.acceptedFindingsRef) {
-        fail(
-          "REVIEW_COMPLETE cannot follow accepted findings",
-          "invariant-violation",
-        );
-      }
+      // acceptedFindingsRef is an artifact identity, not its semantic blocking status.
+      // Round policy must decide whether COMPLETE is allowed before this event.
       next.coding.roundDecisionRef = event.decisionRef;
       next.phase = "awaiting-code-review";
       return next;

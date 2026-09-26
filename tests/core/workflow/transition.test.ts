@@ -374,13 +374,14 @@ test("routes validation failure clarification back through planning", () => {
   if (result.ok) expect(result.state.phase).toBe("clarifying");
 });
 
-test("does not allow REVIEW_COMPLETE when accepted blocking findings remain authoritative", () => {
+test("does not infer a blocking finding from an accepted findings artifact ref", () => {
   const state = reviewingState();
   state.coding.acceptedFindingsRef = findingsRef;
 
   const result = transition(state, { type: "REVIEW_COMPLETE", decisionRef });
 
-  expect(result.ok).toBe(false);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.state.phase).toBe("awaiting-code-review");
 });
 
 test("asserts authority and terminal-state invariants", () => {

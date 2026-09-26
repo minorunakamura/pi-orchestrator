@@ -91,6 +91,8 @@ export type FindingDecision = (typeof findingDecisions)[number];
 
 export interface FindingEvaluation {
   findingId: string;
+  /** Optional for legacy normalized evidence; policy outputs always carry it. */
+  blocking?: boolean;
   evidenceSupported: Decision<boolean>;
   conflictsWithApprovedPlan: Decision<boolean>;
   conflictsWithArchitecture: Decision<boolean>;
@@ -111,6 +113,7 @@ export function isFindingEvaluation(
     isRecord(value) &&
     hasOnlyKeys(value, [
       "findingId",
+      "blocking",
       "evidenceSupported",
       "conflictsWithApprovedPlan",
       "conflictsWithArchitecture",
@@ -120,6 +123,7 @@ export function isFindingEvaluation(
       "reasonCode",
     ]) &&
     isNonEmptyString(value.findingId) &&
+    (value.blocking === undefined || typeof value.blocking === "boolean") &&
     isDecision(value.evidenceSupported, isBoolean) &&
     isDecision(value.conflictsWithApprovedPlan, isBoolean) &&
     isDecision(value.conflictsWithArchitecture, isBoolean) &&
@@ -149,6 +153,36 @@ export const escalationReasons: readonly EscalationReason[] = [
   "human-decision",
   "uncertain",
 ];
+
+/** Normalized Jev results consumed by pure core policy. */
+export interface NormalizedExecutionRoutingDecision {
+  modelTier: Decision<ModelTier>;
+  reasoningTier: Decision<ReasoningTier>;
+}
+
+export interface NormalizedFindingEvaluationDecision {
+  findingId: string;
+  evidenceSupported: Decision<boolean>;
+  conflictsWithApprovedPlan: Decision<boolean>;
+  conflictsWithArchitecture: Decision<boolean>;
+  inScope: Decision<boolean>;
+  requiresHumanDecision: Decision<boolean>;
+}
+
+export type NormalizedRoundDecision =
+  | {
+      decision: "COMPLETE" | "RETRY";
+      confidence: number;
+      reason?: string;
+    }
+  | {
+      decision: "ESCALATE";
+      confidence: number;
+      reason?: string;
+      escalationReason: EscalationReason;
+    };
+
+export type EvaluatedFinding = FindingEvaluation & { blocking: boolean };
 
 export type RoundDecision =
   | {
