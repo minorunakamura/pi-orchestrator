@@ -138,7 +138,15 @@ export interface PlanReviewBinding {
 }
 ```
 
-`planReview` must match `currentPlanRef` (including digest), `currentPlanVersion`, and `external["plannotator.plan-review.vN"]`. An external identity string alone is not sufficient to reconstruct the binding. `PLAN_CREATED` clears the current binding; historical external identities and immutable artifacts remain evidence.
+```ts
+export type ExternalIdentities = Record<string, string>;
+```
+
+For Plan review, `external["plannotator.plan-review.vN"]` stores the reviewId for version N. The Orchestrator persists this index and `planning.planReview` together; the external index is not a separate source of approval authority.
+
+`planReview` must match `currentPlanRef` (kind, path, schemaVersion, and sha256), `currentPlanVersion`, and `external["plannotator.plan-review.vN"]`. An external identity string alone is not sufficient to reconstruct the binding. `PLAN_CREATED` clears the current binding; historical external identities and immutable artifacts remain evidence.
+
+The three resolved policy flags are workflow-specific decisions, not a replacement for Configuration or a switch to bypass Human Gates. New workflows persist all three before the first child; context gathering and plan creation require them after restart / `BLOCK_RESOLVED`. Missing legacy flags remain diagnosable but must not be guessed or defaulted to skip.
 
 `latestPlanReviewRef` records the exact settled result artifact for either approval or feedback. Duplicate results compare this ref, including its digest, and return the caller's current State without mutation. It does not grant implementation authority.
 

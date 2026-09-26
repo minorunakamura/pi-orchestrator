@@ -275,6 +275,8 @@ during Plan review
 during Code review
 ```
 
+Phase B must already test the planning-specific subset: missing/stale review binding after adapter restart, duplicate settled results after State advancement, durable resolved planning policy after `BLOCK_RESOLVED`, existing-identity reconciliation without reopen, Plan State save failure before gate open, and identity save failure after external open. These tests exercise the ORCH-007–009 contracts without requiring the full ORCH-018 resume controller. See [Phase B acceptance criteria](../implementation/implementation-plan.md#phase-b--planning-orchestration).
+
 Primary safety assertions:
 
 - no duplicate repository mutation

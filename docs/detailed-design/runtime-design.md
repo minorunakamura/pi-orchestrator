@@ -174,7 +174,9 @@ The adapter must not mutate Workflow State.
 
 `getPlanReview` may use the handle it opened, or an exact persisted binding validated by the Orchestrator. The optional second argument includes `reviewId`, `planRef`, and `planVersion`; it is not a current-Plan expectation to attach to arbitrary external results. Missing bindings yield `unknown`, and conflicting bindings are rejected. Both runtime reconciliation and direct result application require the durable binding to match State before using adapter evidence.
 
-`openPlanReview` returns an opened handle only after identity persistence. When a current binding already exists, it returns a reconciled outcome (pending, settled, unknown, or blocked) without a new external open. State snapshots are never cached for duplicate-result handling.
+`PlannotatorGate.openPlanReview` is the adapter port: it returns an external handle and does not persist Workflow State. `PlanningOrchestrator.openPlanReview` owns the persistence barrier: it persists that exact handle as `planning.planReview` together with the versioned external identity before reporting an opened handle to its caller. If a current binding or external identity already exists, the Orchestrator reconciles it or fails closed rather than making another external open or overwriting it. A reconciled outcome may be pending, settled, unknown, or blocked.
+
+Duplicate settled-result handling uses current persisted State and never a cached State snapshot. These are orchestrator-side contracts; they do not add fields or persistence responsibilities to the third-party Plannotator API.
 
 Human review result must first be persisted as an artifact. Only then may the runtime emit `PLAN_APPROVED`, `PLAN_FEEDBACK`, `CODE_APPROVED`, or `CODE_FEEDBACK`.
 

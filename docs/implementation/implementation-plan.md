@@ -538,8 +538,9 @@ src/runtime/orchestrator/advance-workflow.ts
 ### Acceptance criteria
 
 - `agents/workflow-scout.md` exists as the pi-orchestrator product Scout definition; a development-time builtin scout is not treated as this deliverable.
-- initial state is persisted before child-agent side effects.
-- scout/research output becomes artifacts before state references are updated.
+- initial state is persisted before child-agent side effects, including the resolved `researchRequired`, `clarificationRequired`, and `architectureRequired` planning policy.
+- resolved planning policy is durable workflow data: restart / `BLOCK_RESOLVED` preserves both required and skipped stages without recomputing from missing transient hints. Missing legacy policy fails closed before child execution.
+- scout/research output becomes artifacts before state references are updated; State persistence must succeed before the next child starts. Previously persisted context evidence is reused on restart.
 - v1 Context Routing does not call Jev.
 - temporary child infrastructure failure causes `BLOCK`, not `failed`.
 - no Planning/Coding authority is inferred from agent output.
@@ -549,7 +550,9 @@ src/runtime/orchestrator/advance-workflow.ts
 - scout-only playbook path.
 - scout + research path.
 - context child failure/block path.
-- crash after artifact write/before state update.
+- restart / `BLOCK_RESOLVED` after scout or research failure retains required research / clarification / architecture; saved scout evidence is not regenerated.
+- resolved skipped stages remain skipped after restart; missing legacy policy does not silently default to skip.
+- crash after artifact write/before state update prevents the next child from starting.
 
 ### Depends on
 
@@ -597,8 +600,10 @@ src/runtime/validation/contract-parser.ts
 - facts are not converted into Human product decisions.
 - plan contains Scope/Requirements, Architecture/Design where needed, Implementation Plan, and Validation Contract.
 - invalid/missing machine-readable required Validation Contract prevents `PLAN_CREATED`.
-- new feedback creates `plan-vN+1.md`; existing plan artifacts are immutable.
-- successful result ends at `awaiting-plan-review`.
+- clarification and Architecture / Design requirements use the persisted resolved planning policy; restart must not weaken required stages.
+- new feedback creates `plan-vN+1.md`; existing plan artifacts are immutable. `PLAN_CREATED` clears the prior Plan approval and current review binding; historical identities/artifacts cannot authorize the new version.
+- Plan Artifact persist → `PLAN_CREATED` → State persist completes before any Human Plan Gate side effect. A State save failure prevents gate open even if the Plan artifact already exists.
+- successful plan creation ends at `awaiting-plan-review` before the ORCH-009 gate runs.
 
 ### Tests
 
@@ -606,7 +611,9 @@ src/runtime/validation/contract-parser.ts
 - clarification-required path.
 - invalid plan structure.
 - invalid Validation Contract.
-- plan revision after feedback input.
+- plan revision after feedback input; old approval/review binding is not reused for the new version.
+- restart preserves required clarification and Architecture / Design validation from State.
+- Plan Artifact save succeeds but State save fails: no Human Gate is opened and no approval authority is published.
 
 ### Depends on
 
@@ -642,9 +649,14 @@ src/runtime/orchestrator/planning-orchestrator.ts
 
 ### Acceptance criteria
 
-- approval/feedback is persisted as a review artifact before event emission.
-- `approvedPlanRef` is set only after matching current plan/version approval.
-- stale approval for an older plan version is rejected.
+- Plan Review identity is the persisted binding `reviewId + exact planRef + exact planVersion`. Exact ArtifactRef equality includes kind, path, schemaVersion, and sha256; a versioned external identity string alone is insufficient.
+- the Orchestrator persists `planning.planReview` and `external["plannotator.plan-review.vN"]` together before returning a usable handle. Identity save failure stops processing; adapter memory cannot substitute for durable evidence.
+- both reconciliation and direct result application verify that the persisted binding, external identity, and current Plan/version agree. An unbound or mismatched settled result fails closed without rebinding it to the current Plan, including after adapter restart.
+- a current persisted identity/binding is reconciled rather than unconditionally reopened or overwritten. Missing exact binding fails closed; `unknown` external status does not authorize reopen or approval.
+- approval/feedback is persisted as a review artifact before event emission; the resulting State records `latestPlanReviewRef` for either result before the next side effect.
+- an identical already-applied settled result is an idempotent no-op against current persisted State, with no repeated event, artifact/State write, or revision change. Never return a cached State snapshot. Changed results for the same settled identity are rejected.
+- `approvedPlanRef` is set only after matching current plan/version Human approval. Neither binding metadata nor duplicate handling grants authority.
+- stale approval for an older plan version is rejected. After explicit `REPLAN_REQUIRED` invalidation, old approval is rejected even before the next Plan exists; ordinary phase advancement / `BLOCK` retains duplicate no-op behavior while the settled ref remains current.
 - Plannotator unavailable transitions to `blocked`.
 - `PLAN_FEEDBACK` returns to planning and creates a new plan version.
 - Planning Orchestration can complete end-to-end using fake Plannotator.
@@ -655,7 +667,13 @@ src/runtime/orchestrator/planning-orchestrator.ts
 - feedback.
 - stale plan review result.
 - unavailable gate.
-- duplicate settled result is idempotently handled.
+- identity missing (including legacy external identity only) + stale approval + fresh adapter: no current-Plan rebinding, review Artifact write, or approval event; cover both reconcile and direct apply.
+- reject mismatched reviewId, exact planRef (including digest), or planVersion; accept an exact persisted binding after adapter restart.
+- duplicate approval/feedback after State advancement / `BLOCK` and restart returns current State unchanged, without additional writes; changed settled feedback is rejected.
+- explicit `REPLAN_REQUIRED` invalidation rejects old approval without restoring State/authority; a new Plan still requires a new Human approval.
+- existing identity with pending / approved / feedback / unknown status is reconciled without another open or identity overwrite; legacy identity without exact binding fails closed.
+- review opens but identity save fails: reject without returning a usable handle, polling a result, or applying approval, even if the adapter retains a handle in memory.
+- review Artifact save failure emits no Plan event; Artifact save success followed by State save failure allows retry of the identical durable result without overwriting the Artifact.
 
 ### Depends on
 
@@ -665,7 +683,12 @@ ORCH-008.
 
 - `workflow-scout` and `planner` product Agent definitions exist.
 - workflow can reach `implementing` only through Human Plan Approval.
-- feedback produces a new plan version.
+- feedback produces a new plan version with no reusable old approval or current review binding.
+- research / clarification / architecture policy survives restart and `BLOCK_RESOLVED`; missing durable policy cannot silently skip required stages.
+- review results require a durable exact identity/Plan/version binding. Missing or stale bindings fail closed, and existing identities are reconciled without unconditional reopen/overwrite.
+- duplicate settled results preserve current persisted State and cannot resurrect cached authority; explicit replan invalidation remains a stale-result boundary.
+- persistence-ordering regressions prove that Plan State save failure prevents gate open and review identity save failure prevents unsafe continuation. Settled review evidence is persisted before approval/feedback events and State before subsequent side effects.
+- these Phase B contracts and focused restart/fault tests are required now; the full resume controller and orphan-review recovery remain ORCH-018 responsibilities. No new third-party contract is required.
 - no implementation side effect exists yet.
 
 ---
