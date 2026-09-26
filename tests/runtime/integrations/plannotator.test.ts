@@ -15,6 +15,12 @@ const planRef: ArtifactRef<"plan"> = {
   sha256: "a".repeat(64),
 };
 const reviewId = "review-1" as unknown as PlannotatorReviewId;
+const implementationRef: ArtifactRef<"implementation"> = {
+  kind: "implementation",
+  path: "implementation/implementation-1.json",
+  schemaVersion: 1,
+  sha256: "b".repeat(64),
+};
 
 type Request = {
   requestId: string;
@@ -168,6 +174,109 @@ describe("PlannotatorIntegration", () => {
       );
     }
     expect(events.calls).toHaveLength(1);
+  });
+
+  test("opens a code review with the exact implementation revision binding", async () => {
+    const events = new FakeEventBus([
+      {
+        status: "handled",
+        result: { status: "pending", reviewId },
+      },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+
+    await expect(
+      gate.openCodeReview({ implementationRef, implementationRevision: 1 }),
+    ).resolves.toEqual({
+      reviewId,
+      implementationRef,
+      implementationRevision: 1,
+    });
+    expect(events.calls[0]).toMatchObject({
+      request: {
+        action: "code-review",
+        payload: {
+          implementationRef,
+          implementationRevision: 1,
+          origin: "pi-orchestrator",
+        },
+      },
+    });
+  });
+
+  test("reconciles a code review with an exact persisted binding after adapter restart", async () => {
+    const events = new FakeEventBus([
+      {
+        status: "handled",
+        result: { status: "completed", reviewId, approved: true },
+      },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+
+    await expect(
+      gate.getCodeReview(reviewId, {
+        reviewId,
+        implementationRef,
+        implementationRevision: 1,
+      }),
+    ).resolves.toEqual({
+      reviewId,
+      implementationRef,
+      implementationRevision: 1,
+      status: "approved",
+    });
+  });
+
+  test("rejects a code review binding that is not the persisted implementation", async () => {
+    const events = new FakeEventBus([
+      { status: "handled", result: { status: "pending", reviewId } },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+    await gate.openCodeReview({ implementationRef, implementationRevision: 1 });
+
+    await expect(
+      gate.getCodeReview(reviewId, {
+        reviewId,
+        implementationRef,
+        implementationRevision: 2,
+      }),
+    ).rejects.toMatchObject({ kind: "reconciliation" });
+    expect(events.calls).toHaveLength(1);
+  });
+
+  test("rejects an external code-review result bound to another revision", async () => {
+    const events = new FakeEventBus([
+      {
+        status: "handled",
+        result: {
+          status: "completed",
+          reviewId,
+          approved: true,
+          implementationRevision: 2,
+        },
+      },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+
+    await expect(
+      gate.getCodeReview(reviewId, {
+        reviewId,
+        implementationRef,
+        implementationRevision: 1,
+      }),
+    ).rejects.toMatchObject({ kind: "reconciliation" });
   });
 
   test("normalizes unavailable Plannotator to a port failure", async () => {

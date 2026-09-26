@@ -27,7 +27,7 @@ import {
 } from "../../core/workflow/invariants.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import type { PlanSection } from "../../core/planning/policy.ts";
-import type { SubagentRunId } from "../../types.ts";
+import type { PlannotatorReviewId, SubagentRunId } from "../../types.ts";
 import {
   ArtifactImmutableError,
   calculateSha256,
@@ -38,7 +38,10 @@ import { artifactRelativePath } from "../persistence/artifact-paths.ts";
 import {
   RuntimePortError,
   type AgentRunResult,
+  type CodeReviewHandle,
+  type CodeReviewStatus,
   type JevDecisionClient,
+  type PlannotatorGate,
   type SubagentExecutor,
 } from "../ports/index.ts";
 import {
@@ -239,6 +242,7 @@ export interface CodingOrchestratorDependencies {
   jevDecisionClient: JevDecisionClient;
   subagentExecutor: SubagentExecutor;
   configuration: OrchestratorConfiguration;
+  plannotatorGate?: PlannotatorGate;
 }
 
 export interface CodingExecutionResult {
@@ -247,6 +251,98 @@ export interface CodingExecutionResult {
   implementationRef: ArtifactRef<"implementation">;
   runId?: SubagentRunId;
   executionProfile: ResolvedExecutionProfile;
+}
+
+export interface CodeReviewArtifact {
+  schemaVersion: 1;
+  reviewId: string;
+  status: "approved" | "feedback";
+  implementationRef: ArtifactRef<"implementation">;
+  implementationRevision: number;
+  feedback?: string;
+}
+
+export function isCodeReviewArtifact(
+  value: unknown,
+): value is CodeReviewArtifact {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "schemaVersion",
+      "reviewId",
+      "status",
+      "implementationRef",
+      "implementationRevision",
+      "feedback",
+    ]) ||
+    value.schemaVersion !== 1 ||
+    !isNonEmptyString(value.reviewId) ||
+    (value.status !== "approved" && value.status !== "feedback") ||
+    !isArtifactRef(value.implementationRef) ||
+    value.implementationRef.kind !== "implementation" ||
+    !isPositiveInteger(value.implementationRevision)
+  ) {
+    return false;
+  }
+  return value.status === "feedback"
+    ? typeof value.feedback === "string"
+    : value.feedback === undefined;
+}
+
+export function parseCodeReviewArtifact(value: unknown): CodeReviewArtifact {
+  if (!isCodeReviewArtifact(value)) {
+    throw new CodingOrchestrationError("Invalid code review artifact");
+  }
+  return value;
+}
+
+export interface OpenCodeReviewInput {
+  state: WorkflowState;
+}
+
+export type OpenCodeReviewResult =
+  | { status: "opened"; state: WorkflowState; handle: CodeReviewHandle }
+  | {
+      status: "reconciled";
+      state: WorkflowState;
+      outcome: CodeReviewOutcome;
+    }
+  | { status: "blocked"; state: WorkflowState };
+
+export interface ReconcileCodeReviewInput {
+  state: WorkflowState;
+  reviewId: PlannotatorReviewId;
+}
+
+export type CodeReviewOutcome =
+  | { status: "pending"; state: WorkflowState; reviewId: PlannotatorReviewId }
+  | {
+      status: "approved";
+      state: WorkflowState;
+      reviewId: PlannotatorReviewId;
+      reviewRef: ArtifactRef<"code-review">;
+    }
+  | {
+      status: "feedback";
+      state: WorkflowState;
+      reviewId: PlannotatorReviewId;
+      reviewRef: ArtifactRef<"code-review">;
+    }
+  | {
+      status: "unknown";
+      state: WorkflowState;
+      reviewId: PlannotatorReviewId;
+      reason?: string;
+    }
+  | { status: "blocked"; state: WorkflowState; reviewId: PlannotatorReviewId };
+
+export class StaleCodeReviewError extends Error {
+  constructor(
+    message = "Code review does not match the current implementation",
+  ) {
+    super(message);
+    this.name = "StaleCodeReviewError";
+  }
 }
 
 export class CodingOrchestrationError extends Error {
@@ -590,8 +686,253 @@ async function blockAndThrow(
   throw new CodingOrchestrationError(String(error));
 }
 
+export function codeReviewIdentityKey(implementationRevision: number): string {
+  return `plannotator.code-review.r${implementationRevision}`;
+}
+
+function codeReviewFileName(reviewId: PlannotatorReviewId): string {
+  const encoded = encodeURIComponent(reviewId);
+  if (encoded.length === 0)
+    throw new StaleCodeReviewError("Code review id must not be empty");
+  return `${encoded}.json`;
+}
+
+type CurrentCodeReviewBinding = Pick<
+  CodeReviewHandle,
+  "implementationRef" | "implementationRevision"
+>;
+
+function currentCodeReviewBinding(
+  state: WorkflowState,
+): CurrentCodeReviewBinding {
+  const implementationRef = state.coding.implementationRef;
+  const implementationRevision = state.coding.implementationRevision;
+  if (!implementationRef || !isPositiveInteger(implementationRevision)) {
+    throw new StaleCodeReviewError(
+      "Code review requires a current implementation revision",
+    );
+  }
+  return { implementationRef, implementationRevision };
+}
+
+function assertCodeReviewMatchesCurrent(
+  state: WorkflowState,
+  review: Pick<
+    CodeReviewHandle,
+    "implementationRef" | "implementationRevision"
+  >,
+): void {
+  const current = currentCodeReviewBinding(state);
+  if (
+    review.implementationRevision !== current.implementationRevision ||
+    !sameArtifactRef(review.implementationRef, current.implementationRef)
+  ) {
+    throw new StaleCodeReviewError(
+      "Code review result is stale for the current implementation revision",
+    );
+  }
+}
+
+function requirePersistedCodeReview(
+  state: WorkflowState,
+  reviewId: PlannotatorReviewId,
+): CodeReviewHandle {
+  const current = currentCodeReviewBinding(state);
+  if (
+    state.external[codeReviewIdentityKey(current.implementationRevision)] !==
+    reviewId
+  ) {
+    throw new StaleCodeReviewError(
+      "Persisted code review identity does not match the current implementation revision",
+    );
+  }
+  return { reviewId, ...current };
+}
+
+function codeReviewArtifact(
+  status: Extract<CodeReviewStatus, { status: "approved" | "feedback" }>,
+): CodeReviewArtifact {
+  return {
+    schemaVersion: 1,
+    reviewId: status.reviewId,
+    status: status.status,
+    implementationRef: status.implementationRef,
+    implementationRevision: status.implementationRevision,
+    ...(status.status === "feedback" ? { feedback: status.feedback } : {}),
+  };
+}
+
+async function persistCodeReview(
+  store: ReadableArtifactStore,
+  status: Extract<CodeReviewStatus, { status: "approved" | "feedback" }>,
+): Promise<ArtifactRef<"code-review">> {
+  const artifact = codeReviewArtifact(status);
+  return persistJson(
+    store,
+    "code-review",
+    codeReviewFileName(status.reviewId),
+    artifact,
+    parseCodeReviewArtifact,
+  );
+}
+
+function unavailableCodeReviewError(error: unknown): boolean {
+  return (
+    !(error instanceof StaleCodeReviewError) &&
+    (!(error instanceof RuntimePortError) || error.kind !== "reconciliation")
+  );
+}
+
 export class CodingOrchestrator {
   constructor(private readonly dependencies: CodingOrchestratorDependencies) {}
+
+  async openCodeReview(
+    input: OpenCodeReviewInput,
+  ): Promise<OpenCodeReviewResult> {
+    if (input.state.phase !== "awaiting-code-review") {
+      throw new Error("Code review requires awaiting-code-review phase");
+    }
+    const gate = this.dependencies.plannotatorGate;
+    if (!gate) throw new Error("PlannotatorGate is required");
+    const current = currentCodeReviewBinding(input.state);
+    const identityKey = codeReviewIdentityKey(current.implementationRevision);
+    const existingId = input.state.external[identityKey] as
+      | PlannotatorReviewId
+      | undefined;
+    if (existingId) {
+      const outcome = await this.reconcileCodeReview({
+        state: input.state,
+        reviewId: existingId,
+      });
+      return { status: "reconciled", state: outcome.state, outcome };
+    }
+
+    let handle: CodeReviewHandle;
+    try {
+      handle = await gate.openCodeReview({
+        implementationRef: current.implementationRef,
+        implementationRevision: current.implementationRevision,
+      });
+    } catch (error) {
+      if (!unavailableCodeReviewError(error)) throw error;
+      const state = await advanceWorkflow(
+        input.state,
+        { type: "BLOCK", reason: "human-gate-unavailable" },
+        this.dependencies.stateStore,
+      );
+      return { status: "blocked", state };
+    }
+    if (
+      !handle.reviewId ||
+      !Number.isSafeInteger(handle.implementationRevision)
+    ) {
+      throw new StaleCodeReviewError(
+        "Plannotator returned an invalid code review handle",
+      );
+    }
+    assertCodeReviewMatchesCurrent(input.state, handle);
+    const stateWithIdentity = structuredClone(input.state);
+    stateWithIdentity.external[identityKey] = handle.reviewId;
+    const state = await this.dependencies.stateStore.saveState(
+      stateWithIdentity,
+      input.state.stateRevision,
+    );
+    return { status: "opened", state, handle };
+  }
+
+  async reconcileCodeReview(
+    input: ReconcileCodeReviewInput,
+  ): Promise<CodeReviewOutcome> {
+    const gate = this.dependencies.plannotatorGate;
+    if (!gate) throw new Error("PlannotatorGate is required");
+    const binding = requirePersistedCodeReview(input.state, input.reviewId);
+    let status: CodeReviewStatus;
+    try {
+      status = await gate.getCodeReview(input.reviewId, binding);
+    } catch (error) {
+      if (!unavailableCodeReviewError(error)) {
+        throw new StaleCodeReviewError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      const state = await advanceWorkflow(
+        input.state,
+        { type: "BLOCK", reason: "human-gate-unavailable" },
+        this.dependencies.stateStore,
+      );
+      return { status: "blocked", state, reviewId: input.reviewId };
+    }
+    return this.applyCodeReview({ ...input, status });
+  }
+
+  async applyCodeReview(input: {
+    state: WorkflowState;
+    reviewId: PlannotatorReviewId;
+    status: CodeReviewStatus;
+  }): Promise<CodeReviewOutcome> {
+    const { state, reviewId, status } = input;
+    requirePersistedCodeReview(state, reviewId);
+    if (status.reviewId !== reviewId) {
+      throw new StaleCodeReviewError(
+        "Code review result has a different review identity",
+      );
+    }
+    if (status.status === "pending") {
+      assertCodeReviewMatchesCurrent(state, status);
+      return { status: "pending", state, reviewId };
+    }
+    if (status.status === "unknown") {
+      return {
+        status: "unknown",
+        state,
+        reviewId,
+        ...(status.reason ? { reason: status.reason } : {}),
+      };
+    }
+
+    assertCodeReviewMatchesCurrent(state, status);
+    const expectedRef = createArtifactRef(
+      "code-review",
+      artifactRelativePath("code-review", codeReviewFileName(reviewId)),
+      JSON.stringify(codeReviewArtifact(status)),
+    );
+    if (sameArtifactRef(state.coding.latestCodeReviewRef, expectedRef)) {
+      return {
+        status: status.status,
+        state,
+        reviewId,
+        reviewRef: expectedRef,
+      };
+    }
+    if (state.coding.latestCodeReviewRef) {
+      throw new StaleCodeReviewError(
+        "A settled code review identity was reused for another result",
+      );
+    }
+    if (state.phase !== "awaiting-code-review") {
+      throw new StaleCodeReviewError(
+        "Unapplied code review requires awaiting-code-review phase",
+      );
+    }
+
+    const store = requireArtifactStore(this.dependencies.artifactStore);
+    const reviewRef = await persistCodeReview(store, status);
+    const event =
+      status.status === "approved"
+        ? { type: "CODE_APPROVED" as const, reviewRef }
+        : { type: "CODE_FEEDBACK" as const, feedbackRef: reviewRef };
+    const nextState = await advanceWorkflow(
+      state,
+      event,
+      this.dependencies.stateStore,
+    );
+    return {
+      status: status.status,
+      state: nextState,
+      reviewId,
+      reviewRef,
+    };
+  }
 
   async execute(input: CodingEntryInput): Promise<CodingExecutionResult> {
     const store = requireArtifactStore(this.dependencies.artifactStore);
@@ -718,6 +1059,7 @@ export class CodingOrchestrator {
     );
 
     let acceptedFindingsRef: ArtifactRef<"accepted-findings"> | undefined;
+    let humanCodeFeedbackRef: ArtifactRef<"code-review"> | undefined;
     if (routedState.phase === "fixing") {
       const candidate = routedState.coding.acceptedFindingsRef;
       if (candidate) {
@@ -749,6 +1091,34 @@ export class CodingOrchestrator {
         }
         acceptedFindingsRef = candidate;
       }
+
+      const feedbackCandidate = routedState.coding.latestCodeReviewRef;
+      if (feedbackCandidate) {
+        const feedbackContent = await readAuthoritativeText(
+          store,
+          feedbackCandidate,
+          "human code feedback",
+        );
+        const feedbackArtifact = parseArtifact(
+          feedbackContent,
+          isCodeReviewArtifact,
+          "human code feedback",
+        );
+        if (
+          feedbackArtifact.status !== "feedback" ||
+          !sameArtifactRef(
+            feedbackArtifact.implementationRef,
+            routedState.coding.implementationRef,
+          ) ||
+          feedbackArtifact.implementationRevision !==
+            routedState.coding.implementationRevision
+        ) {
+          throw new CodingOrchestrationError(
+            "Human code feedback does not match the current coding authority",
+          );
+        }
+        humanCodeFeedbackRef = feedbackCandidate;
+      }
     }
 
     const workerInput: WorkerInput = {
@@ -756,6 +1126,7 @@ export class CodingOrchestrator {
       contextRefs: refs,
       executionProfile: resolvedProfile,
       ...(acceptedFindingsRef ? { acceptedFindingsRef } : {}),
+      ...(humanCodeFeedbackRef ? { humanCodeFeedbackRef } : {}),
     };
     const workerRequest = createWorkerRequest(workerInput, { cwd: input.cwd });
     let workerResult: AgentRunResult;
@@ -885,6 +1256,20 @@ export async function executeCodingEntry(
   dependencies: CodingOrchestratorDependencies,
 ): Promise<CodingExecutionResult> {
   return new CodingOrchestrator(dependencies).execute(input);
+}
+
+export async function openCodeReview(
+  input: OpenCodeReviewInput,
+  dependencies: CodingOrchestratorDependencies,
+): Promise<OpenCodeReviewResult> {
+  return new CodingOrchestrator(dependencies).openCodeReview(input);
+}
+
+export async function reconcileCodeReview(
+  input: ReconcileCodeReviewInput,
+  dependencies: CodingOrchestratorDependencies,
+): Promise<CodeReviewOutcome> {
+  return new CodingOrchestrator(dependencies).reconcileCodeReview(input);
 }
 
 export const runCoding = executeCodingEntry;

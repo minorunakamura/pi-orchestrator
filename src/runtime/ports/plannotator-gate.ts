@@ -47,5 +47,8 @@ export interface PlannotatorGate {
     persistedBinding?: PlanReviewHandle,
   ): Promise<PlanReviewStatus>;
   openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle>;
-  getCodeReview(reviewId: PlannotatorReviewId): Promise<CodeReviewStatus>;
+  getCodeReview(
+    reviewId: PlannotatorReviewId,
+    persistedBinding?: CodeReviewHandle,
+  ): Promise<CodeReviewStatus>;
 }

@@ -7,6 +7,7 @@ import { parseAcceptedFindingsArtifact } from "../../../src/core/decisions/types
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import {
   CodingOrchestrator,
+  parseCodeReviewArtifact,
   parseExecutionRoutingArtifact,
   type CodingOrchestratorDependencies,
 } from "../../../src/runtime/orchestrator/coding-orchestrator.ts";
@@ -437,6 +438,66 @@ describe("CodingOrchestrator ORCH-012", () => {
     expect(state.phase).toBe("failed");
     expect(state.failure?.reason).toBe("persistence-consistency-failure");
     expect(state.failure?.evidenceRef?.kind).toBe("implementation");
+  });
+
+  test("passes Human Code Feedback to a Fix Worker without treating it as automated findings", async () => {
+    const started = await makeApproved();
+    const initialWorker = new FakeSubagentExecutor({
+      run: succeeded("initial"),
+    });
+    const initial = await new CodingOrchestrator(
+      dependencies(started, { subagentExecutor: initialWorker }),
+    ).execute({ state: started.state });
+    const validationRef = await started.artifactStore.writeText(
+      "validation",
+      "validation-1.md",
+      "passed",
+    );
+    let reviewing = await advanceWorkflow(
+      initial.state,
+      { type: "VALIDATION_PASSED", resultRef: validationRef },
+      started.stateStore,
+    );
+    const decisionRef = await started.artifactStore.writeText(
+      "round-decision",
+      "round-1.md",
+      "complete",
+    );
+    reviewing = await advanceWorkflow(
+      reviewing,
+      { type: "REVIEW_COMPLETE", decisionRef },
+      started.stateStore,
+    );
+    const feedback = {
+      schemaVersion: 1 as const,
+      reviewId: "code-review-1",
+      status: "feedback" as const,
+      implementationRef: initial.implementationRef,
+      implementationRevision: 1,
+      feedback: "Please add a regression test.",
+    };
+    const feedbackRef = await started.artifactStore.writeJson!(
+      "code-review",
+      "code-review-1.json",
+      feedback,
+      parseCodeReviewArtifact,
+    );
+    const fixing = await advanceWorkflow(
+      reviewing,
+      { type: "CODE_FEEDBACK", feedbackRef },
+      started.stateStore,
+    );
+    expect(fixing.coding.latestCodeReviewRef).toEqual(feedbackRef);
+    const fixWorker = new FakeSubagentExecutor({ run: succeeded("fixed") });
+    const fix = await new CodingOrchestrator(
+      dependencies(started, { subagentExecutor: fixWorker }),
+    ).execute({ state: fixing });
+
+    expect(fixWorker.calls.run[0]?.inputRefs).toEqual(
+      expect.arrayContaining([feedbackRef]),
+    );
+    expect(fix.state.counters.automatedFixRoundsUsed).toBe(0);
+    expect(fix.state.coding.latestCodeReviewRef).toBeUndefined();
   });
 
   test("passes only the authoritative accepted-findings ref to a Fix Worker", async () => {

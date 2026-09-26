@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type { ArtifactRef } from "../../core/artifacts/references.ts";
+import {
+  isArtifactRef,
+  type ArtifactRef,
+} from "../../core/artifacts/references.ts";
 import type { PlannotatorReviewId } from "../../types.ts";
 import { isPlanReviewBinding } from "../../core/workflow/state.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import {
   RuntimePortError,
+  type CodeReviewHandle,
+  type CodeReviewRequest,
+  type CodeReviewStatus,
   type PlanReviewHandle,
   type PlanReviewRequest,
   type PlanReviewStatus,
@@ -16,7 +22,7 @@ export const PLANNOTATOR_REQUEST_CHANNEL = "plannotator:request" as const;
 
 export const PLANNOTATOR_TIMEOUT_MS = 5_000;
 
-type PlannotatorAction = "plan-review" | "review-status";
+type PlannotatorAction = "plan-review" | "code-review" | "review-status";
 
 export interface PlannotatorEventBus {
   emit(channel: string, payload: unknown): void | Promise<void>;
@@ -39,16 +45,18 @@ export interface PlannotatorResponse {
   error?: string;
 }
 
-interface PlanReviewStartResult {
+interface ReviewStartResult {
   status: "pending";
   reviewId: string;
 }
 
-interface PlanReviewStatusResult {
+interface ReviewStatusResult {
   status: "pending" | "missing" | "completed";
   reviewId?: string;
   approved?: boolean;
   feedback?: string;
+  implementationRef?: ArtifactRef<"implementation">;
+  implementationRevision?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,7 +75,10 @@ function asReviewId(value: string): PlannotatorReviewId {
   return value as PlannotatorReviewId;
 }
 
-function assertPlanReviewStartResult(value: unknown): PlanReviewStartResult {
+function assertReviewStartResult(
+  value: unknown,
+  reviewType: "plan-review" | "code-review",
+): ReviewStartResult {
   if (
     !isRecord(value) ||
     value.status !== "pending" ||
@@ -75,16 +86,16 @@ function assertPlanReviewStartResult(value: unknown): PlanReviewStartResult {
   ) {
     throw new RuntimePortError(
       "infrastructure",
-      "Plannotator returned an invalid plan-review start response",
+      `Plannotator returned an invalid ${reviewType} start response`,
     );
   }
   return { status: "pending", reviewId: value.reviewId };
 }
 
-function parsePlanReviewStatusResult(
+function parseReviewStatusResult(
   value: unknown,
   requestedReviewId: PlannotatorReviewId,
-): PlanReviewStatusResult {
+): ReviewStatusResult {
   if (!isRecord(value) || typeof value.status !== "string") {
     throw new RuntimePortError(
       "reconciliation",
@@ -119,9 +130,31 @@ function parsePlanReviewStatusResult(
       "Plannotator feedback must be a string",
     );
   }
+  if (
+    value.implementationRef !== undefined &&
+    !isImplementationRef(value.implementationRef)
+  ) {
+    throw new RuntimePortError(
+      "reconciliation",
+      "Plannotator returned an invalid implementation binding",
+    );
+  }
+  if (
+    value.implementationRevision !== undefined &&
+    (typeof value.implementationRevision !== "number" ||
+      !Number.isSafeInteger(value.implementationRevision) ||
+      value.implementationRevision <= 0)
+  ) {
+    throw new RuntimePortError(
+      "reconciliation",
+      "Plannotator returned an invalid implementation revision",
+    );
+  }
   const responseReviewId = value.reviewId;
   const responseApproved = value.approved;
   const responseFeedback = value.feedback;
+  const responseImplementationRef = value.implementationRef;
+  const responseImplementationRevision = value.implementationRevision;
   return {
     status: value.status,
     ...(typeof responseReviewId === "string"
@@ -133,7 +166,31 @@ function parsePlanReviewStatusResult(
     ...(typeof responseFeedback === "string"
       ? { feedback: responseFeedback }
       : {}),
+    ...(isImplementationRef(responseImplementationRef)
+      ? { implementationRef: responseImplementationRef }
+      : {}),
+    ...(typeof responseImplementationRevision === "number"
+      ? { implementationRevision: responseImplementationRevision }
+      : {}),
   };
+}
+
+function isImplementationRef(
+  value: unknown,
+): value is ArtifactRef<"implementation"> {
+  return isArtifactRef(value) && value.kind === "implementation";
+}
+
+function isCodeReviewHandle(value: unknown): value is CodeReviewHandle {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 3 &&
+    isNonEmptyString(value.reviewId) &&
+    isImplementationRef(value.implementationRef) &&
+    typeof value.implementationRevision === "number" &&
+    Number.isSafeInteger(value.implementationRevision) &&
+    value.implementationRevision > 0
+  );
 }
 
 function normalizeResponse(response: unknown): unknown {
@@ -183,6 +240,7 @@ export class PlannotatorIntegration implements PlannotatorGate {
   private readonly timeoutMs: number;
   private readonly requestIdFactory: () => string;
   private readonly reviews = new Map<string, PlanReviewHandle>();
+  private readonly codeReviews = new Map<string, CodeReviewHandle>();
 
   constructor(options: PlannotatorIntegrationOptions) {
     if (!Number.isSafeInteger(options.timeoutMs ?? PLANNOTATOR_TIMEOUT_MS)) {
@@ -216,11 +274,12 @@ export class PlannotatorIntegration implements PlannotatorGate {
       );
     }
 
-    const result = assertPlanReviewStartResult(
+    const result = assertReviewStartResult(
       await this.request("plan-review", {
         planContent,
         origin: "pi-orchestrator",
       }),
+      "plan-review",
     );
     const handle: PlanReviewHandle = {
       reviewId: asReviewId(result.reviewId),
@@ -257,7 +316,7 @@ export class PlannotatorIntegration implements PlannotatorGate {
         reason: "No exact plan review binding is available",
       };
     }
-    const result = parsePlanReviewStatusResult(
+    const result = parseReviewStatusResult(
       await this.request("review-status", { reviewId }),
       reviewId,
     );
@@ -277,18 +336,93 @@ export class PlannotatorIntegration implements PlannotatorGate {
     };
   }
 
-  async openCodeReview(): Promise<never> {
-    throw new RuntimePortError(
-      "domain",
-      "Plan-gate integration does not implement the Plannotator code gate",
+  async openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle> {
+    if (
+      !isImplementationRef(input.implementationRef) ||
+      !Number.isSafeInteger(input.implementationRevision) ||
+      input.implementationRevision <= 0
+    ) {
+      throw new RuntimePortError(
+        "domain",
+        "Code review requires a valid implementation revision binding",
+      );
+    }
+    const result = assertReviewStartResult(
+      await this.request("code-review", {
+        implementationRef: input.implementationRef,
+        implementationRevision: input.implementationRevision,
+        origin: "pi-orchestrator",
+      }),
+      "code-review",
     );
+    const handle: CodeReviewHandle = {
+      reviewId: asReviewId(result.reviewId),
+      implementationRef: input.implementationRef,
+      implementationRevision: input.implementationRevision,
+    };
+    this.codeReviews.set(reviewKey(handle.reviewId), handle);
+    return handle;
   }
 
-  async getCodeReview(): Promise<never> {
-    throw new RuntimePortError(
-      "domain",
-      "Plan-gate integration does not implement the Plannotator code gate",
+  async getCodeReview(
+    reviewId: PlannotatorReviewId,
+    persistedBinding?: CodeReviewHandle,
+  ): Promise<CodeReviewStatus> {
+    const cached = this.codeReviews.get(reviewKey(reviewId));
+    if (
+      persistedBinding !== undefined &&
+      (!isCodeReviewHandle(persistedBinding) ||
+        persistedBinding.reviewId !== reviewId ||
+        (cached &&
+          (cached.implementationRevision !==
+            persistedBinding.implementationRevision ||
+            !sameArtifactRef(
+              cached.implementationRef,
+              persistedBinding.implementationRef,
+            ))))
+    ) {
+      throw new RuntimePortError(
+        "reconciliation",
+        "Persisted code review binding does not match the review identity",
+      );
+    }
+    const handle = cached ?? persistedBinding;
+    if (!handle) {
+      return {
+        reviewId,
+        status: "unknown",
+        reason: "No exact code review binding is available",
+      };
+    }
+    const result = parseReviewStatusResult(
+      await this.request("review-status", { reviewId }),
+      reviewId,
     );
+    if (
+      (result.implementationRef &&
+        !sameArtifactRef(result.implementationRef, handle.implementationRef)) ||
+      (result.implementationRevision !== undefined &&
+        result.implementationRevision !== handle.implementationRevision)
+    ) {
+      throw new RuntimePortError(
+        "reconciliation",
+        "Plannotator code review binding is stale",
+      );
+    }
+    if (result.status === "pending") return { ...handle, status: "pending" };
+    if (result.status === "missing") {
+      return {
+        reviewId,
+        status: "unknown",
+        reason: "Plannotator no longer has the review",
+      };
+    }
+    if (result.approved) return { ...handle, status: "approved" };
+    return {
+      ...handle,
+      status: "feedback",
+      feedback: result.feedback ?? "",
+    };
   }
 
   private request(

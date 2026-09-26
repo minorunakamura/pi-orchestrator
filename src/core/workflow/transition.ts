@@ -92,6 +92,7 @@ function clearCurrentRoundEvidence(state: WorkflowState): void {
   delete state.coding.findingEvaluationRef;
   delete state.coding.acceptedFindingsRef;
   delete state.coding.roundDecisionRef;
+  delete state.coding.latestCodeReviewRef;
 }
 
 function setContextRefs(

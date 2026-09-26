@@ -354,6 +354,23 @@ test("counts stronger retries separately and preserves human feedback accounting
   expect(state.counters.automatedFixRoundsUsed).toBe(0);
 });
 
+test("clears prior code-review authority when feedback starts a new implementation", () => {
+  let state = apply(codeReviewState(), {
+    type: "CODE_FEEDBACK",
+    feedbackRef: codeReviewRef,
+  });
+  expect(state.coding.latestCodeReviewRef).toEqual(codeReviewRef);
+
+  state = apply(state, {
+    type: "IMPLEMENTATION_COMPLETE",
+    resultRef: ref("implementation", "implementations/implementation-2.json"),
+  });
+
+  expect(state.phase).toBe("validating");
+  expect(state.coding.implementationRevision).toBe(2);
+  expect(state.coding.latestCodeReviewRef).toBeUndefined();
+});
+
 test("records and resolves a recoverable block", () => {
   const awaitingReview = apply(
     apply(initialState(), { type: "CONTEXT_READY" }),
