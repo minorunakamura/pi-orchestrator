@@ -10,6 +10,11 @@ import {
   resolvePlaybookPolicy,
   type PlaybookContext,
 } from "../../core/playbooks/policy.ts";
+import { sameArtifactRef } from "../../core/workflow/invariants.ts";
+import {
+  ArtifactImmutableError,
+  createArtifactRef,
+} from "../persistence/artifact-store.ts";
 import type {
   WorkflowEvent,
   WorkflowState,
@@ -21,8 +26,12 @@ import {
   type AgentRunResult,
   type ClarificationPort,
   type ClarificationResult,
+  type PlanReviewHandle,
+  type PlanReviewStatus,
+  type PlannotatorGate,
   type SubagentExecutor,
 } from "../ports/index.ts";
+import type { PlannotatorReviewId } from "../../types.ts";
 import {
   advanceWorkflow,
   type WorkflowStateWriter,
@@ -34,6 +43,7 @@ export interface WorkflowArtifactWriter {
     fileName: string,
     content: string,
   ): Promise<ArtifactRef<K>>;
+  readText?<K extends ArtifactKind>(ref: ArtifactRef<K>): Promise<string>;
 }
 
 export interface GatherContextInput {
@@ -80,6 +90,68 @@ export interface PlanCreationResult {
   planRef: ArtifactRef<"plan">;
   plannerInput: PlannerInput;
   parsedPlan: ParsedPlan;
+  planReview?: PlanReviewHandle;
+}
+
+export interface OpenPlanReviewInput {
+  state: WorkflowState;
+}
+
+export type OpenPlanReviewResult =
+  | { status: "opened"; state: WorkflowState; handle: PlanReviewHandle }
+  | { status: "blocked"; state: WorkflowState };
+
+export interface ReconcilePlanReviewInput {
+  state: WorkflowState;
+  reviewId: PlannotatorReviewId;
+}
+
+export type PlanReviewOutcome =
+  | { status: "pending"; state: WorkflowState; reviewId: PlannotatorReviewId }
+  | {
+      status: "approved";
+      state: WorkflowState;
+      reviewId: PlannotatorReviewId;
+      reviewRef: ArtifactRef<"plan-review">;
+    }
+  | {
+      status: "feedback";
+      state: WorkflowState;
+      reviewId: PlannotatorReviewId;
+      reviewRef: ArtifactRef<"plan-review">;
+    }
+  | {
+      status: "unknown";
+      state: WorkflowState;
+      reviewId: PlannotatorReviewId;
+      reason?: string;
+    }
+  | { status: "blocked"; state: WorkflowState; reviewId: PlannotatorReviewId };
+
+export class StalePlanReviewError extends Error {
+  constructor(
+    message = "Plan review does not match the current plan and version",
+  ) {
+    super(message);
+    this.name = "StalePlanReviewError";
+  }
+}
+
+interface PlanReviewArtifact {
+  schemaVersion: 1;
+  reviewId: string;
+  status: "approved" | "feedback";
+  planRef: ArtifactRef<"plan">;
+  planVersion: number;
+  feedback?: string;
+}
+
+interface SettledPlanReview {
+  status: "approved" | "feedback";
+  planRef: ArtifactRef<"plan">;
+  planVersion: number;
+  reviewRef: ArtifactRef<"plan-review">;
+  state: WorkflowState;
 }
 
 export interface PlanningOrchestratorDependencies {
@@ -87,6 +159,7 @@ export interface PlanningOrchestratorDependencies {
   stateStore: WorkflowStateWriter;
   subagentExecutor: SubagentExecutor;
   clarificationPort?: ClarificationPort;
+  plannotatorGate?: PlannotatorGate;
 }
 
 function request(
@@ -133,7 +206,62 @@ function resultBlockedReason(
     : "agent-infrastructure-unavailable";
 }
 
+function reviewFileName(reviewId: PlannotatorReviewId): string {
+  const encoded = encodeURIComponent(reviewId);
+  if (encoded.length === 0) throw new Error("Plan review id must not be empty");
+  return `${encoded}.md`;
+}
+
+function planReviewIdentityKey(version: number): string {
+  return `plannotator.plan-review.v${version}`;
+}
+
+function reviewArtifactContent(artifact: PlanReviewArtifact): string {
+  return `${JSON.stringify(artifact, null, 2)}\n`;
+}
+
+function reviewArtifactRef(
+  reviewId: PlannotatorReviewId,
+  status: Extract<PlanReviewStatus, { status: "approved" | "feedback" }>,
+): ArtifactRef<"plan-review"> {
+  const artifact: PlanReviewArtifact = {
+    schemaVersion: 1,
+    reviewId,
+    status: status.status,
+    planRef: status.planRef,
+    planVersion: status.planVersion,
+    ...(status.status === "feedback" ? { feedback: status.feedback } : {}),
+  };
+  return createArtifactRef(
+    "plan-review",
+    `plan-reviews/${reviewFileName(reviewId)}`,
+    reviewArtifactContent(artifact),
+  );
+}
+
+function currentPlan(state: WorkflowState): ArtifactRef<"plan"> {
+  if (!state.planning.currentPlanRef) {
+    throw new Error("Plan review requires a current plan");
+  }
+  return state.planning.currentPlanRef;
+}
+
+function assertSettledReviewMatchesCurrentPlan(
+  state: WorkflowState,
+  status: Extract<PlanReviewStatus, { status: "approved" | "feedback" }>,
+): void {
+  const plan = currentPlan(state);
+  if (
+    status.planVersion !== state.planning.currentPlanVersion ||
+    !sameArtifactRef(status.planRef, plan)
+  ) {
+    throw new StalePlanReviewError();
+  }
+}
+
 export class PlanningOrchestrator {
+  private readonly settledPlanReviews = new Map<string, SettledPlanReview>();
+
   constructor(
     private readonly dependencies: PlanningOrchestratorDependencies,
   ) {}
@@ -319,12 +447,230 @@ export class PlanningOrchestrator {
       `plan-v${targetVersion}.md`,
       plannerResult.output,
     );
-    const state = await advanceWorkflow(
+    let state = await advanceWorkflow(
       input.state,
       { type: "PLAN_CREATED", planRef, version: targetVersion },
       this.dependencies.stateStore,
     );
-    return { state, planRef, plannerInput, parsedPlan };
+    let planReview: PlanReviewHandle | undefined;
+    if (this.dependencies.plannotatorGate) {
+      const opened = await this.openPlanReview({ state });
+      state = opened.state;
+      if (opened.status === "opened") planReview = opened.handle;
+    }
+    return {
+      state,
+      planRef,
+      plannerInput,
+      parsedPlan,
+      ...(planReview ? { planReview } : {}),
+    };
+  }
+
+  async openPlanReview(
+    input: OpenPlanReviewInput,
+  ): Promise<OpenPlanReviewResult> {
+    if (input.state.phase !== "awaiting-plan-review") {
+      throw new Error("Plan review requires awaiting-plan-review phase");
+    }
+    const gate = this.dependencies.plannotatorGate;
+    if (!gate) throw new Error("PlannotatorGate is required");
+    const planRef = currentPlan(input.state);
+    let handle: PlanReviewHandle;
+    try {
+      handle = await gate.openPlanReview({
+        planRef,
+        planVersion: input.state.planning.currentPlanVersion,
+      });
+    } catch {
+      const state = await advanceWorkflow(
+        input.state,
+        { type: "BLOCK", reason: "human-gate-unavailable" },
+        this.dependencies.stateStore,
+      );
+      return { status: "blocked", state };
+    }
+    if (
+      handle.planVersion !== input.state.planning.currentPlanVersion ||
+      !sameArtifactRef(handle.planRef, planRef)
+    ) {
+      const state = await advanceWorkflow(
+        input.state,
+        { type: "BLOCK", reason: "human-gate-unavailable" },
+        this.dependencies.stateStore,
+      );
+      return { status: "blocked", state };
+    }
+    const stateWithIdentity = structuredClone(input.state);
+    stateWithIdentity.external[planReviewIdentityKey(handle.planVersion)] =
+      handle.reviewId;
+    const state = await this.dependencies.stateStore.saveState(
+      stateWithIdentity,
+      input.state.stateRevision,
+    );
+    return { status: "opened", state, handle };
+  }
+
+  async reconcilePlanReview(
+    input: ReconcilePlanReviewInput,
+  ): Promise<PlanReviewOutcome> {
+    if (!this.dependencies.plannotatorGate) {
+      throw new Error("PlannotatorGate is required");
+    }
+    const planRef = currentPlan(input.state);
+    const expectedReviewId =
+      input.state.external[
+        planReviewIdentityKey(input.state.planning.currentPlanVersion)
+      ];
+    if (expectedReviewId && expectedReviewId !== input.reviewId) {
+      throw new StalePlanReviewError(
+        "Plan review identity does not match the current plan version",
+      );
+    }
+    let status: PlanReviewStatus;
+    try {
+      status = await this.dependencies.plannotatorGate.getPlanReview(
+        input.reviewId,
+        {
+          planRef,
+          planVersion: input.state.planning.currentPlanVersion,
+        },
+      );
+    } catch {
+      const state = await advanceWorkflow(
+        input.state,
+        { type: "BLOCK", reason: "human-gate-unavailable" },
+        this.dependencies.stateStore,
+      );
+      return { status: "blocked", state, reviewId: input.reviewId };
+    }
+    return this.applyPlanReview({ ...input, status });
+  }
+
+  async applyPlanReview(input: {
+    state: WorkflowState;
+    reviewId: PlannotatorReviewId;
+    status: PlanReviewStatus;
+  }): Promise<PlanReviewOutcome> {
+    const { state, reviewId, status } = input;
+    if (status.reviewId !== reviewId) {
+      throw new StalePlanReviewError(
+        "Plan review result has a different review identity",
+      );
+    }
+    if (status.status === "pending") {
+      return { status: "pending", state, reviewId };
+    }
+    if (status.status === "unknown") {
+      return {
+        status: "unknown",
+        state,
+        reviewId,
+        ...(status.reason ? { reason: status.reason } : {}),
+      };
+    }
+    assertSettledReviewMatchesCurrentPlan(state, status);
+    const expectedReviewRef = reviewArtifactRef(reviewId, status);
+    const alreadyApplied =
+      (status.status === "approved" &&
+        state.phase === "implementing" &&
+        state.planning.approvedPlanVersion === status.planVersion &&
+        sameArtifactRef(state.planning.approvedPlanRef, status.planRef)) ||
+      (status.status === "feedback" &&
+        state.phase === "planning" &&
+        sameArtifactRef(state.planning.latestPlanReviewRef, expectedReviewRef));
+    if (alreadyApplied) {
+      return {
+        status: status.status,
+        state,
+        reviewId,
+        reviewRef: expectedReviewRef,
+      };
+    }
+
+    const cached = this.settledPlanReviews.get(reviewId);
+    if (cached) {
+      if (
+        cached.status !== status.status ||
+        !sameArtifactRef(cached.planRef, status.planRef) ||
+        cached.planVersion !== status.planVersion
+      ) {
+        throw new StalePlanReviewError(
+          "A settled review identity was reused for another result",
+        );
+      }
+      return {
+        status: cached.status,
+        state: cached.state,
+        reviewId,
+        reviewRef: cached.reviewRef,
+      };
+    }
+
+    const reviewRef = await this.persistPlanReview(reviewId, status);
+    const event: WorkflowEvent =
+      status.status === "approved"
+        ? {
+            type: "PLAN_APPROVED",
+            planRef: status.planRef,
+            version: status.planVersion,
+          }
+        : { type: "PLAN_FEEDBACK", feedbackRef: reviewRef };
+    const nextState = await advanceWorkflow(
+      state,
+      event,
+      this.dependencies.stateStore,
+    );
+    this.settledPlanReviews.set(reviewId, {
+      status: status.status,
+      planRef: status.planRef,
+      planVersion: status.planVersion,
+      reviewRef,
+      state: nextState,
+    });
+    return {
+      status: status.status,
+      state: nextState,
+      reviewId,
+      reviewRef,
+    };
+  }
+
+  private async persistPlanReview(
+    reviewId: PlannotatorReviewId,
+    status: Extract<PlanReviewStatus, { status: "approved" | "feedback" }>,
+  ): Promise<ArtifactRef<"plan-review">> {
+    const artifact: PlanReviewArtifact = {
+      schemaVersion: 1,
+      reviewId,
+      status: status.status,
+      planRef: status.planRef,
+      planVersion: status.planVersion,
+      ...(status.status === "feedback" ? { feedback: status.feedback } : {}),
+    };
+    const content = reviewArtifactContent(artifact);
+    const fileName = reviewFileName(reviewId);
+    const expectedRef = reviewArtifactRef(reviewId, status);
+    try {
+      return await this.dependencies.artifactStore.writeText(
+        "plan-review",
+        fileName,
+        content,
+      );
+    } catch (error) {
+      const readText = this.dependencies.artifactStore.readText?.bind(
+        this.dependencies.artifactStore,
+      );
+      if (!(error instanceof ArtifactImmutableError) || !readText) throw error;
+      try {
+        if ((await readText(expectedRef)) === content) {
+          return expectedRef;
+        }
+      } catch {
+        // Preserve the original immutable-write error below.
+      }
+      throw error;
+    }
   }
 
   private async runPlanner(
@@ -429,4 +775,18 @@ export async function createPlan(
   dependencies: PlanningOrchestratorDependencies,
 ): Promise<PlanCreationResult> {
   return new PlanningOrchestrator(dependencies).createPlan(input);
+}
+
+export async function openPlanReview(
+  input: OpenPlanReviewInput,
+  dependencies: PlanningOrchestratorDependencies,
+): Promise<OpenPlanReviewResult> {
+  return new PlanningOrchestrator(dependencies).openPlanReview(input);
+}
+
+export async function reconcilePlanReview(
+  input: ReconcilePlanReviewInput,
+  dependencies: PlanningOrchestratorDependencies,
+): Promise<PlanReviewOutcome> {
+  return new PlanningOrchestrator(dependencies).reconcilePlanReview(input);
 }

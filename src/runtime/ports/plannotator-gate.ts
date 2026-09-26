@@ -45,7 +45,10 @@ export type CodeReviewStatus =
 
 export interface PlannotatorGate {
   openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle>;
-  getPlanReview(reviewId: PlannotatorReviewId): Promise<PlanReviewStatus>;
+  getPlanReview(
+    reviewId: PlannotatorReviewId,
+    expected?: PlanReviewRequest,
+  ): Promise<PlanReviewStatus>;
   openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle>;
   getCodeReview(reviewId: PlannotatorReviewId): Promise<CodeReviewStatus>;
 }
