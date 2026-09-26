@@ -1,6 +1,6 @@
 # Pi Orchestrator Runtime Design
 
-Version: 1.3
+Version: 1.4
 
 ## 1. Purpose
 
@@ -159,16 +159,38 @@ Human review result must first be persisted as an artifact. Only then may the ru
 
 ## 8. Jev Integration
 
+### Selected client package
+
+v1 uses [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) as the Jev client package.
+
+The product runtime uses the package's **public library API** from `runtime/integrations/jev.ts`; it does not route decisions through the `typesafe_evaluate` Pi agent tool. Consequently, `/typesafe enable` is not a prerequisite for pi-orchestrator's runtime decision calls.
+
+```text
+JevDecisionClient port
+        ↓
+runtime/integrations/jev.ts
+        ↓
+pi-typesafe public API
+        ↓
+TypeSafe / Jev
+```
+
 `runtime/integrations/jev.ts` owns:
 
-- authentication
-- endpoint / transport
-- Jev/System One request shape
+- `pi-typesafe` client creation / public-API calls
+- authentication / availability normalization
+- backend / transport options permitted by v1 configuration
 - Choice / Score / Noul external schema handling
 - confidence normalization
 - response validation
-- transport error normalization
+- budget / transport / auth error normalization
 - optional usage metadata
+
+Where the domain requires `Decision<T>.confidence`, use a confidence-bearing bounded primitive (normally Choice) rather than letting an external primitive shape weaken the domain contract.
+
+The adapter converts `pi-typesafe` success/failure results into the existing `JevDecisionClient` contract and domain integration errors. `pi-typesafe` result/error types must not escape into `core/`.
+
+pi-orchestrator owns its own consent and budget policy for Product Runtime use. The package's agent-tool opt-in state is not Workflow authority.
 
 It does not own:
 
@@ -229,7 +251,7 @@ This includes, but is not limited to:
 - Plannotator
 - pi-ketch
 - pi-ask-user-question
-- Jev / TypeSafe client libraries
+- `pi-typesafe` / Jev / TypeSafe client libraries
 - other npm or external dependencies
 
 Forbidden approaches include direct source edits, `node_modules` edits, required package patches, and forks that add orchestrator-specific behavior.

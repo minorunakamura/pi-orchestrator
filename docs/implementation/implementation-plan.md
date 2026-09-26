@@ -1,6 +1,6 @@
 # Pi Orchestrator v1 Implementation Plan
 
-Version: 1.4
+Version: 1.5
 
 ## 1. Goal
 
@@ -676,19 +676,29 @@ ORCH-008.
 
 ### Goal
 
-Integrate TypeSafe/Jev behind a runtime adapter without domain policy in the adapter.
+Integrate TypeSafe/Jev through the selected `pi-typesafe` public library API behind a runtime adapter, without domain policy in the adapter.
+
+### Selected dependency
+
+```text
+DevMortimer/pi-typesafe
+package: pi-typesafe
+usage: public library API
+```
+
+Do not use the `typesafe_evaluate` Pi agent tool as the Product Runtime decision path. `/typesafe enable` is not a runtime prerequisite for pi-orchestrator's library API calls.
 
 ### Scope
 
 Implement:
 
 ```text
-Jev request transport
-authentication boundary
+pi-typesafe client creation / invocation
+authentication / availability boundary
 Choice request construction
 response parsing
 confidence normalization
-schema/API/transport error normalization
+budget/auth/schema/transport error normalization
 ```
 
 Support the three v1 decision request families:
@@ -703,15 +713,19 @@ Round Decision
 
 ```text
 src/runtime/integrations/jev.ts
-src/runtime/integrations/jev-contracts.ts   # external-only types if needed
+src/runtime/integrations/jev-contracts.ts   # pi-typesafe/external-only types if needed
 ```
 
 ### Acceptance criteria
 
-- TypeSafe API types stay outside `core/`.
+- `pi-typesafe` is consumed as an unmodified read-only third-party dependency.
+- only its published library API is used; no private/internal API dependency is introduced.
+- `typesafe_evaluate` / `/typesafe enable` is not used as the Product Runtime decision path.
+- `pi-typesafe` / TypeSafe-specific types stay outside `core/`.
 - malformed/unsupported responses do not silently fallback.
-- transport/API/schema failures normalize to integration failure.
-- boolean semantic questions use confidence-bearing bounded choices.
+- auth / budget / transport / schema failures normalize to the existing integration-failure domain boundary.
+- boolean semantic questions use confidence-bearing bounded choices when domain confidence is required.
+- pi-orchestrator owns its Product Runtime consent/budget policy rather than treating pi-typesafe agent-tool opt-in as authority.
 - adapter does not decide ACCEPT/REJECT/ESCALATE or state transitions.
 
 ### Tests
@@ -719,14 +733,18 @@ src/runtime/integrations/jev-contracts.ts   # external-only types if needed
 Fixture/mock tests for:
 
 ```text
-valid response
+valid pi-typesafe result
 low confidence response
 missing question result
 unknown choice
 schema mismatch
+auth unavailable/rejected
+budget exhausted
 timeout
-HTTP/API failure
+transport/API failure
 ```
+
+Tests must not require `/typesafe enable` or the Pi agent tool.
 
 ### Depends on
 

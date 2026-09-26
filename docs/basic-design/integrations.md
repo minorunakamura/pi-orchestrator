@@ -1,6 +1,6 @@
 # Integrations
 
-Version: 1.0
+Version: 1.1
 
 ## 1. 目的
 
@@ -90,6 +90,26 @@ runtime/integrations/jev.ts
 
 TypeSafe System One は typed decision を返す external decision service として扱う。
 
+### Selected Integration Package
+
+v1 では Jev client integration として [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) を採用する。
+
+`pi-orchestrator` は `pi-typesafe` の公開 library API を `runtime/integrations/jev.ts` から利用する。
+
+```text
+pi-orchestrator
+    ↓
+runtime/integrations/jev.ts
+    ↓
+pi-typesafe public library API
+    ↓
+TypeSafe / Jev
+```
+
+`pi-typesafe` が Pi に登録する `typesafe_evaluate` tool を Product Runtime の Decision Engine 呼び出し経路には使用しない。`/typesafe enable` は同 tool の session opt-in であり、pi-orchestrator の library API integration の有効化条件にはしない。
+
+`pi-typesafe` は read-only third-party dependency とし、source modification / fork / patch を前提にしない。
+
 v1 use:
 
 ```text
@@ -100,17 +120,24 @@ Post-Implementation Round Decision
 
 ### API Boundary
 
-External API 固有:
+`runtime/integrations/jev.ts` は `pi-typesafe` の公開 API（例: client creation、`ask`、Choice / Score / Noul helpers、auth / availability state）だけに依存する。
 
-- authentication
-- endpoint
-- Noul / Choice / Score schema
+External / library 固有:
+
+- authentication / key source
+- backend / transport
+- Choice / Score / Noul schema
 - response probabilities/confidence
+- budget / availability error
 - usage metadata
 
 は adapter 内に閉じ込める。
 
-Core へは normalized decision のみ渡す。
+Core へは normalized decision / normalized integration error のみ渡す。
+
+Boolean semantic judgment で confidence が Workflow policy に必要な場合は、Basic Design の `Decision<T>` contract に合わせて confidence-bearing bounded Choice を使用する。`Noul` を使うかどうかは external primitive convenience ではなく domain contract を優先して決める。
+
+User consent / budget policy は pi-orchestrator 自身が所有する。`pi-typesafe` package の `/typesafe enable` state を pi-orchestrator の Product Runtime authority として扱わない。
 
 ### Failure
 
@@ -142,7 +169,7 @@ LLM evaluator への automatic fallback は行わない。
 
 API key / secret を State / Artifact / task text に保存しない。
 
-Pi / Extension secret configuration から runtime に供給する。
+Key resolution は `pi-typesafe` の公開 contract を利用できるが、secret value 自体を pi-orchestrator の durable domain data に取り込まない。
 
 詳細は [decision-engine.md](./decision-engine.md)。
 
