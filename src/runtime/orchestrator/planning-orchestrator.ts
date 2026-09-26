@@ -40,7 +40,17 @@ export interface WorkflowArtifactWriter {
     fileName: string,
     content: string,
   ): Promise<ArtifactRef<K>>;
+  writeJson?<K extends ArtifactKind, R>(
+    kind: K,
+    fileName: string,
+    value: unknown,
+    schema: (value: unknown) => R,
+  ): Promise<ArtifactRef<K>>;
   readText?<K extends ArtifactKind>(ref: ArtifactRef<K>): Promise<string>;
+  readJson?<K extends ArtifactKind, R>(
+    ref: ArtifactRef<K>,
+    schema: (value: unknown) => R,
+  ): Promise<R>;
 }
 
 export interface GatherContextInput {
