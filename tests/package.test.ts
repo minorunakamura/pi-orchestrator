@@ -10,7 +10,7 @@ import { expect, test, vi } from "vitest";
 
 const root = resolve(import.meta.dirname, "..");
 
-test("entry exposes inert integration constructors without activating the host", async () => {
+test("entry exports integrations and registers commands without activating runtime work", async () => {
   vi.useFakeTimers();
   const fetch = vi.fn(() => {
     throw Error("Unexpected external request");
@@ -30,12 +30,23 @@ test("entry exposes inert integration constructors without activating the host",
     expect(entry.SubagentsIntegration).toBe(SubagentsIntegration);
     expect(entry.JevIntegration).toBe(JevIntegration);
     expect(entry.PlannotatorIntegration).toBe(PlannotatorIntegration);
-    const host = new Proxy({} as ExtensionAPI, {
-      get: (_target, key) => {
-        throw Error(`Unexpected host activation: ${String(key)}`);
-      },
-    });
+    const commands = new Map<string, unknown>();
+    const host = {
+      events: { emit: vi.fn(), on: vi.fn(() => () => {}) },
+      registerCommand: vi.fn((name: string, options: unknown) => {
+        commands.set(name, options);
+      }),
+    } as unknown as ExtensionAPI;
     entry.default(host);
+    expect([...commands.keys()]).toEqual([
+      "wf-new",
+      "wf-feature",
+      "wf-bugfix",
+      "wf-hotfix",
+      "wf-chore",
+      "wf-resume",
+      "wf-status",
+    ]);
     expect(fetch).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   } finally {
@@ -89,7 +100,15 @@ test.each(["explicit", "installed"])(
       expect(result.extensions).toHaveLength(1);
       const extension = result.extensions[0]!;
       expect(extension.resolvedPath).toBe(join(root, "src/index.ts"));
-      expect(extension.commands.size).toBe(0);
+      expect([...extension.commands.keys()]).toEqual([
+        "wf-new",
+        "wf-feature",
+        "wf-bugfix",
+        "wf-hotfix",
+        "wf-chore",
+        "wf-resume",
+        "wf-status",
+      ]);
       expect(extension.tools.size).toBe(0);
       expect(extension.handlers.size).toBe(0);
     } finally {

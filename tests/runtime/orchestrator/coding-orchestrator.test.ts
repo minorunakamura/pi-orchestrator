@@ -11,6 +11,7 @@ import { parseAcceptedFindingsArtifact } from "../../../src/core/decisions/types
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import {
   CodingOrchestrator,
+  codeReviewIdentityKey,
   parseCodeReviewArtifact,
   parseExecutionRoutingArtifact,
   type CodingOrchestratorDependencies,
@@ -947,6 +948,25 @@ describe("CodingOrchestrator ORCH-012", () => {
       reviewing,
       { type: "REVIEW_COMPLETE", decisionRef },
       started.stateStore,
+    );
+    const reviewId = "code-review-1" as never;
+    reviewing = await started.stateStore.saveState(
+      {
+        ...reviewing,
+        external: {
+          ...reviewing.external,
+          [codeReviewIdentityKey(1)]: reviewId,
+        },
+        coding: {
+          ...reviewing.coding,
+          codeReview: {
+            reviewId,
+            implementationRef: initial.implementationRef,
+            implementationRevision: 1,
+          },
+        },
+      },
+      reviewing.stateRevision,
     );
     const feedback = {
       schemaVersion: 1 as const,

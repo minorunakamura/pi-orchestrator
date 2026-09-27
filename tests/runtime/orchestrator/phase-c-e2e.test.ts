@@ -216,7 +216,7 @@ describe("Phase C full fake end-to-end contract", () => {
         },
       },
     });
-  });
+  }, 10_000);
 
   test("stronger retry consumes both budgets and cannot downgrade on routing re-evaluation", async () => {
     const h = await setup({

@@ -1,4 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  createWorkflowCommandRuntime,
+  registerWorkflowCommands,
+} from "./commands/index.ts";
 
 // Composition callers supply the host event bus, ArtifactStore reader, and
 // workflow-scoped options. Importing these adapters does not dispatch work.
@@ -14,7 +18,11 @@ export {
   type ResumeWorkflowResult,
 } from "./runtime/orchestrator/resume-workflow.ts";
 
-export default function piOrchestrator(_pi: ExtensionAPI): void {
-  // Agent discovery is manifest-owned. Commands and runtime activation belong
-  // to ORCH-019; package loading must not start workflows or external requests.
+export default function piOrchestrator(pi: ExtensionAPI): void {
+  // Agent discovery is manifest-owned. Registration is inert; runtime work
+  // starts only from an explicit command invocation.
+  registerWorkflowCommands(pi, {
+    createRuntime: (context) =>
+      createWorkflowCommandRuntime(pi.events, context.cwd),
+  });
 }
