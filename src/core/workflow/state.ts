@@ -113,6 +113,7 @@ export function isCodeReviewBinding(
 }
 
 export interface CodingState {
+  workerAttemptRef?: ArtifactRef<"implementation">;
   codeReview?: CodeReviewBinding;
   previousRoundDecisionRef?: ArtifactRef<"round-decision">;
   implementationRevision: number;
@@ -147,7 +148,35 @@ export interface FailureState {
   evidenceRef?: ArtifactRef;
 }
 
+export interface JevUsageState {
+  attemptsReserved: number;
+  latestRequestRef?: ArtifactRef<"jev-request">;
+  latestUsageRef?: ArtifactRef<"jev-request">;
+}
+function isJevUsage(value: unknown): value is JevUsageState {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "attemptsReserved",
+      "latestRequestRef",
+      "latestUsageRef",
+    ]) &&
+    isNonNegativeInteger(value.attemptsReserved) &&
+    optional(value, "latestRequestRef", (ref) =>
+      isArtifactOfKind(ref, "jev-request"),
+    ) &&
+    optional(value, "latestUsageRef", (ref) =>
+      isArtifactOfKind(ref, "jev-request"),
+    ) &&
+    (value.attemptsReserved === 0
+      ? value.latestRequestRef === undefined
+      : value.latestRequestRef !== undefined)
+  );
+}
 export interface WorkflowState {
+  /** Missing legacy scope/accounting is diagnosable, never permission to send. */
+  projectRoot?: string;
+  jevUsage?: JevUsageState;
   schemaVersion: 1;
   workflowId: WorkflowId;
   stateRevision: number;
@@ -347,6 +376,7 @@ function isCodingState(value: unknown): value is CodingState {
       "roundDecisionRef",
       "latestCodeReviewRef",
       "codeReview",
+      "workerAttemptRef",
       "previousRoundDecisionRef",
     ]) ||
     !optional(value, "codeReview", isCodeReviewBinding) ||
@@ -359,6 +389,7 @@ function isCodingState(value: unknown): value is CodingState {
   const refs: [string, ArtifactRef["kind"]][] = [
     ["executionRoutingRef", "execution-routing"],
     ["implementationRef", "implementation"],
+    ["workerAttemptRef", "implementation"],
     ["validationRef", "validation"],
     ["correctnessReviewRef", "correctness-review"],
     ["ponytailReviewRef", "ponytail-review"],
@@ -414,6 +445,8 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
       "schemaVersion",
       "workflowId",
       "stateRevision",
+      "projectRoot",
+      "jevUsage",
       "playbook",
       "phase",
       "taskRef",
@@ -429,6 +462,8 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
     isSchemaVersion(value.schemaVersion) &&
     isNonEmptyString(value.workflowId) &&
     isNonNegativeInteger(value.stateRevision) &&
+    optional(value, "projectRoot", isNonEmptyString) &&
+    optional(value, "jevUsage", isJevUsage) &&
     isPlaybookKind(value.playbook) &&
     isWorkflowPhase(value.phase) &&
     isArtifactOfKind(value.taskRef, "task") &&

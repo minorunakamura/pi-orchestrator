@@ -1,8 +1,27 @@
+import { RuntimePortError } from "./errors.ts";
+
+/** Only the adapter may assert this after proving no request was emitted. */
+export class SubagentNotDispatchedError extends RuntimePortError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super("infrastructure", message, options);
+    this.name = "SubagentNotDispatchedError";
+  }
+}
+
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import type { SubagentRunId } from "../../types.ts";
 
+export interface AgentDispatch {
+  requestId: string;
+  ownerRunId: string;
+  nodeId: string;
+  deadline: string;
+}
+
 export interface AgentRunRequest {
+  /** Orchestrator-owned correlation, persisted before dispatch. */
+  dispatch?: AgentDispatch;
   agent: string;
   task: string;
   cwd?: string;
@@ -10,7 +29,7 @@ export interface AgentRunRequest {
   executionProfile?: ResolvedExecutionProfile;
 }
 
-export type AgentRunResult =
+export type AgentRunResult = (
   | {
       status: "succeeded";
       runId: SubagentRunId;
@@ -18,14 +37,17 @@ export type AgentRunResult =
     }
   | {
       status: "failed";
+      notDispatched?: boolean;
       runId?: SubagentRunId;
       error: string;
     }
   | {
       status: "ambiguous";
-      runId: SubagentRunId;
+      runId?: SubagentRunId;
+      timedOut?: boolean;
       reason: string;
-    };
+    }
+) & { dispatch?: AgentDispatch };
 
 export type AgentRunState =
   | "queued"

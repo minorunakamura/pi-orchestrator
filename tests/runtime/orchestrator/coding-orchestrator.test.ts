@@ -1,4 +1,7 @@
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile, mkdir, rename } from "node:fs/promises";
+import { SubagentsIntegration } from "../../../src/runtime/integrations/subagents.ts";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -12,7 +15,10 @@ import {
   parseExecutionRoutingArtifact,
   type CodingOrchestratorDependencies,
 } from "../../../src/runtime/orchestrator/coding-orchestrator.ts";
-import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
+import {
+  PlanningOrchestrator,
+  type WorkflowArtifactWriter,
+} from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import type { AgentRunResult } from "../../../src/runtime/ports/index.ts";
@@ -23,6 +29,7 @@ import {
 } from "../../fakes/index.ts";
 import type { SubagentRunId } from "../../../src/types.ts";
 
+import { jevPolicy } from "../../fakes/jev-policy.ts";
 const roots: string[] = [];
 const runId = "worker-1" as unknown as SubagentRunId;
 const validPlan = `# Approved Plan
@@ -83,6 +90,7 @@ function succeeded(output: string): { type: "result"; value: AgentRunResult } {
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join("/tmp", "pi-orchestrator-coding-"));
   roots.push(root);
+  await promisify(execFile)("git", ["init", "--quiet", root]);
   return root;
 }
 
@@ -92,7 +100,11 @@ async function makeApproved() {
     run: [succeeded("repository facts"), succeeded(validPlan)],
   });
   const started = await startWorkflow(
-    { task: "Implement the coding entry", playbook: "feature" },
+    {
+      task: "Implement the coding entry",
+      playbook: "feature",
+      cwd: runsDirectory,
+    },
     {
       runsDirectory,
       subagentExecutor: planningExecutor,
@@ -121,6 +133,7 @@ async function makeApproved() {
   );
   return {
     ...started,
+    repositoryCwd: runsDirectory,
     state: approvedState,
     planRef: created.planRef,
     artifactStore: started.artifactStore,
@@ -135,11 +148,15 @@ function dependencies(
   return {
     artifactStore: started.artifactStore,
     stateStore: started.stateStore,
+    repositoryCwd: started.repositoryCwd,
     jevDecisionClient: new FakeJevDecisionClient({
       routeExecution: { type: "result", value: routing },
     }),
     subagentExecutor: new FakeSubagentExecutor({ run: succeeded("done") }),
-    configuration,
+    configuration: {
+      ...configuration,
+      jev: jevPolicy(started.state.workflowId, started.state.projectRoot),
+    },
     ...overrides,
   };
 }
@@ -155,6 +172,283 @@ afterEach(async () => {
 });
 
 describe("CodingOrchestrator ORCH-012", () => {
+  test("gitlinks are unsupported even when Git is configured to ignore submodule dirt", async () => {
+    const started = await makeApproved();
+    await mkdir(join(started.repositoryCwd, "module"));
+    await writeFile(
+      join(started.repositoryCwd, "module", "dirty.txt"),
+      "preexisting dirty content",
+    );
+    await promisify(execFile)("git", [
+      "-C",
+      started.repositoryCwd,
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${"a".repeat(40)},module`,
+    ]);
+    await promisify(execFile)("git", [
+      "-C",
+      started.repositoryCwd,
+      "config",
+      "diff.ignoreSubmodules",
+      "all",
+    ]);
+    const worker = new FakeSubagentExecutor({ run: succeeded("must not run") });
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: worker }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow(/gitlink|submodule/iu);
+    expect(worker.calls.run).toHaveLength(0);
+    expect((await persistedState(started.runDirectory)).block?.reason).toBe(
+      "agent-infrastructure-unavailable",
+    );
+  });
+
+  test("received run identity is durable before an unavailable post-run scan", async () => {
+    const started = await makeApproved();
+    const worker = new FakeSubagentExecutor();
+    worker.run = async () => {
+      await rename(
+        join(started.repositoryCwd, ".git"),
+        join(started.repositoryCwd, ".git-hidden"),
+      );
+      return succeeded("done").value;
+    };
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: worker }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow();
+    const state = await persistedState(started.runDirectory);
+    const terminal = JSON.parse(
+      await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+    );
+    const received = JSON.parse(
+      await readFile(
+        join(
+          started.runDirectory,
+          "implementation",
+          `attempt-${terminal.attemptId}-received.json`,
+        ),
+        "utf8",
+      ),
+    );
+    expect(received).toMatchObject({ runId, after: { status: "pending" } });
+    expect(terminal.after.status).toBe("unavailable");
+    expect(state.phase).toBe("blocked");
+  });
+
+  test("proven subscription failure is durable not-started infrastructure evidence", async () => {
+    const started = await makeApproved();
+    let emissions = 0;
+    const adapter = new SubagentsIntegration(
+      {
+        on: () => {
+          throw Error("subscription unavailable");
+        },
+        emit: () => {
+          emissions++;
+        },
+      },
+      { timeoutMs: 50 },
+    );
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: adapter }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow();
+    const state = await persistedState(started.runDirectory);
+    const record = JSON.parse(
+      await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+    );
+    expect(emissions).toBe(0);
+    expect(state.block?.reason).toBe("agent-infrastructure-unavailable");
+    expect(record).toMatchObject({
+      status: "failed",
+      launchStatus: "not-started",
+    });
+    expect(record.runId).toBeUndefined();
+  });
+  test("persists dispatch intent before mutation and exact failed run evidence after it", async () => {
+    const started = await makeApproved();
+    await writeFile(
+      join(started.repositoryCwd, "preexisting.txt"),
+      "keep this",
+    );
+    const worker = new FakeSubagentExecutor();
+    worker.run = async (request) => {
+      const durable = await persistedState(started.runDirectory);
+      expect(durable.coding.workerAttemptRef).toBeDefined();
+      const intent = JSON.parse(
+        await started.artifactStore.readText!(durable.coding.workerAttemptRef!),
+      );
+      expect(intent.status).toBe("intent");
+      expect(intent.dispatch).toEqual(request.dispatch);
+      expect(intent.before.untracked).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "preexisting.txt" }),
+        ]),
+      );
+      await writeFile(
+        join(started.repositoryCwd, "mutation.txt"),
+        "mutation before failure",
+      );
+      return { status: "failed", runId, error: "task failed" };
+    };
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: worker }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow();
+    const state = await persistedState(started.runDirectory);
+    expect(state.phase).toBe("blocked");
+    const observation = JSON.parse(
+      await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+    );
+    expect(observation).toMatchObject({ status: "failed", runId });
+    expect(observation.after.snapshot.untracked).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "mutation.txt" }),
+      ]),
+    );
+    expect(observation.previousRef).toBeDefined();
+    const resumed = await advanceWorkflow(
+      state,
+      { type: "BLOCK_RESOLVED" },
+      started.stateStore,
+    );
+    const next = new FakeSubagentExecutor({ run: succeeded("duplicate") });
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: next }),
+      ).execute({ state: resumed }),
+    ).rejects.toThrow(/reconcil|attempt/iu);
+    expect(next.calls.run).toHaveLength(0);
+  });
+  test.each(["ambiguous", "timed-out"])(
+    "retains %s run evidence and never infers completion",
+    async (mode) => {
+      const started = await makeApproved();
+      const worker = new FakeSubagentExecutor({
+        run: {
+          type: "result",
+          value: {
+            status: "ambiguous",
+            runId,
+            timedOut: mode === "timed-out",
+            reason: "outcome unknown",
+          },
+        },
+      });
+      await expect(
+        new CodingOrchestrator(
+          dependencies(started, { subagentExecutor: worker }),
+        ).execute({ state: started.state }),
+      ).rejects.toThrow();
+      const state = await persistedState(started.runDirectory);
+      const record = JSON.parse(
+        await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+      );
+      expect(record).toMatchObject({ status: mode, runId });
+      expect(record.dispatch.requestId).not.toBe(runId);
+      expect(state.coding.implementationRef).toBeUndefined();
+      expect(state.block?.reason).toBe("agent-execution-ambiguous");
+    },
+  );
+
+  test("outcome State save failure leaves an intent barrier and exact orphan run evidence", async () => {
+    const started = await makeApproved();
+    const worker = new FakeSubagentExecutor({ run: succeeded("same prose") });
+    const store = {
+      saveState: async (
+        state: Parameters<typeof started.stateStore.saveState>[0],
+        revision?: number,
+      ) => {
+        if (state.coding.workerAttemptRef?.path.endsWith("result.json"))
+          throw Error("outcome State failed");
+        return started.stateStore.saveState(state, revision);
+      },
+    };
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: worker, stateStore: store }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow("outcome State failed");
+    const state = await persistedState(started.runDirectory);
+    const intent = JSON.parse(
+      await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+    );
+    expect(intent.status).toBe("ambiguous");
+    expect(intent.runId).toBe(runId);
+    const result = JSON.parse(
+      await readFile(
+        join(
+          started.runDirectory,
+          "implementation",
+          `attempt-${intent.attemptId}-result.json`,
+        ),
+        "utf8",
+      ),
+    );
+    expect(result).toMatchObject({ status: "succeeded", runId });
+    const next = new FakeSubagentExecutor({ run: succeeded("duplicate") });
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: next }),
+      ).execute({ state }),
+    ).rejects.toThrow(/reconcil/iu);
+    expect(next.calls.run).toHaveLength(0);
+  });
+
+  test("implementation Artifact failure retains received run identity for recovery", async () => {
+    const started = await makeApproved();
+    const artifacts: WorkflowArtifactWriter = {
+      ...started.artifactStore,
+      readText: started.artifactStore.readText!.bind(started.artifactStore),
+      writeText: started.artifactStore.writeText.bind(started.artifactStore),
+      writeJson: async (kind, name, value, schema) => {
+        if (name.startsWith("implementation-"))
+          throw Error("result disk failure");
+        return started.artifactStore.writeJson!(kind, name, value, schema);
+      },
+    };
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, { artifactStore: artifacts }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow("result disk failure");
+    const state = await persistedState(started.runDirectory);
+    const record = JSON.parse(
+      await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+    );
+    expect(record.runId).toBe(runId);
+    expect(state.phase).toBe("blocked");
+  });
+
+  test("missing consent blocks before Jev or Worker", async () => {
+    const started = await makeApproved();
+    const jev = new FakeJevDecisionClient({
+      routeExecution: { type: "result", value: routing },
+    });
+    const worker = new FakeSubagentExecutor({ run: succeeded("forbidden") });
+    await expect(
+      new CodingOrchestrator(
+        dependencies(started, {
+          configuration,
+          jevDecisionClient: jev,
+          subagentExecutor: worker,
+        }),
+      ).execute({ state: started.state }),
+    ).rejects.toThrow(/consent|budget/iu);
+    expect(jev.calls.routeExecution).toHaveLength(0);
+    expect(worker.calls.run).toHaveLength(0);
+    expect((await persistedState(started.runDirectory)).block?.reason).toBe(
+      "operator-attention-required",
+    );
+  });
+
   test.each([
     "configuration",
     "revision",
@@ -170,18 +464,24 @@ describe("CodingOrchestrator ORCH-012", () => {
       const started = await makeApproved();
       const first = new CodingOrchestrator(
         dependencies(started, {
+          stateStore: {
+            saveState: async (state, revision) => {
+              if (state.coding.workerAttemptRef)
+                throw Error("intent save interrupted");
+              return started.stateStore.saveState(state, revision);
+            },
+          },
           subagentExecutor: new FakeSubagentExecutor({
-            run: failure("infrastructure", "unavailable"),
+            run: succeeded("must not start"),
           }),
         }),
       );
       await expect(first.execute({ state: started.state })).rejects.toThrow();
-      const resumed = await advanceWorkflow(
-        await persistedState(started.runDirectory),
-        { type: "BLOCK_RESOLVED" },
-        started.stateStore,
-      );
-      const config = structuredClone(configuration);
+      const resumed = await persistedState(started.runDirectory);
+      const config = {
+        ...structuredClone(configuration),
+        jev: jevPolicy(started.state.workflowId, started.state.projectRoot),
+      };
       if (change === "configuration")
         config.decision.autoDecisionThreshold = 0.99;
       if (change === "revision") resumed.coding.implementationRevision += 1;
@@ -436,7 +736,7 @@ describe("CodingOrchestrator ORCH-012", () => {
           subagentExecutor: workerFailure,
         }),
       ).execute({ state: resumed }),
-    ).rejects.toThrow(/Worker unavailable/iu);
+    ).rejects.toThrow(/Worker did not succeed/iu);
     expect((await persistedState(started.runDirectory)).phase).toBe("blocked");
     expect(workerFailure.calls.run).toHaveLength(1);
   });
@@ -446,12 +746,14 @@ describe("CodingOrchestrator ORCH-012", () => {
     const worker = new FakeSubagentExecutor({
       run: succeeded("should not run"),
     });
-    const writeFailure = {
+    const writeFailure: WorkflowArtifactWriter = {
       ...started.artifactStore,
       readText: started.artifactStore.readText!.bind(started.artifactStore),
       writeText: started.artifactStore.writeText.bind(started.artifactStore),
-      writeJson: async () => {
-        throw new Error("decision disk failure");
+      writeJson: async (kind, name, value, schema) => {
+        if (kind === "execution-routing")
+          throw new Error("decision disk failure");
+        return started.artifactStore.writeJson!(kind, name, value, schema);
       },
     };
     await expect(
@@ -475,17 +777,19 @@ describe("CodingOrchestrator ORCH-012", () => {
         dependencies(started, {
           subagentExecutor: worker2,
           stateStore: {
-            saveState: async () => {
-              throw new Error("State disk failure");
+            saveState: async (state, revision) => {
+              if (state.coding.executionRoutingRef)
+                throw new Error("State disk failure");
+              return started.stateStore.saveState(state, revision);
             },
           },
         }),
-      ).execute({ state: started.state }),
+      ).execute({ state: await persistedState(started.runDirectory) }),
     ).rejects.toThrow("State disk failure");
     expect(worker2.calls.run).toHaveLength(0);
   });
 
-  test("records a persistence consistency failure after implementation evidence is durable", async () => {
+  test("blocks recoverably after implementation evidence is durable but State publication fails", async () => {
     const started = await makeApproved();
     const worker = new FakeSubagentExecutor({ run: succeeded("implemented") });
     const realStateStore = started.stateStore;
@@ -507,9 +811,9 @@ describe("CodingOrchestrator ORCH-012", () => {
       ).execute({ state: started.state }),
     ).rejects.toThrow("implementation State disk failure");
     const state = await persistedState(started.runDirectory);
-    expect(state.phase).toBe("failed");
-    expect(state.failure?.reason).toBe("persistence-consistency-failure");
-    expect(state.failure?.evidenceRef?.kind).toBe("implementation");
+    expect(state.phase).toBe("blocked");
+    expect(state.block?.reason).toBe("agent-execution-ambiguous");
+    expect(state.block?.evidenceRef?.kind).toBe("implementation");
   });
 
   test("passes Human Code Feedback to a Fix Worker without treating it as automated findings", async () => {

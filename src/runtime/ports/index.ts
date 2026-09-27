@@ -4,6 +4,8 @@ export {
   type PortFailureKind,
 } from "./errors.ts";
 export {
+  SubagentNotDispatchedError,
+  type AgentDispatch,
   type AgentRunRequest,
   type AgentRunResult,
   type AgentRunState,
@@ -19,6 +21,9 @@ export {
   type FindingEvaluationInput,
   type FindingEvaluationRawDecision,
   type JevDecisionClient,
+  type JevCallAuthorization,
+  type JevAttempt,
+  type JevRequestFamily,
   type RoundDecisionInput,
   type RoundDecisionRawDecision,
 } from "./jev-decision-client.ts";

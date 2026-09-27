@@ -35,6 +35,7 @@ import {
 } from "./advance-workflow.ts";
 
 export interface WorkflowArtifactWriter {
+  readonly rootDirectory?: string;
   writeText<K extends ArtifactKind>(
     kind: K,
     fileName: string,

@@ -1,3 +1,4 @@
+import { JevAuthorization, jevBlockedReason } from "./jev-authorization.ts";
 import type {
   ArtifactKind,
   ArtifactRef,
@@ -73,7 +74,8 @@ export interface FindingEvaluationRunnerDependencies {
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
   jevDecisionClient: JevDecisionClient;
-  configuration: Pick<OrchestratorConfiguration, "decision">;
+  configuration: Pick<OrchestratorConfiguration, "decision"> &
+    Partial<Pick<OrchestratorConfiguration, "jev">>;
 }
 
 export class FindingEvaluationError extends Error {
@@ -354,7 +356,7 @@ async function blockAndThrow(
 ): Promise<never> {
   await advanceWorkflow(
     state,
-    { type: "BLOCK", reason: "integration-unavailable" },
+    { type: "BLOCK", reason: jevBlockedReason(error) },
     stateStore,
   );
   if (error instanceof Error) throw error;
@@ -444,12 +446,30 @@ export class FindingEvaluationRunner {
       ],
       this.dependencies.configuration.decision,
     );
+    const authorization = new JevAuthorization(
+      input.state,
+      this.dependencies.configuration.jev,
+      store,
+      this.dependencies.stateStore,
+      "finding",
+      [
+        "plan",
+        "implementation",
+        "review",
+        ...(evidence.previousDecision ? ["history" as const] : []),
+      ],
+    );
     let evaluated: EvaluatedFinding[];
     try {
+      if (findings.length) authorization.assertAllowed();
       const rawDecisions =
         findings.length === 0
           ? []
-          : await this.dependencies.jevDecisionClient.evaluateFindings(request);
+          : await this.dependencies.jevDecisionClient.evaluateFindings(
+              request,
+              authorization.context,
+            );
+      input = { ...input, state: authorization.state };
       if (!Array.isArray(rawDecisions)) {
         throw new FindingEvaluationError(
           "Jev finding evaluation response is not an array",
@@ -461,7 +481,11 @@ export class FindingEvaluationRunner {
         policyFrom(this.dependencies),
       );
     } catch (error) {
-      return blockAndThrow(input.state, this.dependencies.stateStore, error);
+      return blockAndThrow(
+        authorization.state,
+        this.dependencies.stateStore,
+        error,
+      );
     }
 
     const evaluation: FindingEvaluationArtifact = {

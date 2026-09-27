@@ -1,6 +1,6 @@
 # Persistence and Recovery Detailed Design
 
-Version: 1.1
+Version: 1.2
 
 ## 1. Purpose
 
@@ -102,6 +102,10 @@ Required contract:
 The Orchestrator persists intent Artifact → State ref before dispatch, and later observations Artifact → State ref before subsequent work. Actual runId is saved as soon as the public API exposes it, including on failure; if unavailable until completion, the pre-dispatch correlation identity remains the crash breadcrumb. A pending intent proves only that dispatch was possible, not that a Worker started or did not start.
 
 Failure, timeout, and ambiguous completion retain identity/evidence and block further mutation when execution status is unresolved. A failed write after dispatch cannot authorize relaunch. Worker output text hash is supplemental evidence, never a repository/diff identity. If a safe baseline or correlation cannot be established through existing public contracts/orchestrator-side observation, stop as blocked/unsupported rather than weakening evidence or modifying a third party.
+
+The runtime persists a received-result observation (still `ambiguous` for Workflow completion purposes) as soon as a response exposes its runId, before any post-run repository scan or successful implementation Artifact write. This received record uses `after.status = pending`; a later observation records observed or unavailable repository evidence. It then persists the final success observation linked to that implementation Artifact. If result/State publication fails, the received observation or at least the intent remains a dispatch barrier; reconstructable outcomes are blocked for reconciliation, not declared completed or blindly retried. Observations use distinct immutable filenames and predecessor refs.
+
+Repository observation records canonical cwd/root, HEAD (explicitly null for an unborn repository), index/worktree diff digests, and an untracked content manifest. Runtime Artifact directories are excluded from the observed workload. Two matching observations detect intervening changes but do not claim filesystem atomicity; unavailable/unstable observation fails closed. Tracked gitlinks/submodules are unsupported and rejected before dispatch rather than pretending that a parent-repository dirty marker identifies their content. Observations distinguish `launchStatus` unknown/observed/not-started; only an explicit adapter guarantee that no request was emitted may establish not-started. Public request correlation is fixed before the Worker call, and requestId is never substituted for runId.
 
 Phase C defines and produces this evidence and refuses blind duplicate dispatch. ORCH-018 owns status queries, orphan matching, evidence reconstruction, and normal recovery transitions; this section does not move the full resume controller into Phase C.
 

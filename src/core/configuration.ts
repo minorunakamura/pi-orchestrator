@@ -29,7 +29,82 @@ export interface ValidationConfiguration {
   stopOnInfrastructureFailure: boolean;
 }
 
+export const jevEvidenceCategories = [
+  "plan",
+  "context",
+  "implementation",
+  "review",
+  "validation",
+  "history",
+] as const;
+export type JevEvidenceCategory = (typeof jevEvidenceCategories)[number];
+export interface JevRuntimePolicy {
+  maxRequests: number;
+  consent: {
+    id: string;
+    policyVersion: string;
+    active: boolean;
+    workflowId: string;
+    projectRoot: string;
+    destination: string;
+    evidenceCategories: readonly JevEvidenceCategory[];
+  };
+}
+export const DEFAULT_JEV_DESTINATION = "https://api.typesafe.ai";
+export function jevDestination(
+  value: string = DEFAULT_JEV_DESTINATION,
+): string {
+  const url = new URL(value);
+  if (
+    !["https:", "http:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new Error(
+      "Jev destination must not contain credentials, query or fragment",
+    );
+  return url.href.replace(/\/$/u, "");
+}
+export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["maxRequests", "consent"]) ||
+    !isNonNegativeInteger(value.maxRequests) ||
+    !isRecord(value.consent)
+  )
+    return false;
+  const consent = value.consent;
+  return (
+    hasOnlyKeys(consent, [
+      "id",
+      "policyVersion",
+      "active",
+      "workflowId",
+      "projectRoot",
+      "destination",
+      "evidenceCategories",
+    ]) &&
+    [
+      consent.id,
+      consent.policyVersion,
+      consent.workflowId,
+      consent.projectRoot,
+      consent.destination,
+    ].every(isNonEmptyString) &&
+    typeof consent.active === "boolean" &&
+    isSafeJevEndpoint(consent.destination) &&
+    Array.isArray(consent.evidenceCategories) &&
+    consent.evidenceCategories.every(
+      (item) =>
+        typeof item === "string" &&
+        jevEvidenceCategories.some((category) => category === item),
+    )
+  );
+}
 export interface JevConfiguration {
+  runtimePolicy?: JevRuntimePolicy;
   endpoint?: string;
   timeoutMs?: number;
   maxTransportRetries?: number;
@@ -119,11 +194,25 @@ function isValidationConfiguration(
   );
 }
 
+function isSafeJevEndpoint(value: unknown): boolean {
+  try {
+    return isNonEmptyString(value) && Boolean(jevDestination(value));
+  } catch {
+    return false;
+  }
+}
 function isJevConfiguration(value: unknown): value is JevConfiguration {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["endpoint", "timeoutMs", "maxTransportRetries"]) &&
-    (!Object.hasOwn(value, "endpoint") || isNonEmptyString(value.endpoint)) &&
+    hasOnlyKeys(value, [
+      "endpoint",
+      "timeoutMs",
+      "maxTransportRetries",
+      "runtimePolicy",
+    ]) &&
+    (!Object.hasOwn(value, "runtimePolicy") ||
+      isJevRuntimePolicy(value.runtimePolicy)) &&
+    (!Object.hasOwn(value, "endpoint") || isSafeJevEndpoint(value.endpoint)) &&
     (!Object.hasOwn(value, "timeoutMs") ||
       (isNonNegativeInteger(value.timeoutMs) && value.timeoutMs > 0)) &&
     (!Object.hasOwn(value, "maxTransportRetries") ||
@@ -232,6 +321,9 @@ export function toConfigurationSnapshot(
         configuration.validation.stopOnInfrastructureFailure,
     },
     jev: {
+      ...(configuration.jev.runtimePolicy
+        ? { runtimePolicy: structuredClone(configuration.jev.runtimePolicy) }
+        : {}),
       ...(configuration.jev.endpoint
         ? { endpoint: configuration.jev.endpoint }
         : {}),

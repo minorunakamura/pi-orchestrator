@@ -1,6 +1,6 @@
 # Pi Orchestrator Domain Model
 
-Version: 1.1
+Version: 1.2
 
 ## 1. Purpose
 
@@ -33,6 +33,7 @@ export type ArtifactKind =
   | "plan"
   | "plan-review"
   | "execution-routing"
+  | "jev-request"
   | "implementation"
   | "validation"
   | "correctness-review"
@@ -81,6 +82,14 @@ export interface WorkflowState {
 
   workflowId: WorkflowId;
   stateRevision: number;
+
+  // Durable runtime scope/accounting; missing legacy values deny Jev dispatch.
+  projectRoot?: string;
+  jevUsage?: {
+    attemptsReserved: number;
+    latestRequestRef?: ArtifactRef<"jev-request">;
+    latestUsageRef?: ArtifactRef<"jev-request">;
+  };
 
   playbook: PlaybookKind;
   phase: WorkflowPhase;

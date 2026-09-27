@@ -10,6 +10,7 @@ import type {
   FindingEvaluationInput,
   FindingEvaluationRawDecision,
   JevDecisionClient,
+  JevCallAuthorization,
   PlanReviewHandle,
   PlanReviewRequest,
   PlanReviewStatus,
@@ -134,9 +135,15 @@ export class FakeJevDecisionClient implements JevDecisionClient {
 
   constructor(private readonly outcomes: FakeJevDecisionClientOptions = {}) {}
 
-  routeExecution(
+  async routeExecution(
     input: ExecutionRoutingInput,
+    authorization?: JevCallAuthorization,
   ): Promise<ExecutionRoutingRawDecision> {
+    await authorization?.authorizeAttempt({
+      family: "routing",
+      destination: authorization.destination,
+      retryIndex: 0,
+    });
     this.calls.routeExecution.push(input);
     return resolve(
       "JevDecisionClient.routeExecution",
@@ -145,9 +152,17 @@ export class FakeJevDecisionClient implements JevDecisionClient {
     );
   }
 
-  evaluateFindings(
+  async evaluateFindings(
     input: FindingEvaluationInput,
+    authorization?: JevCallAuthorization,
   ): Promise<FindingEvaluationRawDecision[]> {
+    for (const finding of input.findings)
+      await authorization?.authorizeAttempt({
+        family: "finding",
+        destination: authorization.destination,
+        retryIndex: 0,
+        findingId: finding.id,
+      });
     this.calls.evaluateFindings.push(input);
     return resolve(
       "JevDecisionClient.evaluateFindings",
@@ -156,7 +171,15 @@ export class FakeJevDecisionClient implements JevDecisionClient {
     );
   }
 
-  decideRound(input: RoundDecisionInput): Promise<RoundDecisionRawDecision> {
+  async decideRound(
+    input: RoundDecisionInput,
+    authorization?: JevCallAuthorization,
+  ): Promise<RoundDecisionRawDecision> {
+    await authorization?.authorizeAttempt({
+      family: "round",
+      destination: authorization.destination,
+      retryIndex: 0,
+    });
     this.calls.decideRound.push(input);
     return resolve(
       "JevDecisionClient.decideRound",

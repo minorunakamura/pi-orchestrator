@@ -1,4 +1,7 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { jevPolicy } from "./jev-policy.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OrchestratorConfiguration } from "../../src/core/configuration.ts";
@@ -147,11 +150,14 @@ export const gate: PlannotatorGate = {
 };
 export async function scenario(jev: JevDecisionClient) {
   const root = await mkdtemp(join(tmpdir(), "phase-c-authority-"));
+  const repositoryCwd = join(root, "repo");
+  await mkdir(repositoryCwd);
+  await promisify(execFile)("git", ["init", "--quiet", repositoryCwd]);
   const planningExecutor = new FakeSubagentExecutor({
     run: [succeeded("repository facts"), succeeded(plan)],
   });
   const started = await startWorkflow(
-    { task: "Implement safely", playbook: "feature" },
+    { task: "Implement safely", playbook: "feature", cwd: repositoryCwd },
     {
       runsDirectory: root,
       subagentExecutor: planningExecutor,
@@ -170,7 +176,11 @@ export async function scenario(jev: JevDecisionClient) {
   });
   const deps = {
     ...started,
-    configuration,
+    configuration: {
+      ...configuration,
+      jev: jevPolicy(started.state.workflowId, started.state.projectRoot),
+    },
+    repositoryCwd,
     jevDecisionClient: jev,
     plannotatorGate: gate,
     subagentExecutor: new FakeSubagentExecutor({

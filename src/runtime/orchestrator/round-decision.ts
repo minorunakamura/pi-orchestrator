@@ -1,3 +1,4 @@
+import { JevAuthorization, jevBlockedReason } from "./jev-authorization.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { OrchestratorConfiguration } from "../../core/configuration.ts";
 import {
@@ -72,7 +73,8 @@ export interface RoundDecisionRunnerDependencies {
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
   jevDecisionClient: JevDecisionClient;
-  configuration: Pick<OrchestratorConfiguration, "decision" | "retries">;
+  configuration: Pick<OrchestratorConfiguration, "decision" | "retries"> &
+    Partial<Pick<OrchestratorConfiguration, "validation" | "jev">>;
 }
 
 export interface RoundDecisionRunResult {
@@ -494,7 +496,7 @@ async function blockAndThrow(
   try {
     await advanceWorkflow(
       state,
-      { type: "BLOCK", reason: "integration-unavailable" },
+      { type: "BLOCK", reason: jevBlockedReason(error) },
       stateStore,
     );
   } catch {
@@ -575,6 +577,25 @@ export class RoundDecisionRunner {
       throw new RoundDecisionRunnerError(
         "Passed validation must enter the complete review pipeline",
       );
+    if (
+      validation.status === "infrastructure-error" &&
+      (this.dependencies.configuration.validation
+        ?.stopOnInfrastructureFailure ??
+        true)
+    ) {
+      await advanceWorkflow(
+        input.state,
+        {
+          type: "BLOCK",
+          reason: "validation-infrastructure-error",
+          evidenceRef: validationRef,
+        },
+        this.dependencies.stateStore,
+      );
+      throw new RoundDecisionRunnerError(
+        "Validation infrastructure failure requires attention before Jev",
+      );
+    }
     const currentRouting = await authoritativeRouting(
       this.dependencies.artifactStore,
       input.state,
@@ -618,7 +639,9 @@ export class RoundDecisionRunner {
       branch:
         input.state.phase === "reviewing"
           ? "review-passed"
-          : "validation-failed",
+          : validation.status === "infrastructure-error"
+            ? "infrastructure-attention"
+            : "validation-failed",
       retryLimits: this.dependencies.configuration.retries,
       currentProfile,
       inputRefs: [
@@ -636,13 +659,36 @@ export class RoundDecisionRunner {
       findings: authoritative.findings,
       findingSummaries: authoritative.findingSummaries,
     };
+    const authorization = new JevAuthorization(
+      input.state,
+      this.dependencies.configuration.jev,
+      this.dependencies.artifactStore,
+      this.dependencies.stateStore,
+      "round",
+      [
+        "plan",
+        "implementation",
+        "validation",
+        ...(input.state.phase === "reviewing" ? ["review" as const] : []),
+        ...(evidence.previousDecision ? ["history" as const] : []),
+      ],
+    );
     let rawDecision;
     try {
-      rawDecision =
-        await this.dependencies.jevDecisionClient.decideRound(request);
+      authorization.assertAllowed();
+      rawDecision = await this.dependencies.jevDecisionClient.decideRound(
+        request,
+        authorization.context,
+      );
+      input = { ...input, state: authorization.state };
     } catch (error) {
-      return blockAndThrow(input.state, this.dependencies.stateStore, error);
+      return blockAndThrow(
+        authorization.state,
+        this.dependencies.stateStore,
+        error,
+      );
     }
+    assertInputState(input.state);
     const decision = decideRound(
       {
         rawDecision,

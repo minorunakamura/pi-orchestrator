@@ -255,6 +255,8 @@ export function decideRound(
 
   const findingReason = findingEscalationReason(input.findings);
   if (findingReason) return escalate(raw, findingReason);
+  if (input.validation.status === "infrastructure-error")
+    return escalate(raw, "uncertain");
   if (
     applyConfidencePolicy(raw.confidence, policy) !== "auto" ||
     (raw.decision === "ESCALATE" &&
@@ -277,9 +279,6 @@ export function decideRound(
 
   if (input.validation.status === "failed") {
     return retry(raw, "validation-failed");
-  }
-  if (input.validation.status === "infrastructure-error") {
-    return escalate(raw, "uncertain");
   }
   const blockingStatus = acceptedBlockingStatus(input);
   if (blockingStatus === "invalid") return escalate(raw, "uncertain");

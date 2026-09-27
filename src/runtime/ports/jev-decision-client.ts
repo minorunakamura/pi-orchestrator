@@ -75,7 +75,7 @@ export interface FindingEvaluationInput {
 export interface RoundDecisionInput {
   evidence: CodingDecisionEvidence;
   findingSummaries: readonly SourcedFinding[];
-  branch: "validation-failed" | "review-passed";
+  branch: "validation-failed" | "review-passed" | "infrastructure-attention";
   retryLimits: { maxAutomatedFixRounds: number; maxStrongerRetries: number };
   currentProfile: {
     modelTier: import("../../core/decisions/types.ts").ModelTier;
@@ -92,12 +92,33 @@ export type ExecutionRoutingRawDecision = NormalizedExecutionRoutingDecision;
 export type FindingEvaluationRawDecision = NormalizedFindingEvaluationDecision;
 export type RoundDecisionRawDecision = NormalizedRoundDecision;
 
+export type JevRequestFamily = "routing" | "finding" | "round";
+export interface JevAttempt {
+  family: JevRequestFamily;
+  destination: string;
+  retryIndex: number;
+  findingId?: string;
+}
+export interface JevCallAuthorization {
+  destination: string;
+  authorizeAttempt(attempt: JevAttempt): Promise<void>;
+  recordUsage(usage: {
+    inputTokens: number;
+    outputTokens: number;
+  }): Promise<void>;
+}
+
 export interface JevDecisionClient {
   routeExecution(
     input: ExecutionRoutingInput,
+    authorization?: JevCallAuthorization,
   ): Promise<ExecutionRoutingRawDecision>;
   evaluateFindings(
     input: FindingEvaluationInput,
+    authorization?: JevCallAuthorization,
   ): Promise<FindingEvaluationRawDecision[]>;
-  decideRound(input: RoundDecisionInput): Promise<RoundDecisionRawDecision>;
+  decideRound(
+    input: RoundDecisionInput,
+    authorization?: JevCallAuthorization,
+  ): Promise<RoundDecisionRawDecision>;
 }

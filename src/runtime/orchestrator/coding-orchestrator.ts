@@ -1,3 +1,17 @@
+import { randomUUID } from "node:crypto";
+import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
+import { realpath } from "node:fs/promises";
+import { relative, isAbsolute } from "node:path";
+import { JevAuthorization, jevBlockedReason } from "./jev-authorization.ts";
+import {
+  captureRepository,
+  type RepositorySnapshot,
+} from "../worker/repository-evidence.ts";
+import {
+  parseWorkerAttempt,
+  type WorkerAttemptEvidence,
+} from "../worker/attempt-evidence.ts";
+import { DEFAULT_SUBAGENT_TIMEOUT_MS } from "../integrations/subagents.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import { isArtifactRef } from "../../core/artifacts/references.ts";
 import {
@@ -89,6 +103,7 @@ export interface ExecutionRoutingArtifact {
 }
 
 export interface ImplementationArtifact {
+  workerAttemptRef?: ArtifactRef<"implementation">;
   schemaVersion: 1;
   implementationRevision: number;
   approvedPlanRef: ArtifactRef<"plan">;
@@ -150,6 +165,7 @@ export function isImplementationArtifact(
       "executionRoutingRef",
       "acceptedFindingsRef",
       "executionProfile",
+      "workerAttemptRef",
       "repository",
       "runId",
       "output",
@@ -165,6 +181,11 @@ export function isImplementationArtifact(
       "acceptedFindingsRef",
       (candidate) =>
         isArtifactRef(candidate) && candidate.kind === "accepted-findings",
+    ) ||
+    !optionalArtifact(
+      value,
+      "workerAttemptRef",
+      (ref) => isArtifactRef(ref) && ref.kind === "implementation",
     ) ||
     !isResolvedExecutionProfile(value.executionProfile) ||
     !isRepositoryIdentity(value.repository) ||
@@ -253,6 +274,8 @@ export interface CodingEntryInput {
 }
 
 export interface CodingOrchestratorDependencies {
+  repositoryCwd?: string;
+  workerTimeoutMs?: number;
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
   jevDecisionClient: JevDecisionClient;
@@ -667,33 +690,14 @@ async function writeJsonFallback<K extends ArtifactRef["kind"]>(
   return store.writeText(kind, fileName, content);
 }
 
-function blockedReason(
-  error: unknown,
-):
-  | "integration-unavailable"
-  | "agent-infrastructure-unavailable"
-  | "agent-execution-ambiguous" {
-  if (error instanceof RuntimePortError && error.kind === "reconciliation") {
-    return "agent-execution-ambiguous";
-  }
-  return "agent-infrastructure-unavailable";
-}
-
-function resultBlockedReason(
-  result: AgentRunResult,
-): "agent-infrastructure-unavailable" | "agent-execution-ambiguous" {
-  return result.status === "ambiguous"
-    ? "agent-execution-ambiguous"
-    : "agent-infrastructure-unavailable";
-}
-
 async function blockAndThrow(
   state: WorkflowState,
   reason:
     | "integration-unavailable"
     | "agent-infrastructure-unavailable"
     | "agent-execution-ambiguous"
-    | "retry-budget-exhausted",
+    | "retry-budget-exhausted"
+    | "operator-attention-required",
   stateStore: WorkflowStateWriter,
   error: unknown,
 ): Promise<never> {
@@ -963,6 +967,38 @@ export class CodingOrchestrator {
   async execute(input: CodingEntryInput): Promise<CodingExecutionResult> {
     const store = requireArtifactStore(this.dependencies.artifactStore);
     const approvedPlanRef = requireApprovedPlan(input.state);
+    const previousAttemptRef = input.state.coding.workerAttemptRef;
+    let previousAttempt: WorkerAttemptEvidence | undefined;
+    if (previousAttemptRef) {
+      previousAttempt = parseWorkerAttempt(
+        JSON.parse(
+          await readAuthoritativeText(
+            store,
+            previousAttemptRef,
+            "Worker attempt",
+          ),
+        ),
+      );
+      if (
+        previousAttempt.workflowId !== input.state.workflowId ||
+        previousAttempt.status !== "succeeded" ||
+        previousAttempt.targetRevision !==
+          input.state.coding.implementationRevision ||
+        !sameArtifactRef(
+          previousAttempt.implementationRef,
+          input.state.coding.implementationRef,
+        )
+      ) {
+        return blockAndThrow(
+          input.state,
+          "agent-execution-ambiguous",
+          this.dependencies.stateStore,
+          new CodingOrchestrationError(
+            "Worker attempt requires exact reconciliation before another dispatch",
+          ),
+        );
+      }
+    }
     if (
       input.state.phase === "implementing" &&
       input.state.counters.automatedFixRoundsUsed >=
@@ -1060,16 +1096,26 @@ export class CodingOrchestrator {
       }
     }
     if (!routingRef) {
+      const authorization = new JevAuthorization(
+        input.state,
+        this.dependencies.configuration.jev,
+        store,
+        this.dependencies.stateStore,
+        "routing",
+        ["plan", "context"],
+      );
       let rawDecision;
       try {
-        rawDecision =
-          await this.dependencies.jevDecisionClient.routeExecution(
-            routingInput,
-          );
+        authorization.assertAllowed();
+        rawDecision = await this.dependencies.jevDecisionClient.routeExecution(
+          routingInput,
+          authorization.context,
+        );
+        input = { ...input, state: authorization.state };
       } catch (error) {
         return blockAndThrow(
-          input.state,
-          "integration-unavailable",
+          authorization.state,
+          jevBlockedReason(error),
           this.dependencies.stateStore,
           error,
         );
@@ -1114,7 +1160,7 @@ export class CodingOrchestrator {
       );
     }
 
-    const routedState =
+    let routedState =
       routingRef === input.state.coding.executionRoutingRef
         ? input.state
         : await advanceWorkflow(
@@ -1199,43 +1245,193 @@ export class CodingOrchestrator {
       ...(acceptedFindingsRef ? { acceptedFindingsRef } : {}),
       ...(humanCodeFeedbackRef ? { humanCodeFeedbackRef } : {}),
     };
-    const workerRequest = createWorkerRequest(workerInput, { cwd: input.cwd });
+    let before: RepositorySnapshot;
+    try {
+      if (!store.rootDirectory)
+        throw new CodingOrchestrationError(
+          "Worker evidence requires a rooted ArtifactStore",
+        );
+      before = await captureRepository(
+        input.cwd ??
+          this.dependencies.repositoryCwd ??
+          input.state.projectRoot ??
+          process.cwd(),
+        store.rootDirectory,
+      );
+      if (input.state.projectRoot) {
+        const scoped = relative(
+          await realpath(input.state.projectRoot),
+          before.cwd,
+        );
+        if (scoped.startsWith("..") || isAbsolute(scoped))
+          throw Error("Worker cwd is outside workflow project scope");
+      }
+      if (previousAttempt && previousAttempt.before.root !== before.root)
+        throw new Error("Worker repository identity changed");
+    } catch (error) {
+      return blockAndThrow(
+        routedState,
+        "agent-infrastructure-unavailable",
+        this.dependencies.stateStore,
+        error,
+      );
+    }
+    const timeoutMs =
+      this.dependencies.workerTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
+      throw new CodingOrchestrationError("Invalid Worker deadline");
+    const attemptId = randomUUID();
+    const dispatch = {
+      requestId: randomUUID(),
+      ownerRunId: routedState.workflowId,
+      nodeId: `worker-${attemptId}`,
+      deadline: new Date(Date.now() + timeoutMs).toISOString(),
+    };
+    const workerRequest = {
+      ...createWorkerRequest(workerInput, { cwd: before.cwd }),
+      dispatch,
+    };
+    const intent: WorkerAttemptEvidence = {
+      schemaVersion: 1,
+      recordType: "worker-attempt",
+      workflowId: routedState.workflowId,
+      attemptId,
+      inputRevision: routedState.coding.implementationRevision,
+      targetRevision: routedState.coding.implementationRevision + 1,
+      approvedPlanRef,
+      planVersion: routedState.planning.approvedPlanVersion!,
+      executionRoutingRef: routingRef,
+      inputRefs: workerRequest.inputRefs ?? [],
+      executionProfile: resolvedProfile,
+      dispatch,
+      observedAt: new Date().toISOString(),
+      status: "intent",
+      launchStatus: "unknown",
+      before,
+      ...(previousAttemptRef ? { previousRef: previousAttemptRef } : {}),
+      ...(routedState.coding.implementationRef
+        ? { inputImplementationRef: routedState.coding.implementationRef }
+        : {}),
+    };
+    const intentRef = await persistJson(
+      store,
+      "implementation",
+      `attempt-${attemptId}-intent.json`,
+      intent,
+      parseWorkerAttempt,
+    );
+    routedState = await this.dependencies.stateStore.saveState(
+      {
+        ...routedState,
+        coding: { ...routedState.coding, workerAttemptRef: intentRef },
+      },
+      routedState.stateRevision,
+    );
     let workerResult: AgentRunResult;
     try {
       workerResult =
         await this.dependencies.subagentExecutor.run(workerRequest);
     } catch (error) {
-      return blockAndThrow(
-        routedState,
-        blockedReason(error),
-        this.dependencies.stateStore,
-        error,
-      );
+      workerResult =
+        error instanceof SubagentNotDispatchedError
+          ? {
+              status: "failed",
+              notDispatched: true,
+              error: "Adapter could not dispatch the request",
+            }
+          : {
+              status: "ambiguous",
+              timedOut:
+                error instanceof RuntimePortError && error.kind === "timeout",
+              reason: "Dispatch outcome is unknown",
+            };
     }
-    if (workerResult.status !== "succeeded") {
-      const error = new CodingOrchestrationError(
-        `Worker did not succeed: ${workerResult.status}`,
-        { cause: workerResult },
+    let after: NonNullable<WorkerAttemptEvidence["after"]> = {
+      status: "pending",
+    };
+    const matchesDispatch =
+      !workerResult.dispatch ||
+      JSON.stringify(workerResult.dispatch) === JSON.stringify(dispatch);
+    const validRunId =
+      matchesDispatch &&
+      typeof workerResult.runId === "string" &&
+      workerResult.runId.trim()
+        ? workerResult.runId
+        : undefined;
+    const resultDigest = calculateSha256(JSON.stringify(workerResult));
+    const recordObservation = async (
+      status: WorkerAttemptEvidence["status"],
+      implementationRef?: ArtifactRef<"implementation">,
+      suffix = "result",
+    ) => {
+      const record: WorkerAttemptEvidence = {
+        ...intent,
+        previousRef: routedState.coding.workerAttemptRef!,
+        status,
+        after,
+        launchStatus:
+          workerResult.status === "failed" && workerResult.notDispatched
+            ? "not-started"
+            : validRunId
+              ? "observed"
+              : "unknown",
+        observedAt: new Date().toISOString(),
+        ...(validRunId ? { runId: validRunId } : {}),
+        resultDigest,
+        ...(implementationRef ? { implementationRef } : {}),
+      };
+      const ref = await persistJson(
+        store,
+        "implementation",
+        `attempt-${attemptId}-${suffix}.json`,
+        record,
+        parseWorkerAttempt,
       );
-      return blockAndThrow(
-        routedState,
-        resultBlockedReason(workerResult),
-        this.dependencies.stateStore,
-        error,
+      routedState = await this.dependencies.stateStore.saveState(
+        {
+          ...routedState,
+          coding: { ...routedState.coding, workerAttemptRef: ref },
+        },
+        routedState.stateRevision,
       );
+      return ref;
+    };
+    // Capture the exposed identity before any post-run subprocess or file scan.
+    await recordObservation("ambiguous", undefined, "received");
+    try {
+      const snapshot = await captureRepository(before.cwd, store.rootDirectory);
+      if (snapshot.root !== before.root) throw Error("Repository root changed");
+      after = { status: "observed", snapshot };
+    } catch {
+      after = { status: "unavailable", reason: "observation-failed" };
     }
-    if (
-      typeof workerResult.output !== "string" ||
-      workerResult.output.trim().length === 0 ||
-      (workerResult.runId !== undefined &&
-        typeof workerResult.runId !== "string")
-    ) {
-      return blockAndThrow(
+    const successful =
+      workerResult.status === "succeeded" &&
+      validRunId &&
+      typeof workerResult.output === "string" &&
+      workerResult.output.trim() &&
+      after.status === "observed";
+    if (!successful || workerResult.status !== "succeeded") {
+      const status =
+        workerResult.status === "failed"
+          ? "failed"
+          : workerResult.status === "ambiguous" && workerResult.timedOut
+            ? "timed-out"
+            : "ambiguous";
+      const ref = await recordObservation(status);
+      await advanceWorkflow(
         routedState,
-        "agent-execution-ambiguous",
+        {
+          type: "BLOCK",
+          reason:
+            status === "failed"
+              ? "agent-infrastructure-unavailable"
+              : "agent-execution-ambiguous",
+          evidenceRef: ref,
+        },
         this.dependencies.stateStore,
-        new CodingOrchestrationError("Worker returned an invalid result"),
       );
+      throw new CodingOrchestrationError(`Worker did not succeed: ${status}`);
     }
 
     const implementationRevision =
@@ -1247,6 +1443,7 @@ export class CodingOrchestrator {
     }
     const implementationArtifact: ImplementationArtifact = {
       schemaVersion: 1,
+      workerAttemptRef: routedState.coding.workerAttemptRef!,
       implementationRevision,
       approvedPlanRef,
       executionRoutingRef: routingRef,
@@ -1274,7 +1471,12 @@ export class CodingOrchestrator {
       try {
         await advanceWorkflow(
           routedState,
-          { type: "FAIL", reason: "persistence-consistency-failure" },
+          {
+            type: "BLOCK",
+            reason: "agent-execution-ambiguous",
+            evidenceRef: routedState.coding.workerAttemptRef,
+          },
+
           this.dependencies.stateStore,
         );
       } catch {
@@ -1282,6 +1484,7 @@ export class CodingOrchestrator {
       }
       throw error;
     }
+    await recordObservation("succeeded", implementationRef);
     let completed: WorkflowState;
     try {
       completed = await advanceWorkflow(
@@ -1300,8 +1503,8 @@ export class CodingOrchestrator {
         await advanceWorkflow(
           routedState,
           {
-            type: "FAIL",
-            reason: "persistence-consistency-failure",
+            type: "BLOCK",
+            reason: "agent-execution-ambiguous",
             evidenceRef: implementationRef,
           },
           this.dependencies.stateStore,

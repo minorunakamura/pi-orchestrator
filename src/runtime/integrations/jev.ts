@@ -7,7 +7,14 @@ import {
   type TypeSafe,
   type TypeSafeOptions,
 } from "pi-typesafe";
-import type { JevConfiguration } from "../../core/configuration.ts";
+import {
+  jevDestination,
+  type JevConfiguration,
+} from "../../core/configuration.ts";
+import type {
+  JevCallAuthorization,
+  JevRequestFamily,
+} from "../ports/jev-decision-client.ts";
 import { isConfidence, isRecord } from "../../core/schema.ts";
 import type { ReviewFinding } from "../../core/coding/finding.ts";
 import type {
@@ -285,6 +292,7 @@ export class JevIntegration implements JevDecisionClient {
   private readonly endpoint?: string;
   private readonly transport?: JevTransport;
   private readonly timeoutMs: number;
+  private readonly destination: string;
   private readonly maxTransportRetries: number;
   private resolvedClient?: JevClient;
 
@@ -298,6 +306,11 @@ export class JevIntegration implements JevDecisionClient {
       throw new Error(
         "Jev maxTransportRetries must be a non-negative safe integer",
       );
+    }
+    try {
+      this.destination = jevDestination(options.endpoint);
+    } catch {
+      throw new RuntimePortError("policy", "Unsafe Jev destination");
     }
     this.injectedClient = options.client;
     this.endpoint = options.endpoint;
@@ -318,8 +331,13 @@ export class JevIntegration implements JevDecisionClient {
 
   async routeExecution(
     input: ExecutionRoutingInput,
+    authorization?: JevCallAuthorization,
   ): Promise<ExecutionRoutingRawDecision> {
-    const answers = await this.evaluate(routeRequest(input));
+    const answers = await this.evaluate(
+      routeRequest(input),
+      "routing",
+      authorization,
+    );
     const modelTier = choiceAnswer(answers, "modelTier", modelTiers);
     const reasoningTier = choiceAnswer(
       answers,
@@ -337,10 +355,16 @@ export class JevIntegration implements JevDecisionClient {
 
   async evaluateFindings(
     input: FindingEvaluationInput,
+    authorization?: JevCallAuthorization,
   ): Promise<FindingEvaluationRawDecision[]> {
     const decisions: FindingEvaluationRawDecision[] = [];
     for (const finding of input.findings) {
-      const answers = await this.evaluate(findingRequest(input, finding));
+      const answers = await this.evaluate(
+        findingRequest(input, finding),
+        "finding",
+        authorization,
+        finding.id,
+      );
       decisions.push({
         findingId: finding.id,
         evidenceSupported: booleanDecision(answers, "evidenceSupported"),
@@ -364,8 +388,13 @@ export class JevIntegration implements JevDecisionClient {
 
   async decideRound(
     input: RoundDecisionInput,
+    authorization?: JevCallAuthorization,
   ): Promise<RoundDecisionRawDecision> {
-    const answers = await this.evaluate(roundRequest(input));
+    const answers = await this.evaluate(
+      roundRequest(input),
+      "round",
+      authorization,
+    );
     const decision = choiceAnswer(answers, "decision", roundActions);
     const escalationReason = choiceAnswer(
       answers,
@@ -407,12 +436,30 @@ export class JevIntegration implements JevDecisionClient {
 
   private async evaluate(
     requestValue: JevRequest,
+    family: JevRequestFamily,
+    authorization?: JevCallAuthorization,
+    findingId?: string,
   ): Promise<Record<string, unknown>> {
+    if (!authorization)
+      throw new RuntimePortError(
+        "policy",
+        "Product Runtime authorization is required before Jev dispatch",
+      );
     for (let attempt = 0; attempt <= this.maxTransportRetries; attempt += 1) {
+      await authorization.authorizeAttempt({
+        family,
+        destination: this.destination,
+        retryIndex: attempt,
+        ...(findingId ? { findingId } : {}),
+      });
       const result = await ask(this.getClient(), requestValue, {
         timeoutMs: this.timeoutMs,
       });
       if (result.ok) {
+        await authorization.recordUsage({
+          inputTokens: result.usage.input_tokens,
+          outputTokens: result.usage.output_tokens,
+        });
         return normalizeAnswers(result.answers, requestValue.questions);
       }
       if (isRetriable(result.errorCode) && attempt < this.maxTransportRetries) {

@@ -93,6 +93,8 @@ export async function startWorkflow(
   const initialState: WorkflowState = {
     schemaVersion: 1,
     workflowId,
+    projectRoot: resolve(input.cwd ?? process.cwd()),
+    jevUsage: { attemptsReserved: 0 },
     stateRevision: 0,
     playbook: input.playbook,
     phase: "gathering-context",

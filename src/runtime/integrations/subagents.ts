@@ -4,6 +4,7 @@ import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import { isRecord } from "../../core/schema.ts";
 import type { SubagentRunId } from "../../types.ts";
 import { RuntimePortError } from "../ports/errors.ts";
+import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
 import type {
   AgentRunRequest,
   AgentRunResult,
@@ -99,16 +100,12 @@ export interface SubagentsIntegrationOptions {
 }
 
 function asRunId(value: string | undefined): SubagentRunId | undefined {
-  return value ? (value as SubagentRunId) : undefined;
+  return typeof value === "string" && value.trim()
+    ? (value as SubagentRunId)
+    : undefined;
 }
 
-function responseError(response: DelegationResponse): Error {
-  const message = response.error ?? `Worker ended with ${response.status}`;
-  if (response.status === "timed_out") {
-    return new RuntimePortError("timeout", message);
-  }
-  return new RuntimePortError("infrastructure", message);
-}
+export const DEFAULT_SUBAGENT_TIMEOUT_MS = 300_000;
 
 /**
  * Adapter for the versioned pi-subagents event contract. The host supplies its
@@ -117,7 +114,7 @@ function responseError(response: DelegationResponse): Error {
 export class SubagentsIntegration implements SubagentExecutor {
   private readonly ownerRunId: string;
   private readonly cwd: string;
-  private readonly timeoutMs?: number;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly events: EventBus,
@@ -125,16 +122,38 @@ export class SubagentsIntegration implements SubagentExecutor {
   ) {
     this.ownerRunId = options.ownerRunId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
-    this.timeoutMs = options.timeoutMs;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
+    if (
+      !Number.isSafeInteger(this.timeoutMs) ||
+      this.timeoutMs <= 0 ||
+      this.timeoutMs > 2_147_483_647
+    )
+      throw new Error("Subagent timeout must be a positive finite integer");
   }
 
   async run(input: AgentRunRequest): Promise<AgentRunResult> {
-    const requestId = randomUUID();
-    const nodeId = `worker-${requestId}`;
-    const response = await this.delegate({
+    const requestId = input.dispatch?.requestId ?? randomUUID();
+    const dispatch = input.dispatch ?? {
       requestId,
       ownerRunId: this.ownerRunId,
-      nodeId,
+      nodeId: `worker-${requestId}`,
+      deadline: new Date(Date.now() + this.timeoutMs).toISOString(),
+    };
+    const remaining = Date.parse(dispatch.deadline) - Date.now();
+    if (
+      !requestId ||
+      !dispatch.ownerRunId ||
+      !dispatch.nodeId ||
+      !Number.isFinite(remaining) ||
+      remaining <= 0
+    )
+      throw new SubagentNotDispatchedError(
+        "Invalid or expired subagent dispatch identity",
+      );
+    const response = await this.delegate({
+      requestId,
+      ownerRunId: dispatch.ownerRunId,
+      nodeId: dispatch.nodeId,
       agent: input.agent,
       task: taskWithArtifactRefs(input),
       context: "fresh",
@@ -147,7 +166,7 @@ export class SubagentsIntegration implements SubagentExecutor {
             thinking: toDelegationThinking(input.executionProfile.thinking),
           }
         : {}),
-      ...(this.timeoutMs === undefined ? {} : { timeoutMs: this.timeoutMs }),
+      timeoutMs: Math.min(this.timeoutMs, remaining),
       result: { kind: "text" },
     });
 
@@ -160,24 +179,34 @@ export class SubagentsIntegration implements SubagentExecutor {
       ) {
         return {
           status: "ambiguous",
-          runId: runId ?? (requestId as SubagentRunId),
+          ...(runId ? { runId } : {}),
+          dispatch,
           reason:
             "pi-subagents completed without a text result and run identity",
         };
       }
-      return { status: "succeeded", runId, output: response.result.text };
-    }
-    if (response.status === "failed" && runId) {
       return {
-        status: "failed",
+        status: "succeeded",
         runId,
-        error: response.error ?? "Worker failed",
+        output: response.result.text,
+        dispatch,
       };
     }
     if (response.status === "failed") {
-      throw responseError(response);
+      return {
+        status: "failed",
+        ...(runId ? { runId } : {}),
+        dispatch,
+        error: response.error ?? "Worker failed",
+      };
     }
-    throw responseError(response);
+    return {
+      status: "ambiguous",
+      ...(runId ? { runId } : {}),
+      dispatch,
+      timedOut: response.status === "timed_out",
+      reason: response.error ?? "Subagent outcome is unknown",
+    };
   }
 
   runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
@@ -204,8 +233,27 @@ export class SubagentsIntegration implements SubagentExecutor {
 
   private delegate(request: DelegationRequest): Promise<DelegationResponse> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let dispatched = false;
+      let unsubscribe = () => {};
+      const finish = (response: DelegationResponse): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        resolve(response);
+      };
+      const timer = setTimeout(
+        () =>
+          finish({
+            requestId: request.requestId,
+            status: "timed_out",
+            error: "Subagent response deadline exceeded",
+          }),
+        request.timeoutMs ?? this.timeoutMs,
+      );
       const listener = (payload: unknown): void => {
-        if (!isDelegationResponse(payload)) return;
+        if (!dispatched || !isDelegationResponse(payload)) return;
         if (
           payload.requestId !== request.requestId ||
           (payload.ownerRunId !== undefined &&
@@ -214,24 +262,33 @@ export class SubagentsIntegration implements SubagentExecutor {
         ) {
           return;
         }
-        unsubscribe();
-        resolve(payload);
+        finish(payload);
       };
-      const unsubscribe = this.events.on(
-        SUBAGENT_DELEGATION_RESPONSE_EVENT,
-        listener,
-      );
       try {
-        this.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
-      } catch (error) {
-        unsubscribe();
+        unsubscribe = this.events.on(
+          SUBAGENT_DELEGATION_RESPONSE_EVENT,
+          listener,
+        );
+      } catch (cause) {
+        clearTimeout(timer);
+        settled = true;
         reject(
-          new RuntimePortError(
-            "infrastructure",
-            `Unable to launch pi-subagents Worker: ${error instanceof Error ? error.message : String(error)}`,
-            { cause: error },
+          new SubagentNotDispatchedError(
+            "Unable to subscribe before dispatch",
+            { cause },
           ),
         );
+        return;
+      }
+      try {
+        dispatched = true;
+        this.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+      } catch {
+        finish({
+          requestId: request.requestId,
+          status: "ambiguous",
+          error: "Dispatch threw; child launch status is unknown",
+        });
       }
     });
   }
@@ -243,6 +300,10 @@ function isDelegationResponse(value: unknown): value is DelegationResponse {
   return (
     typeof candidate.requestId === "string" &&
     typeof candidate.status === "string" &&
+    (candidate.runId === undefined ||
+      (typeof candidate.runId === "string" &&
+        candidate.runId.trim().length > 0)) &&
+    (candidate.error === undefined || typeof candidate.error === "string") &&
     (candidate.ownerRunId === undefined ||
       typeof candidate.ownerRunId === "string") &&
     (candidate.nodeId === undefined || typeof candidate.nodeId === "string")
@@ -265,8 +326,7 @@ function toDelegationThinking(value: string): DelegationThinking {
     "max",
   ];
   if (!allowed.includes(value as DelegationThinking)) {
-    throw new RuntimePortError(
-      "domain",
+    throw new SubagentNotDispatchedError(
       `Unsupported pi-subagents thinking level: ${value}`,
     );
   }

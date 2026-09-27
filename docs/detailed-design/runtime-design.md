@@ -1,6 +1,6 @@
 # Pi Orchestrator Runtime Design
 
-Version: 1.6
+Version: 1.7
 
 ## 1. Purpose
 
@@ -264,6 +264,14 @@ Minimum v1 contract:
 - Retain consent/policy identity, allowance/attempt count, and available usage metadata as bounded durable runtime evidence. Never persist API keys, auth headers, or secret-bearing URLs. Full accounting recovery belongs to ORCH-018; conservative denial on ambiguity is required now.
 
 These are orchestrator-side policy and persistence contracts. They require no change to `pi-typesafe`, no dependency on `/typesafe enable`, and no v1.1 decision family.
+
+### Runtime Policy Configuration and Accounting
+
+The concrete permission boundary is `jev.runtimePolicy`: a finite `maxRequests` and `consent` with `id`, `policyVersion`, `active`, exact `workflowId`, `projectRoot`, `destination`, and allowed `evidenceCategories` (`plan`, `context`, `implementation`, `review`, `validation`, `history`). Absence is denial, not an implicit grant. Configuration is operator-supplied; this adds no new approval UI or command.
+
+Workflow start persists `projectRoot` and `jevUsage.attemptsReserved = 0`. Each runner creates an orchestrator-owned authorization context; the adapter awaits its reservation callback before each library request, including each finding and retry. Reservation Artifact → State CAS must complete before outbound execution. The runner continues from the authorization context's updated State revision, not its old snapshot.
+
+Immutable `jev-request` evidence under `decisions/` distinguishes reservation and available numeric usage records. It records ordinal, request family/finding/retry identity, consent/policy scope, allowance, predecessor, and timestamp; it is accounting evidence, never decision or Human authority. Missing/inconsistent accounting and orphan reservation collisions deny dispatch. Client recreation cannot reset the counter, and uncertain timeouts are not refunded. Credential-bearing destination URLs are rejected; no auth secrets are stored. Full recovery of these records remains ORCH-018.
 
 ### Runtime Evidence / Adapter Policy Boundary
 

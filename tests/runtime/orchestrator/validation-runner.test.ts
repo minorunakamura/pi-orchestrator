@@ -92,6 +92,7 @@ async function makeRoot(): Promise<string> {
 async function makeRunner(
   state: WorkflowState,
   execution: ValidationExecutionResult,
+  stopOnInfrastructureFailure = true,
 ) {
   const root = await makeRoot();
   const artifactStore = new ArtifactStore(root);
@@ -117,6 +118,7 @@ async function makeRunner(
       artifactStore,
       stateStore,
       validationExecutor: executor,
+      configuration: { validation: { stopOnInfrastructureFailure } },
     }),
   };
 }
@@ -128,6 +130,27 @@ afterEach(async () => {
 });
 
 describe("ValidationRunner ORCH-013", () => {
+  test("thrown executor failure persists infrastructure evidence before blocking", async () => {
+    const f = await makeRunner(validatingState(1), {
+      status: "passed",
+      checks: [{ id: "tests", status: "passed", exitCode: 0 }],
+    });
+    f.executor.execute = async () => {
+      throw Error("spawn unavailable");
+    };
+    const result = await f.runner.execute({ state: f.state });
+    expect(result.validation.status).toBe("infrastructure-error");
+    expect(result.state.block).toMatchObject({
+      reason: "validation-infrastructure-error",
+      evidenceRef: result.validationRef,
+    });
+    expect(
+      await f.artifactStore.readJson(
+        result.validationRef,
+        parseValidationResult,
+      ),
+    ).toMatchObject({ status: "infrastructure-error" });
+  });
   test("rejects caller substitution of Approved Plan checks before execution", async () => {
     const fixture = await makeRunner(validatingState(1), {
       status: "passed",
@@ -212,35 +235,43 @@ describe("ValidationRunner ORCH-013", () => {
     expect(next.coding.validationRef).toEqual(result.validationRef);
   });
 
-  test("preserves infrastructure-error as validation evidence without treating it as an ordinary failed check", async () => {
-    const execution: ValidationExecutionResult = {
-      status: "infrastructure-error",
-      checks: [
-        {
-          id: "tests",
-          status: "infrastructure-error",
-          evidence: "timed out after 20ms",
-        },
-      ],
-    };
-    const fixture = await makeRunner(validatingState(11), execution);
+  test.each([true, false])(
+    "applies infrastructure stop policy %s with durable evidence",
+    async (stop) => {
+      const execution: ValidationExecutionResult = {
+        status: "infrastructure-error",
+        checks: [
+          {
+            id: "tests",
+            status: "infrastructure-error",
+            evidence: "timed out after 20ms",
+          },
+        ],
+      };
+      const fixture = await makeRunner(validatingState(11), execution, stop);
 
-    const result = await fixture.runner.execute({
-      state: fixture.state,
-      contract,
-    });
+      const result = await fixture.runner.execute({
+        state: fixture.state,
+        contract,
+      });
 
-    expect(result.validation.status).toBe("infrastructure-error");
-    expect(result.validation.implementationRevision).toBe(11);
-    expect(result.state.phase).toBe("validating");
-    expect(
-      await fixture.artifactStore.readJson(
-        result.validationRef,
-        parseValidationResult,
-      ),
-    ).toMatchObject({
-      implementationRevision: 11,
-      status: "infrastructure-error",
-    });
-  });
+      expect(result.validation.status).toBe("infrastructure-error");
+      expect(result.validation.implementationRevision).toBe(11);
+      expect(result.state.phase).toBe(stop ? "blocked" : "validating");
+      if (stop)
+        expect(result.state.block).toMatchObject({
+          reason: "validation-infrastructure-error",
+          evidenceRef: result.validationRef,
+        });
+      expect(
+        await fixture.artifactStore.readJson(
+          result.validationRef,
+          parseValidationResult,
+        ),
+      ).toMatchObject({
+        implementationRevision: 11,
+        status: "infrastructure-error",
+      });
+    },
+  );
 });

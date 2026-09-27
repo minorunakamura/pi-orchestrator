@@ -3,6 +3,7 @@ export const portFailureKinds = [
   "infrastructure",
   "timeout",
   "reconciliation",
+  "policy",
 ] as const;
 
 export type PortFailureKind = (typeof portFailureKinds)[number];

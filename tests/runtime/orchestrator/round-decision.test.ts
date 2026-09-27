@@ -31,7 +31,12 @@ import {
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 
 const roots: string[] = [];
-const configuration: Pick<OrchestratorConfiguration, "decision" | "retries"> = {
+import { jevPolicy } from "../../fakes/jev-policy.ts";
+const configuration: Pick<
+  OrchestratorConfiguration,
+  "decision" | "retries" | "jev"
+> = {
+  jev: jevPolicy("round-decision-workflow"),
   decision: { autoDecisionThreshold: 0.8, escalationThreshold: 0.5 },
   retries: { maxAutomatedFixRounds: 3, maxStrongerRetries: 1 },
 };
@@ -82,6 +87,8 @@ async function fixture(phase: "validating" | "reviewing", complete = true) {
   const state: WorkflowState = {
     schemaVersion: 1,
     workflowId: "round-decision-workflow" as WorkflowState["workflowId"],
+    projectRoot: process.cwd(),
+    jevUsage: { attemptsReserved: 0 },
     stateRevision: 0,
     playbook: "feature",
     phase,
@@ -167,6 +174,86 @@ afterEach(async () => {
 });
 
 describe("RoundDecisionRunner ORCH-016", () => {
+  test.each([true, false])(
+    "infrastructure stop policy %s cannot launch automated Fix",
+    async (stop) => {
+      const f = await fixture("validating");
+      const result = {
+        ...validation("failed"),
+        status: "infrastructure-error" as const,
+        checks: [
+          {
+            id: "tests",
+            status: "infrastructure-error" as const,
+            evidence: "spawn failed",
+          },
+        ],
+      };
+      const ref = await f.artifactStore.writeText(
+        "validation",
+        "infrastructure.md",
+        JSON.stringify(result),
+      );
+      const jev = new FakeJevDecisionClient({
+        decideRound: {
+          type: "result",
+          value: { decision: "RETRY", confidence: 0.99 },
+        },
+      });
+      const runner = new RoundDecisionRunner({
+        ...f,
+        configuration: {
+          ...configuration,
+          validation: { stopOnInfrastructureFailure: stop },
+        },
+        jevDecisionClient: jev,
+      });
+      if (stop) {
+        await expect(
+          runner.execute({
+            state: f.state,
+            validation: result,
+            validationRef: ref,
+          }),
+        ).rejects.toThrow(/infrastructure/iu);
+        expect(jev.calls.decideRound).toHaveLength(0);
+        expect((await f.stateStore.loadState()).block?.reason).toBe(
+          "validation-infrastructure-error",
+        );
+      } else {
+        const round = await runner.execute({
+          state: f.state,
+          validation: result,
+          validationRef: ref,
+        });
+        expect(round.state.phase).toBe("clarifying");
+        expect(round.state.counters.automatedFixRoundsUsed).toBe(0);
+        expect(jev.calls.decideRound[0]?.branch).toBe(
+          "infrastructure-attention",
+        );
+      }
+    },
+  );
+  test("denied consent blocks Round before external evaluation", async () => {
+    const f = await fixture("reviewing");
+    const jev = new FakeJevDecisionClient({
+      decideRound: {
+        type: "result",
+        value: { decision: "COMPLETE", confidence: 0.99 },
+      },
+    });
+    await expect(
+      new RoundDecisionRunner({
+        ...f,
+        configuration: { ...configuration, jev: {} },
+        jevDecisionClient: jev,
+      }).execute({ state: f.state, validation: validation("passed") }),
+    ).rejects.toThrow(/consent|budget/iu);
+    expect(jev.calls.decideRound).toHaveLength(0);
+    expect((await f.stateStore.loadState()).block?.reason).toBe(
+      "operator-attention-required",
+    );
+  });
   test("rejects a passed round that skips reviewers and finding evaluation", async () => {
     const current = await fixture("reviewing", false);
     const jev = new FakeJevDecisionClient({

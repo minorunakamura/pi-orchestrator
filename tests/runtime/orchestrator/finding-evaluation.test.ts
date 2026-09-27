@@ -19,6 +19,8 @@ import type { WorkflowId } from "../../../src/types.ts";
 import { plan, implementationEvidence } from "../../fakes/coding-scenario.ts";
 import { createArtifactRef } from "../../../src/runtime/persistence/artifact-store.ts";
 const roots: string[] = [];
+import { jevPolicy } from "../../fakes/jev-policy.ts";
+const jevConfiguration = jevPolicy("workflow-finding-evaluation-1");
 const policy = {
   autoDecisionThreshold: 0.8,
   escalationThreshold: 0.5,
@@ -125,6 +127,8 @@ async function fixture(findings: readonly ReviewFinding[] = []) {
   const state: WorkflowState = {
     schemaVersion: 1,
     workflowId: "workflow-finding-evaluation-1" as WorkflowId,
+    projectRoot: process.cwd(),
+    jevUsage: { attemptsReserved: 0 },
     stateRevision: 0,
     playbook: "feature",
     phase: "reviewing",
@@ -170,6 +174,23 @@ afterEach(async () => {
 });
 
 describe("FindingEvaluationRunner ORCH-015", () => {
+  test("denied Product Runtime consent cannot mint accepted authority", async () => {
+    const f = await fixture([finding("C1", "correctness")]);
+    const jev = new FakeJevDecisionClient({
+      evaluateFindings: { type: "result", value: [raw("C1")] },
+    });
+    await expect(
+      new FindingEvaluationRunner({
+        ...f,
+        configuration: { decision: policy },
+        jevDecisionClient: jev,
+      }).execute({ state: f.state }),
+    ).rejects.toThrow(/consent|budget/iu);
+    expect(jev.calls.evaluateFindings).toHaveLength(0);
+    const state = await f.stateStore.loadState();
+    expect(state.block?.reason).toBe("operator-attention-required");
+    expect(state.coding.acceptedFindingsRef).toBeUndefined();
+  });
   test("evaluates every raw finding and persists only accepted findings as Fix Authority", async () => {
     const accepted = finding("C1", "correctness", true);
     const rejected = finding("P1", "ponytail");
@@ -194,7 +215,7 @@ describe("FindingEvaluationRunner ORCH-015", () => {
       artifactStore: current.artifactStore,
       stateStore: current.stateStore,
       jevDecisionClient: jev,
-      configuration: { decision: policy },
+      configuration: { decision: policy, jev: jevConfiguration },
     }).execute({
       state: current.state,
       findings: [accepted, escalated, rejected],
@@ -283,7 +304,7 @@ describe("FindingEvaluationRunner ORCH-015", () => {
         artifactStore: current.artifactStore,
         stateStore: current.stateStore,
         jevDecisionClient: jev,
-        configuration: { decision: policy },
+        configuration: { decision: policy, jev: jevConfiguration },
       }).execute({ state: current.state, findings: [rawFinding] });
 
       expect(result.evaluation.findings[0]).toMatchObject({
@@ -329,7 +350,7 @@ describe("FindingEvaluationRunner ORCH-015", () => {
       artifactStore: current.artifactStore,
       stateStore,
       jevDecisionClient: jev,
-      configuration: { decision: policy },
+      configuration: { decision: policy, jev: jevConfiguration },
     }).execute({ state: current.state, findings: [rawFinding] });
   });
 
@@ -345,7 +366,7 @@ describe("FindingEvaluationRunner ORCH-015", () => {
         artifactStore: current.artifactStore,
         stateStore: current.stateStore,
         jevDecisionClient: jev,
-        configuration: { decision: policy },
+        configuration: { decision: policy, jev: jevConfiguration },
       }).execute({
         state: current.state,
         findings: [rawFinding],
@@ -369,7 +390,7 @@ describe("FindingEvaluationRunner ORCH-015", () => {
         artifactStore: current.artifactStore,
         stateStore: current.stateStore,
         jevDecisionClient: jev,
-        configuration: { decision: policy },
+        configuration: { decision: policy, jev: jevConfiguration },
       }).execute({
         state: current.state,
         findings: [first, second],
@@ -390,7 +411,7 @@ describe("FindingEvaluationRunner ORCH-015", () => {
         artifactStore: current.artifactStore,
         stateStore: current.stateStore,
         jevDecisionClient: jev,
-        configuration: { decision: policy },
+        configuration: { decision: policy, jev: jevConfiguration },
       }).execute({ state: current.state, findings: [supplied] }),
     ).rejects.toThrow(/persisted review artifacts/i);
     expect(jev.calls.evaluateFindings).toHaveLength(0);

@@ -26,6 +26,30 @@ const finding = (id: string, human: boolean) =>
   );
 
 describe("Round authority precedence", () => {
+  test.each(["RETRY", "COMPLETE", "ESCALATE"] as const)(
+    "infrastructure evidence prevents automated %s",
+    (decision) => {
+      const rawDecision =
+        decision === "ESCALATE"
+          ? {
+              decision,
+              confidence: 0.99,
+              escalationReason: "implementation-capability" as const,
+              escalationReasonConfidence: 0.99,
+            }
+          : { decision, confidence: 0.99 };
+      expect(
+        decideRound(
+          {
+            rawDecision,
+            validation: { status: "infrastructure-error" },
+            findings: [],
+          },
+          policy,
+        ),
+      ).toMatchObject({ decision: "ESCALATE", escalationReason: "uncertain" });
+    },
+  );
   test("low-confidence RETRY requires Human attention", () => {
     expect(
       decideRound(

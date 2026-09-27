@@ -9,7 +9,7 @@ import {
 import type { ArtifactRef } from "../../../src/core/artifacts/references.ts";
 import type { FindingEvaluation } from "../../../src/core/decisions/types.ts";
 import {
-  JevIntegration,
+  JevIntegration as ProductJevIntegration,
   type JevClient,
 } from "../../../src/runtime/integrations/jev.ts";
 import type { ExecutionRoutingInput } from "../../../src/runtime/ports/jev-decision-client.ts";
@@ -19,6 +19,24 @@ import {
   roundEvidence,
   reviewRefs,
 } from "../../fakes/coding-scenario.ts";
+import { adapterAuthorization } from "../../fakes/jev-policy.ts";
+class JevIntegration extends ProductJevIntegration {
+  override routeExecution(
+    input: Parameters<ProductJevIntegration["routeExecution"]>[0],
+  ) {
+    return super.routeExecution(input, adapterAuthorization);
+  }
+  override evaluateFindings(
+    input: Parameters<ProductJevIntegration["evaluateFindings"]>[0],
+  ) {
+    return super.evaluateFindings(input, adapterAuthorization);
+  }
+  override decideRound(
+    input: Parameters<ProductJevIntegration["decideRound"]>[0],
+  ) {
+    return super.decideRound(input, adapterAuthorization);
+  }
+}
 const planRef: ArtifactRef<"plan"> = {
   kind: "plan",
   path: "plans/plan-v1.md",
@@ -150,6 +168,18 @@ class FakeJevClient implements JevClient {
 }
 
 describe("JevIntegration", () => {
+  test("missing Product Runtime authorization makes zero outbound requests", async () => {
+    const client = new FakeJevClient([
+      evaluation({
+        modelTier: choiceAnswer("STANDARD"),
+        reasoningTier: choiceAnswer("HIGH"),
+      }),
+    ]);
+    await expect(
+      new ProductJevIntegration({ client }).routeExecution(routingInput()),
+    ).rejects.toMatchObject({ kind: "policy" });
+    expect(client.calls).toHaveLength(0);
+  });
   test("builds public Choice requests and normalizes all three v1 decision families", async () => {
     const client = new FakeJevClient([
       evaluation({

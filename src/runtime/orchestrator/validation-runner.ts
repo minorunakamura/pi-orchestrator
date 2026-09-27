@@ -3,6 +3,7 @@ import {
   isValidationExecutionResult,
   parseValidationResult,
   type ValidationContract,
+  type ValidationExecutionResult,
   type ValidationResult,
 } from "../../core/decisions/types.ts";
 import {
@@ -26,7 +27,10 @@ import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 import { parseValidationContractBlock } from "../validation/contract-parser.ts";
 import { assertValidationChecks } from "./coding-evidence.ts";
 
+import type { OrchestratorConfiguration } from "../../core/configuration.ts";
+
 export interface ValidationRunnerDependencies {
+  configuration?: Pick<OrchestratorConfiguration, "validation">;
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
   validationExecutor: ValidationExecutor;
@@ -133,8 +137,20 @@ export class ValidationRunner {
         "Caller contract does not match Approved Plan Validation Contract",
       );
     }
-    const execution =
-      await this.dependencies.validationExecutor.execute(contract);
+    let execution: ValidationExecutionResult;
+    try {
+      execution = await this.dependencies.validationExecutor.execute(contract);
+    } catch {
+      // A thrown executor failure does not establish any check result.
+      execution = {
+        status: "infrastructure-error",
+        checks: contract.checks.map(({ id }) => ({
+          id,
+          status: "infrastructure-error",
+          evidence: "Validation executor did not return a reliable result",
+        })),
+      };
+    }
     if (!isValidationExecutionResult(execution)) {
       throw new ValidationRunnerError(
         "ValidationExecutor returned an invalid execution result",
@@ -154,7 +170,9 @@ export class ValidationRunner {
     const validationRef = await persistValidation(
       this.dependencies.artifactStore,
       validation,
-      `validation-${validation.implementationRevision}.json`,
+      validation.status === "infrastructure-error"
+        ? `validation-${validation.implementationRevision}-infrastructure-${calculateSha256(JSON.stringify(validation)).slice(0, 16)}.json`
+        : `validation-${validation.implementationRevision}.json`,
     );
 
     const state =
@@ -164,7 +182,20 @@ export class ValidationRunner {
             { type: "VALIDATION_PASSED", resultRef: validationRef },
             this.dependencies.stateStore,
           )
-        : input.state;
+        : validation.status === "infrastructure-error" &&
+            (this.dependencies.configuration?.validation
+              .stopOnInfrastructureFailure ??
+              true)
+          ? await advanceWorkflow(
+              input.state,
+              {
+                type: "BLOCK",
+                reason: "validation-infrastructure-error",
+                evidenceRef: validationRef,
+              },
+              this.dependencies.stateStore,
+            )
+          : input.state;
     return { state, validationRef, validation };
   }
 

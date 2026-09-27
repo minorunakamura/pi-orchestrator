@@ -15,6 +15,7 @@ export const artifactKinds = [
   "plan",
   "plan-review",
   "execution-routing",
+  "jev-request",
   "implementation",
   "validation",
   "correctness-review",
