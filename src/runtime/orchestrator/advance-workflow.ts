@@ -8,6 +8,7 @@ export interface WorkflowStateWriter {
   saveState(
     state: WorkflowState,
     expectedRevision?: number,
+    options?: { lockHeld?: boolean },
   ): Promise<WorkflowState>;
 }
 

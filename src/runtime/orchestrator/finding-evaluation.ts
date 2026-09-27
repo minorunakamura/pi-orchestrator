@@ -345,7 +345,14 @@ async function persistJson<K extends ArtifactRef["kind"]>(
     } catch {
       // An immutable collision with unreadable content is not reusable.
     }
-    throw error;
+    const suffix = calculateSha256(content).slice(0, 16);
+    const fallbackName = `${fileName.slice(0, -5)}-${suffix}.json`;
+    if (store.writeJson) {
+      return store.writeJson(kind, fallbackName, value, schema) as Promise<
+        ArtifactRef<K>
+      >;
+    }
+    return store.writeText(kind, fallbackName, content);
   }
 }
 

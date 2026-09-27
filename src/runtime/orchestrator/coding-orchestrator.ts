@@ -271,6 +271,8 @@ export interface CodingEntryInput {
   state: WorkflowState;
   cwd?: string;
   changeScope?: string;
+  /** Resume may re-evaluate stale routing after validating the durable evidence. */
+  reconcileStaleRouting?: boolean;
 }
 
 export interface CodingOrchestratorDependencies {
@@ -1088,7 +1090,10 @@ export class CodingOrchestrator {
       }
       priorRouting = routingArtifact;
       if (!isDecisionFresh(routingArtifact.freshness, freshness)) {
-        if (input.state.phase !== "fixing" || !routingArtifact.freshness)
+        if (
+          !input.reconcileStaleRouting &&
+          (input.state.phase !== "fixing" || !routingArtifact.freshness)
+        )
           throw new CodingOrchestrationError(
             "Stale execution routing freshness; reconciliation required",
           );
@@ -1221,6 +1226,7 @@ export class CodingOrchestrator {
           isCodeReviewArtifact,
           "human code feedback",
         );
+        const codeReviewBinding = routedState.coding.codeReview;
         if (
           feedbackArtifact.status !== "feedback" ||
           !sameArtifactRef(
@@ -1228,7 +1234,12 @@ export class CodingOrchestrator {
             routedState.coding.implementationRef,
           ) ||
           feedbackArtifact.implementationRevision !==
-            routedState.coding.implementationRevision
+            routedState.coding.implementationRevision ||
+          !codeReviewBinding ||
+          feedbackArtifact.reviewId !== codeReviewBinding.reviewId ||
+          routedState.external[
+            codeReviewIdentityKey(routedState.coding.implementationRevision)
+          ] !== feedbackArtifact.reviewId
         ) {
           throw new CodingOrchestrationError(
             "Human code feedback does not match the current coding authority",

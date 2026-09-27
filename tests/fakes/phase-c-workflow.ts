@@ -40,6 +40,10 @@ import {
 import { ReviewRunner } from "../../src/runtime/orchestrator/review-runner.ts";
 import { FindingEvaluationRunner } from "../../src/runtime/orchestrator/finding-evaluation.ts";
 import { RoundDecisionRunner } from "../../src/runtime/orchestrator/round-decision.ts";
+import {
+  resumeWorkflow,
+  type ResumeWorkflowOptions,
+} from "../../src/runtime/orchestrator/resume-workflow.ts";
 import type {
   ClarificationRequest,
   ValidationExecutor,
@@ -498,6 +502,10 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     artifactStore,
     stateStore,
     configuration,
+    subagentExecutor,
+    jevDecisionClient,
+    validationExecutor,
+    clarificationPort,
     faults,
     children,
     gates,
@@ -507,6 +515,20 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     coding,
     load: () => stateStore.loadState(),
     cleanup: () => rm(root, { recursive: true, force: true }),
+    resume: (overrides: Partial<ResumeWorkflowOptions> = {}) =>
+      resumeWorkflow(workflowId as never, {
+        runDirectory,
+        artifactStore: artifactWriter,
+        stateStore: stateWriter,
+        subagentExecutor,
+        jevDecisionClient,
+        validationExecutor,
+        clarificationPort,
+        plannotatorGate: newGate(),
+        configuration,
+        repositoryCwd,
+        ...overrides,
+      }),
     createPlan: async () =>
       planning.createPlan({
         state: await stateStore.loadState(),

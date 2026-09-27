@@ -74,28 +74,27 @@ async function persistValidation(
 ): Promise<ArtifactRef<"validation">> {
   const content = JSON.stringify(value);
   const expected = expectedRef(fileName, value);
-  try {
+  const write = async (name: string): Promise<ArtifactRef<"validation">> => {
     const ref = store.writeJson
-      ? await store.writeJson(
-          "validation",
-          fileName,
-          value,
-          parseValidationResult,
-        )
-      : await store.writeText("validation", fileName, content);
+      ? await store.writeJson("validation", name, value, parseValidationResult)
+      : await store.writeText("validation", name, content);
     validateArtifactRef(ref);
-    if (!sameArtifactRef(ref, expected)) {
+    const expectedRefForName = expectedRef(name, value);
+    if (!sameArtifactRef(ref, expectedRefForName)) {
       throw new ValidationRunnerError(
         "Validation artifact writer returned a mismatched reference",
       );
     }
     return ref;
+  };
+  try {
+    return await write(fileName);
   } catch (error) {
     if (!(error instanceof ArtifactImmutableError)) throw error;
-    if (store.readText && (await store.readText(expected)) === content) {
+    if (store.readText && (await store.readText(expected)) === content)
       return expected;
-    }
-    throw error;
+    const suffix = calculateSha256(content).slice(0, 16);
+    return write(`validation-${value.implementationRevision}-${suffix}.json`);
   }
 }
 
