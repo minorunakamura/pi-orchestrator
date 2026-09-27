@@ -52,6 +52,12 @@ function succeeded(output: string): AgentRunResult {
   return { status: "succeeded", runId, output };
 }
 
+function providedPort(answer: string): FakeClarificationPort {
+  return new FakeClarificationPort({
+    request: { type: "result", value: { status: "provided", answer } },
+  });
+}
+
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "pi-orchestrator-planning-"));
   roots.push(root);
@@ -163,7 +169,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     );
     expect(files).toHaveLength(1);
     const original = await readFile(
-      join(started.runDirectory, "context", files[0]!),
+      join(started.runDirectory, "context", files[0]),
       "utf8",
     );
     const store = new StateStore(started.runDirectory);
@@ -205,15 +211,12 @@ describe("PlanningOrchestrator ORCH-008", () => {
       const started = await makeStarted(await makeRoot(), executor, {
         requiresClarification: true,
       });
-      const port = (answer: string) =>
-        new FakeClarificationPort({
-          request: { type: "result", value: { status: "provided", answer } },
-        });
+
       await expect(
         new PlanningOrchestrator({
           ...started,
           subagentExecutor: executor,
-          clarificationPort: port("Choice one"),
+          clarificationPort: providedPort("Choice one"),
           stateStore: {
             saveState: async () => {
               throw Error("State save interrupted");
@@ -236,7 +239,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
         ...started,
         stateStore: store,
         subagentExecutor: executor,
-        clarificationPort: port(
+        clarificationPort: providedPort(
           change === "answer" ? "Choice two" : "Choice one",
         ),
       }).requestClarification({
@@ -302,18 +305,12 @@ describe("PlanningOrchestrator ORCH-008", () => {
     const started = await makeStarted(await makeRoot(), executor, {
       requiresClarification: true,
     });
-    const port = () =>
-      new FakeClarificationPort({
-        request: {
-          type: "result",
-          value: { status: "provided", answer: "Confirmed choice" },
-        },
-      });
+
     await expect(
       new PlanningOrchestrator({
         ...started,
         subagentExecutor: executor,
-        clarificationPort: port(),
+        clarificationPort: providedPort("Confirmed choice"),
         stateStore: {
           saveState: async () => {
             throw Error("State save interrupted");
@@ -334,7 +331,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
         ...started,
         stateStore: store,
         subagentExecutor: executor,
-        clarificationPort: port(),
+        clarificationPort: providedPort("Confirmed choice"),
       }).requestClarification({
         state: await store.loadState(),
         prompt: "Scope?",

@@ -89,15 +89,21 @@ interface ReadableArtifactStore extends WorkflowArtifactWriter {
   readText<K extends ArtifactKind>(ref: ArtifactRef<K>): Promise<string>;
 }
 
+function isReadableStore(
+  store: WorkflowArtifactWriter,
+): store is ReadableArtifactStore {
+  return typeof store.readText === "function";
+}
+
 function requireReadableStore(
   store: WorkflowArtifactWriter,
 ): ReadableArtifactStore {
-  if (typeof store.readText !== "function") {
+  if (!isReadableStore(store)) {
     throw new FindingEvaluationError(
       "Finding evaluation requires a readable ArtifactStore",
     );
   }
-  return store as ReadableArtifactStore;
+  return store;
 }
 
 function policyFrom(
@@ -348,9 +354,7 @@ async function persistJson<K extends ArtifactRef["kind"]>(
     const suffix = calculateSha256(content).slice(0, 16);
     const fallbackName = `${fileName.slice(0, -5)}-${suffix}.json`;
     if (store.writeJson) {
-      return store.writeJson(kind, fallbackName, value, schema) as Promise<
-        ArtifactRef<K>
-      >;
+      return store.writeJson(kind, fallbackName, value, schema);
     }
     return store.writeText(kind, fallbackName, content);
   }

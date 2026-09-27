@@ -116,6 +116,8 @@ export class CommandValidationExecutor implements ValidationExecutor {
 
     const checks: ValidationCheckResult[] = [];
     for (const check of contract.checks) {
+      // Required checks run in contract order; concurrent commands would change results.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       checks.push(await runCheck(check));
     }
 

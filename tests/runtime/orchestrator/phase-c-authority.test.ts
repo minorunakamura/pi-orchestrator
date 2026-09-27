@@ -45,7 +45,7 @@ test("Round Jev receives approved constraints and retry State from artifacts", a
     state: f.evaluated.state,
     validation: f.validated.validation,
   });
-  const request = f.jev.calls.decideRound[0]!;
+  const request = f.jev.calls.decideRound[0];
   expect(request.evidence.plan.content).toContain("Preserve the public API");
   expect(request.evidence.plan.content).toContain("Keep decisions in core");
   expect(request.evidence.implementation.ref).toEqual(
@@ -115,6 +115,8 @@ test.each(["schema", "binding"])(
     state.coding.implementationRef = ref;
     for (const key of ["correctnessReviewRef", "ponytailReviewRef"] as const) {
       const review = JSON.parse(
+        // Rebind each review artifact before moving to the next fixture ref.
+        // oxlint-disable-next-line eslint/no-await-in-loop
         await f.artifactStore.readText!(state.coding[key]!),
       );
       const rewritten = {
@@ -122,6 +124,8 @@ test.each(["schema", "binding"])(
         authority: { ...review.authority, implementationRef: ref },
       };
       Object.assign(state.coding, {
+        // Write each binding before mutating State for the next reviewer.
+        // oxlint-disable-next-line eslint/no-await-in-loop
         [key]: await f.artifactStore.writeText(
           state.coding[key]!.kind,
           `rebound-${key}.md`,

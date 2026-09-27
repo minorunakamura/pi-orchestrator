@@ -100,10 +100,14 @@ test("B1: a fresh real adapter cannot relabel stale approval without a persisted
   ];
   for (const external of identities) {
     const state = { ...created.state, external };
+    // Exercise each stale binding against the same persisted State in order.
+    // oxlint-disable-next-line eslint/no-await-in-loop
     await expect(
       orchestrator.reconcilePlanReview({ state, reviewId: staleId }),
     ).rejects.toThrow(/binding/);
     // Even a current-plan-labelled result cannot bypass the runtime entry guard.
+    // Check the second entry point only after the first has rejected this binding.
+    // oxlint-disable-next-line eslint/no-await-in-loop
     await expect(
       orchestrator.applyPlanReview({
         state,
@@ -139,9 +143,13 @@ test("B1: both entry points reject mismatched persisted id, version and artifact
       ...opened.state,
       planning: { ...opened.state.planning, planReview: binding },
     };
+    // Mismatched bindings share a persistent fixture; validate them serially.
+    // oxlint-disable-next-line eslint/no-await-in-loop
     await expect(
       orchestrator.reconcilePlanReview({ state, reviewId }),
     ).rejects.toThrow(/binding/);
+    // Complete the first rejection before probing the other entry point.
+    // oxlint-disable-next-line eslint/no-await-in-loop
     await expect(
       orchestrator.applyPlanReview({
         state,
@@ -149,6 +157,8 @@ test("B1: both entry points reject mismatched persisted id, version and artifact
         status: { ...handle, status: "approved" },
       }),
     ).rejects.toThrow(/binding/);
+    // StateStore writes must not race the entry-point assertions on this fixture.
+    // oxlint-disable-next-line eslint/no-await-in-loop
     await expect(store.saveState(state, state.stateRevision)).rejects.toThrow(
       /planReview/,
     );
@@ -198,6 +208,8 @@ test.each(["approved", "feedback"] as const)(
       },
     });
     for (const orchestrator of [original, fresh]) {
+      // Verify duplicate handling on each runtime instance in fixture order.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       const duplicate = await orchestrator.applyPlanReview({
         state: current,
         reviewId,

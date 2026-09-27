@@ -339,7 +339,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       planReader: artifactStore,
       timeoutMs: 5000,
     });
-  const jevRequests: SystemOneRequest<Questions>[] = [];
+  const jevRequests: SystemOneRequest[] = [];
   let roundCalls = 0,
     routeCalls = 0;
   const client: JevClient = {
@@ -516,7 +516,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     load: () => stateStore.loadState(),
     cleanup: () => rm(root, { recursive: true, force: true }),
     resume: (overrides: Partial<ResumeWorkflowOptions> = {}) =>
-      resumeWorkflow(workflowId as never, {
+      resumeWorkflow(workflowId, {
         runDirectory,
         artifactStore: artifactWriter,
         stateStore: stateWriter,

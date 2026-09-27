@@ -65,8 +65,11 @@ describe("Phase C full fake end-to-end contract", () => {
       "correctnessReviewRef",
       "ponytailReviewRef",
       "findingEvaluationRef",
-    ] as const)
+    ] as const) {
+      // Preserve the fixture's artifact assertion order.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       expect((await artifact(h, round.state.coding[key])).findings).toEqual([]);
+    }
     expect(
       (await artifact(h, round.state.coding.acceptedFindingsRef)).accepted,
     ).toEqual([]);
@@ -152,18 +155,18 @@ describe("Phase C full fake end-to-end contract", () => {
     ]);
     const clean = await reviewedRound(h);
     await approveCode(h);
-    expect(workers(h)[1]!.task).toContain(JSON.stringify(acceptedRef));
-    expect(workers(h)[1]!.task).not.toContain(
+    expect(workers(h)[1].task).toContain(JSON.stringify(acceptedRef));
+    expect(workers(h)[1].task).not.toContain(
       JSON.stringify(retry.state.coding.correctnessReviewRef),
     );
-    expect(workers(h)[1]!.task).not.toContain(
+    expect(workers(h)[1].task).not.toContain(
       JSON.stringify(retry.state.coding.ponytailReviewRef),
     );
     const findingRequests = h.jevRequests.filter(
       (request) => "evidenceSupported" in request.questions,
     );
     expect(findingRequests).toHaveLength(2);
-    expect(findingRequests[0]!.state).toMatchObject({
+    expect(findingRequests[0].state).toMatchObject({
       finding: accepted,
       reviewRef: retry.state.coding.correctnessReviewRef,
       approvedPlanRef: retry.state.planning.approvedPlanRef,
@@ -189,7 +192,7 @@ describe("Phase C full fake end-to-end contract", () => {
       (request) => "decision" in request.questions,
     );
     expect(roundRequests).toHaveLength(2);
-    expect(roundRequests[1]!.state).toMatchObject({
+    expect(roundRequests[1].state).toMatchObject({
       approvedPlanRef: clean.state.planning.approvedPlanRef,
       implementationRevision: 2,
       evidence: {
@@ -267,7 +270,7 @@ describe("Phase C full fake end-to-end contract", () => {
     );
     await reviewedRound(h);
     await approveCode(h);
-    expect(workers(h)[1]!.task).toContain(
+    expect(workers(h)[1].task).toContain(
       JSON.stringify(second.state.planning.approvedPlanRef),
     );
     expect(h.gates.filter((g) => g.action === "plan-review")).toHaveLength(2);
@@ -353,9 +356,7 @@ describe("Phase C full fake end-to-end contract", () => {
     expect(h.clarifications).toHaveLength(2);
     const third = await approvePlan(h);
     expect(third.state.planning.approvedPlanVersion).toBe(3);
-    const planner = h.children
-      .filter((child) => child.agent === "planner")
-      .at(-1)!;
+    const planner = h.children.findLast((child) => child.agent === "planner")!;
     expect(planner.task).toContain(JSON.stringify(secondRef));
     expect(planner.task).not.toContain(JSON.stringify(firstRef));
     await reviewedRound(h);
@@ -389,7 +390,7 @@ describe("Phase C full fake end-to-end contract", () => {
     const clean = await reviewedRound(h);
     expect(clean.state.coding.implementationRevision).toBe(2);
     expect(clean.state.coding.codeReview).toBeUndefined();
-    expect(workers(h)[1]!.task).toContain(JSON.stringify(feedbackRef));
+    expect(workers(h)[1].task).toContain(JSON.stringify(feedbackRef));
     await approveCode(h);
     expect(codeGates(h)).toHaveLength(2);
   });
@@ -441,7 +442,7 @@ describe("Phase C full fake end-to-end contract", () => {
     await expect(
       h.validate({
         ...contract,
-        checks: [{ ...contract.checks[0]!, command: "true" }],
+        checks: [{ ...contract.checks[0], command: "true" }],
       }),
     ).rejects.toThrow(/contract/iu);
     expect(h.validations).toHaveLength(0);
@@ -550,7 +551,7 @@ describe("Phase C full fake end-to-end contract", () => {
       expect(terminal.runId).toBe(mode === "timeout" ? undefined : "worker-1");
       const received = await artifact(h, terminal.previousRef);
       expect(received.after.status).toBe("pending");
-      expect(received.dispatch.requestId).toBe(workers(h)[0]!.requestId);
+      expect(received.dispatch.requestId).toBe(workers(h)[0].requestId);
       expect(terminal.after.snapshot.untracked).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "implementation.txt" }),

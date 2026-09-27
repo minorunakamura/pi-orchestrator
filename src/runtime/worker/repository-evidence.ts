@@ -40,7 +40,13 @@ async function observe(
       await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"])
     ).trim();
   } catch (error) {
-    if ((error as { code?: unknown }).code !== 1) throw error;
+    if (
+      error === null ||
+      (typeof error !== "object" && typeof error !== "function") ||
+      !("code" in error) ||
+      error.code !== 1
+    )
+      throw error;
     await git(root, ["symbolic-ref", "HEAD"]);
     head = null;
   }
@@ -102,18 +108,24 @@ async function observe(
   )
     .split("\0")
     .filter(Boolean)
-    .sort();
+    .toSorted();
   const untracked: RepositorySnapshot["untracked"] = [];
   for (const path of names) {
     const absolute = resolve(root, path);
     if (relative(root, absolute).startsWith(".."))
       throw Error("Invalid repository path");
+    // Observe untracked entries in stable path order for deterministic evidence.
+    // oxlint-disable-next-line eslint/no-await-in-loop
     const metadata = await lstat(absolute);
     if (!metadata.isFile() && !metadata.isSymbolicLink())
       throw Error("Unsupported repository entry");
     const content = metadata.isSymbolicLink()
-      ? await readlink(absolute)
-      : await readFile(absolute);
+      ? // Symlink targets belong to the same sequential path observation.
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await readlink(absolute)
+      : // Read regular files sequentially as well; don't reorder snapshot evidence.
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await readFile(absolute);
     untracked.push({
       path,
       sha256: calculateSha256(content),

@@ -409,6 +409,8 @@ interface PlanEvidence {
 
 interface ReadableArtifactStore extends WorkflowArtifactWriter {
   readText<K extends ArtifactRef["kind"]>(ref: ArtifactRef<K>): Promise<string>;
+  // Preserve the public ArtifactStore schema callback's inferred result type.
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
   writeJson?<K extends ArtifactRef["kind"], R>(
     kind: K,
     fileName: string,
@@ -417,15 +419,21 @@ interface ReadableArtifactStore extends WorkflowArtifactWriter {
   ): Promise<ArtifactRef<K>>;
 }
 
+function isReadableArtifactStore(
+  store: WorkflowArtifactWriter,
+): store is ReadableArtifactStore {
+  return typeof store.readText === "function";
+}
+
 function requireArtifactStore(
   store: WorkflowArtifactWriter,
 ): ReadableArtifactStore {
-  if (typeof store.readText !== "function") {
+  if (!isReadableArtifactStore(store)) {
     throw new CodingOrchestrationError(
       "Coding entry requires ArtifactStore.readText",
     );
   }
-  return store as ReadableArtifactStore;
+  return store;
 }
 
 function normalizeHeading(value: string): string {
@@ -1056,6 +1064,8 @@ export class CodingOrchestrator {
       input.state.coding.latestCodeReviewRef,
     ]) {
       if (ref) {
+        // Verify each authority ref before it can enter the routing input.
+        // oxlint-disable-next-line eslint/no-await-in-loop
         await readAuthoritativeText(store, ref, "routing input");
         authorityRefs.push(ref);
       }

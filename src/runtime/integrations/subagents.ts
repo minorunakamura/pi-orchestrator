@@ -107,6 +107,8 @@ function asRunId(value: string | undefined): SubagentRunId | undefined {
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 300_000;
 
+function noop(): void {}
+
 /**
  * Adapter for the versioned pi-subagents event contract. The host supplies its
  * public event bus; pi-subagents remains an unmodified third-party extension.
@@ -235,7 +237,7 @@ export class SubagentsIntegration implements SubagentExecutor {
     return new Promise((resolve, reject) => {
       let settled = false;
       let dispatched = false;
-      let unsubscribe = () => {};
+      let unsubscribe: () => void = noop;
       const finish = (response: DelegationResponse): void => {
         if (settled) return;
         settled = true;
@@ -320,19 +322,18 @@ function taskWithArtifactRefs(input: AgentRunRequest): string {
 }
 
 function toDelegationThinking(value: string): DelegationThinking {
-  const allowed: readonly DelegationThinking[] = [
-    "off",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-  ];
-  if (!allowed.includes(value as DelegationThinking)) {
-    throw new SubagentNotDispatchedError(
-      `Unsupported pi-subagents thinking level: ${value}`,
-    );
+  switch (value) {
+    case "off":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+    case "max":
+      return value;
+    default:
+      throw new SubagentNotDispatchedError(
+        `Unsupported pi-subagents thinking level: ${value}`,
+      );
   }
-  return value as DelegationThinking;
 }

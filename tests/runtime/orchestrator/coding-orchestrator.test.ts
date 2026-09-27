@@ -31,6 +31,8 @@ import {
 import type { SubagentRunId } from "../../../src/types.ts";
 
 import { jevPolicy } from "../../fakes/jev-policy.ts";
+function noopListener(_payload: unknown): void {}
+
 const roots: string[] = [];
 const runId = "worker-1" as unknown as SubagentRunId;
 const validPlan = `# Approved Plan
@@ -220,7 +222,11 @@ describe("CodingOrchestrator ORCH-012", () => {
       const name = "tracked file\nwith whitespace.txt";
       await writeFile(join(started.repositoryCwd, name), "baseline");
       await git("add", "--", name);
-      for (const flag of flags) await git("update-index", flag, "--", name);
+      for (const flag of flags) {
+        // Git index flags accumulate; apply them in the scenario's specified order.
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await git("update-index", flag, "--", name);
+      }
       await writeFile(join(started.repositoryCwd, name), "hidden mutation");
       const before = (await git("ls-files", "-v", "-z")).stdout;
       const worker = new FakeSubagentExecutor({
@@ -279,7 +285,7 @@ describe("CodingOrchestrator ORCH-012", () => {
     "unsubscribe throw reaches durable BLOCK with evidence: %s",
     async (path) => {
       const started = await makeApproved();
-      let listener: (payload: unknown) => void = () => {};
+      let listener: (payload: unknown) => void = noopListener;
       let emissions = 0;
       let cleanups = 0;
       let sent: Record<string, unknown> = {};

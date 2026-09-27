@@ -64,7 +64,7 @@ function fakeClient(failFirst = false) {
       const answers = Object.fromEntries(
         Object.entries(value.questions).map(([key, question]) => {
           const options = Object.keys(question.criteria ?? {});
-          const choice = options[0]!;
+          const choice = options[0];
           return [
             key,
             {

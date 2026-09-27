@@ -161,7 +161,7 @@ describe("ValidationRunner ORCH-013", () => {
         state: fixture.state,
         contract: {
           ...contract,
-          checks: [{ ...contract.checks[0]!, command: "true" }],
+          checks: [{ ...contract.checks[0], command: "true" }],
         },
       }),
     ).rejects.toThrow(/contract/iu);

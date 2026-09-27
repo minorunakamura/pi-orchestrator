@@ -138,15 +138,21 @@ interface ReadableArtifactStore extends WorkflowArtifactWriter {
   readText<K extends ArtifactKind>(ref: ArtifactRef<K>): Promise<string>;
 }
 
+function isReadableStore(
+  store: WorkflowArtifactWriter,
+): store is ReadableArtifactStore {
+  return typeof store.readText === "function";
+}
+
 function requireReadableStore(
   store: WorkflowArtifactWriter,
 ): ReadableArtifactStore {
-  if (typeof store.readText !== "function") {
+  if (!isReadableStore(store)) {
     throw new ReviewRunnerError(
       "Automated review requires readable validation artifacts",
     );
   }
-  return store as ReadableArtifactStore;
+  return store;
 }
 
 function reviewRefs(state: WorkflowState): ArtifactRef[] {
@@ -473,6 +479,8 @@ export class ReviewRunner {
 
     let reviews: ReviewArtifact[];
     try {
+      // The review artifacts are immutable; mapping must allocate new authority bindings.
+      // oxlint-disable-next-line oxc/no-map-spread
       reviews = fixedReviewerSet.map((reviewer, index) => {
         const review = parseOutput(
           results[index],

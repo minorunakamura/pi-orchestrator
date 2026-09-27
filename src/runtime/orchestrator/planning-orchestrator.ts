@@ -42,6 +42,8 @@ export interface WorkflowArtifactWriter {
     fileName: string,
     content: string,
   ): Promise<ArtifactRef<K>>;
+  // Public ArtifactStore schema callback keeps its inferred result type.
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
   writeJson?<K extends ArtifactKind, R>(
     kind: K,
     fileName: string,
@@ -382,16 +384,19 @@ export class PlanningOrchestrator {
     const port = this.dependencies.clarificationPort;
     if (!port) throw new Error("ClarificationPort is required");
 
-    const request = {
+    const clarificationRequest = {
       prompt: input.prompt,
       contextRefs: structuredClone(
         input.contextRefs ?? planningContextRefs(sourceState),
       ),
     };
-    const sourceIdentity = JSON.stringify({ state: sourceState, request });
+    const sourceIdentity = JSON.stringify({
+      state: sourceState,
+      request: clarificationRequest,
+    });
     let result: ClarificationResult;
     try {
-      result = await port.request(structuredClone(request));
+      result = await port.request(structuredClone(clarificationRequest));
     } catch {
       const state = await advanceWorkflow(
         sourceState,
@@ -412,7 +417,10 @@ export class PlanningOrchestrator {
       throw new Error("Clarification answer must not be empty");
     }
 
-    const content = clarificationArtifact(result.answer, request.prompt);
+    const content = clarificationArtifact(
+      result.answer,
+      clarificationRequest.prompt,
+    );
     const digest = calculateSha256(JSON.stringify({ sourceIdentity, content }));
     const fileName = `clarification-r${sourceState.stateRevision}-${digest}.md`;
     const clarificationRef = createArtifactRef(

@@ -359,6 +359,8 @@ export class JevIntegration implements JevDecisionClient {
   ): Promise<FindingEvaluationRawDecision[]> {
     const decisions: FindingEvaluationRawDecision[] = [];
     for (const finding of input.findings) {
+      // Each finding consumes its own durable authorized request in input order.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       const answers = await this.evaluate(
         findingRequest(input, finding),
         "finding",
@@ -446,16 +448,22 @@ export class JevIntegration implements JevDecisionClient {
         "Product Runtime authorization is required before Jev dispatch",
       );
     for (let attempt = 0; attempt <= this.maxTransportRetries; attempt += 1) {
+      // Persist authorization for this attempt before the outbound request.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       await authorization.authorizeAttempt({
         family,
         destination: this.destination,
         retryIndex: attempt,
         ...(findingId ? { findingId } : {}),
       });
+      // The retry result determines whether a later attempt may be dispatched.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       const result = await ask(this.getClient(), requestValue, {
         timeoutMs: this.timeoutMs,
       });
       if (result.ok) {
+        // Record this attempt's usage before accepting its decision.
+        // oxlint-disable-next-line eslint/no-await-in-loop
         await authorization.recordUsage({
           inputTokens: result.usage.input_tokens,
           outputTokens: result.usage.output_tokens,

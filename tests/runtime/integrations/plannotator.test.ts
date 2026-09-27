@@ -161,18 +161,18 @@ describe("PlannotatorIntegration", () => {
       planReader: { readText: async () => "# Plan" },
     });
     await gate.openPlanReview({ planRef, planVersion: 1 });
-    for (const binding of [
-      { reviewId, planRef, planVersion: 2 },
-      {
-        reviewId,
-        planRef: { ...planRef, sha256: "b".repeat(64) },
-        planVersion: 1,
-      },
-    ]) {
-      await expect(gate.getPlanReview(reviewId, binding)).rejects.toMatchObject(
-        { kind: "reconciliation" },
-      );
-    }
+    await Promise.all([
+      expect(
+        gate.getPlanReview(reviewId, { reviewId, planRef, planVersion: 2 }),
+      ).rejects.toMatchObject({ kind: "reconciliation" }),
+      expect(
+        gate.getPlanReview(reviewId, {
+          reviewId,
+          planRef: { ...planRef, sha256: "b".repeat(64) },
+          planVersion: 1,
+        }),
+      ).rejects.toMatchObject({ kind: "reconciliation" }),
+    ]);
     expect(events.calls).toHaveLength(1);
   });
 

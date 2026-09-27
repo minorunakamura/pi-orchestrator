@@ -16,7 +16,7 @@ function ref<K extends ArtifactRef["kind"]>(
     path,
     schemaVersion: 1,
     sha256: "a".repeat(64),
-  } as ArtifactRef<K>;
+  };
 }
 
 function state(phase: WorkflowState["phase"]): WorkflowState {

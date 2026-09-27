@@ -128,10 +128,10 @@ export function resumeWorkflow(
   options: ResumeWorkflowOptions = {} as ResumeWorkflowOptions,
 ): Promise<ReconciliationResult> {
   if (typeof workflowIdOrInput === "string") {
-    return runResume(workflowIdOrInput as WorkflowId, options);
+    return runResume(workflowIdOrInput, options);
   }
   const { workflowId, ...inputOptions } = workflowIdOrInput;
-  return runResume(workflowId as WorkflowId, inputOptions);
+  return runResume(workflowId, inputOptions);
 }
 
 export class WorkflowController {

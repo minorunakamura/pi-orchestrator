@@ -156,13 +156,16 @@ export class FakeJevDecisionClient implements JevDecisionClient {
     input: FindingEvaluationInput,
     authorization?: JevCallAuthorization,
   ): Promise<FindingEvaluationRawDecision[]> {
-    for (const finding of input.findings)
+    for (const finding of input.findings) {
+      // Mirror production's ordered per-finding authorization in the fake.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       await authorization?.authorizeAttempt({
         family: "finding",
         destination: authorization.destination,
         retryIndex: 0,
         findingId: finding.id,
       });
+    }
     this.calls.evaluateFindings.push(input);
     return resolve(
       "JevDecisionClient.evaluateFindings",

@@ -62,18 +62,24 @@ test("package declares existing Pi extension and three product Agent resources",
   expect(manifest.pi?.extensions).toEqual(["./src/index.ts"]);
   expect(manifest.main).toBeUndefined();
   expect(manifest["pi-subagents"]?.agents).toEqual(["./agents"]);
-  for (const entry of manifest.pi.extensions)
-    expect((await stat(resolve(root, entry))).isFile()).toBe(true);
+  for (const result of await Promise.all(
+    manifest.pi.extensions.map((entry: string) => stat(resolve(root, entry))),
+  ))
+    expect(result.isFile()).toBe(true);
   const agentsDirectory = resolve(root, manifest["pi-subagents"].agents[0]);
-  const files = (await readdir(agentsDirectory)).sort();
+  const files = (await readdir(agentsDirectory)).toSorted();
   expect(files).toEqual([
     "planner.md",
     "ponytail-reviewer.md",
     "workflow-scout.md",
   ]);
-  for (const file of files) {
-    const definition = await readFile(join(agentsDirectory, file), "utf8");
-    expect(definition.match(/^name: (.+)$/mu)?.[1]).toBe(file.slice(0, -3));
+  const definitions = await Promise.all(
+    files.map((file) => readFile(join(agentsDirectory, file), "utf8")),
+  );
+  for (const [index, file] of files.entries()) {
+    expect(definitions[index].match(/^name: (.+)$/mu)?.[1]).toBe(
+      file.slice(0, -3),
+    );
   }
 });
 
@@ -98,7 +104,7 @@ test.each(["explicit", "installed"])(
       const result = loader.getExtensions();
       expect(result.errors).toEqual([]);
       expect(result.extensions).toHaveLength(1);
-      const extension = result.extensions[0]!;
+      const extension = result.extensions[0];
       expect(extension.resolvedPath).toBe(join(root, "src/index.ts"));
       expect([...extension.commands.keys()]).toEqual([
         "wf-new",

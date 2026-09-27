@@ -9,7 +9,6 @@ import {
   type WorkflowCommandRuntime,
 } from "../../src/commands/index.ts";
 import type { StartedWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
-import type { ReconciliationResult } from "../../src/runtime/orchestrator/reconciler.ts";
 import type { WorkflowId } from "../../src/types.ts";
 import { StateNotFoundError } from "../../src/runtime/persistence/state-store.ts";
 import { phaseCWorkflow } from "../fakes/phase-c-workflow.ts";
@@ -88,14 +87,11 @@ function makeRuntime(
           stateStore: {},
         }) as unknown as StartedWorkflow,
     ),
-    resume: vi.fn(
-      async () =>
-        ({
-          status: "pending",
-          state: minimalState(),
-          phase: "planning",
-        }) as ReconciliationResult,
-    ),
+    resume: vi.fn(async () => ({
+      status: "pending" as const,
+      state: minimalState(),
+      phase: "planning" as const,
+    })),
     loadState: vi.fn(async () => minimalState()),
     ...overrides,
   };

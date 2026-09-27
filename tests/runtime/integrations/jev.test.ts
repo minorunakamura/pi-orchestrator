@@ -147,7 +147,7 @@ function evaluation(answers: Record<string, unknown>): Evaluation<Questions> {
 
 class FakeJevClient implements JevClient {
   readonly calls: Array<{
-    request: SystemOneRequest<Questions>;
+    request: SystemOneRequest;
     options?: EvaluationOptions;
   }> = [];
 

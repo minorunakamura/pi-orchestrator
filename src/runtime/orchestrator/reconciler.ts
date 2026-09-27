@@ -6,6 +6,7 @@ import type {
   ArtifactRef,
 } from "../../core/artifacts/references.ts";
 import { isArtifactRef } from "../../core/artifacts/references.ts";
+import { isRecord } from "../../core/schema.ts";
 import { parsePlan } from "../planning/plan-parser.ts";
 import type { OrchestratorConfiguration } from "../../core/configuration.ts";
 import {
@@ -16,7 +17,6 @@ import {
   type AcceptedFindingsArtifact,
   type FindingEvaluationArtifact,
   type RoundDecisionArtifact,
-  type RoundDecision,
   type ValidationResult,
 } from "../../core/decisions/types.ts";
 import {
@@ -153,11 +153,10 @@ function isDate(value: unknown): value is string {
 export function isReconciliationArtifact(
   value: unknown,
 ): value is ReconciliationArtifact {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return false;
-  const candidate = value as Record<string, unknown>;
-  const keys = Object.keys(candidate).sort();
-  let expected = [
+  if (!isRecord(value)) return false;
+  const candidate = value;
+  const keys = Object.keys(candidate);
+  const expected = [
     "evidenceRefs",
     "observedAt",
     "outcome",
@@ -168,16 +167,15 @@ export function isReconciliationArtifact(
     "workflowId",
   ];
   if (candidate.reason !== undefined) expected.push("reason");
-  expected.sort();
   return (
-    JSON.stringify(keys) === JSON.stringify(expected) &&
+    keys.length === expected.length &&
+    keys.every((key) => expected.includes(key)) &&
     candidate.schemaVersion === 1 &&
     candidate.recordType === "workflow-reconciliation" &&
     typeof candidate.workflowId === "string" &&
     typeof candidate.phase === "string" &&
-    ["advanced", "pending", "blocked", "failed"].includes(
-      candidate.outcome as string,
-    ) &&
+    typeof candidate.outcome === "string" &&
+    ["advanced", "pending", "blocked", "failed"].includes(candidate.outcome) &&
     typeof candidate.sourceStateRevision === "number" &&
     Number.isSafeInteger(candidate.sourceStateRevision) &&
     isDate(candidate.observedAt) &&
@@ -187,14 +185,22 @@ export function isReconciliationArtifact(
   );
 }
 
-function asReadable(store: WorkflowArtifactWriter): WorkflowArtifactWriter & {
+type ReadableWorkflowArtifactWriter = WorkflowArtifactWriter & {
   readText(ref: ArtifactRef): Promise<string>;
-} {
-  if (!store.readText)
+};
+
+function isReadable(
+  store: WorkflowArtifactWriter,
+): store is ReadableWorkflowArtifactWriter {
+  return typeof store.readText === "function";
+}
+
+function asReadable(
+  store: WorkflowArtifactWriter,
+): ReadableWorkflowArtifactWriter {
+  if (!isReadable(store))
     throw new ReconciliationError("Resume requires a readable ArtifactStore");
-  return store as WorkflowArtifactWriter & {
-    readText(ref: ArtifactRef): Promise<string>;
-  };
+  return store;
 }
 
 function sameDispatch(left: unknown, right: unknown): boolean {
@@ -277,16 +283,20 @@ async function persistJson<K extends ArtifactKind>(
   }
 }
 
+function withoutObservationTime(value: WorkerAttemptEvidence) {
+  const clone: Partial<WorkerAttemptEvidence> = structuredClone(value);
+  delete clone.observedAt;
+  return clone;
+}
+
 function sameWorkerRecordIgnoringObservationTime(
   left: WorkerAttemptEvidence,
   right: WorkerAttemptEvidence,
 ): boolean {
-  const normalize = (value: WorkerAttemptEvidence) => {
-    const clone = structuredClone(value) as Partial<WorkerAttemptEvidence>;
-    delete clone.observedAt;
-    return clone;
-  };
-  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+  return (
+    JSON.stringify(withoutObservationTime(left)) ===
+    JSON.stringify(withoutObservationTime(right))
+  );
 }
 
 async function persistWorkerRecord(
@@ -1518,6 +1528,8 @@ export class WorkflowReconciler {
       [correctness, "correctness"],
       [ponytail, "ponytail"],
     ] as const) {
+      // Validate each persisted review in fixed reviewer order before advancing.
+      // oxlint-disable-next-line eslint/no-await-in-loop
       const review = await readJson(
         this.deps.artifactStore,
         ref,
@@ -2029,7 +2041,7 @@ export class WorkflowReconciler {
       phase: state.phase as "validating" | "reviewing",
       counters: state.counters,
       retries: this.deps.configuration!.retries,
-      decision: artifact as RoundDecision,
+      decision: artifact,
       decisionRef:
         state.coding.roundDecisionRef ??
         createArtifactRef(

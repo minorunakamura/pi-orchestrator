@@ -104,7 +104,10 @@ function parseRecord(value: unknown): JevRequestRecord {
     (value.findingId !== undefined && !isNonEmptyString(value.findingId))
   )
     throw Error("Invalid Jev request evidence");
-  if (jevDestination(value.destination as string) !== value.destination)
+  if (
+    typeof value.destination !== "string" ||
+    jevDestination(value.destination) !== value.destination
+  )
     throw Error("Invalid Jev destination evidence");
   for (const key of ["previousRef", "requestRef"] as const)
     if (

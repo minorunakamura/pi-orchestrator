@@ -87,7 +87,7 @@ describe("ORCH-018 resumeWorkflow", () => {
         value: { ...created.state.planning.planReview!, status: "pending" },
       },
     });
-    const result = await resumeWorkflow("workflow-1" as never, {
+    const result = await resumeWorkflow("workflow-1", {
       runDirectory: started.runDirectory,
       artifactStore: started.artifactStore,
       stateStore: started.stateStore,
@@ -126,7 +126,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       openPlanReview: failure("infrastructure", "must not reopen"),
     });
 
-    const result = await resumeWorkflow("workflow-1" as never, {
+    const result = await resumeWorkflow("workflow-1", {
       runDirectory: started.runDirectory,
       artifactStore: started.artifactStore,
       stateStore: started.stateStore,
@@ -261,7 +261,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       resume: async () => ({ status: "ambiguous", reason: "not used" }),
     };
 
-    const result = await resumeWorkflow("workflow-1" as never, {
+    const result = await resumeWorkflow("workflow-1", {
       runDirectory: join(runs, "workflow-1"),
       artifactStore,
       stateStore,
@@ -369,7 +369,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       resume: async () => ({ status: "ambiguous", reason: "not used" }),
     };
 
-    const result = await resumeWorkflow("workflow-1" as never, {
+    const result = await resumeWorkflow("workflow-1", {
       runDirectory: join(runs, "workflow-1"),
       artifactStore,
       stateStore,
