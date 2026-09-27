@@ -1,6 +1,6 @@
 # Pi Orchestrator v1 Implementation Plan
 
-Version: 1.6
+Version: 1.7
 
 ## 1. Goal
 
@@ -695,6 +695,25 @@ ORCH-008.
 
 # Phase C — Decision & Coding Orchestration
 
+### Cross-Story Contract Remediation
+
+The Phase C read-only review found gaps B1–B5 / I1–I5 despite passing individual Story tests. The requirements below are acceptance criteria for remediation, not a claim that the current implementation satisfies them. Basic Design's Human Gates and State/Artifact authority remain unchanged.
+
+| Finding | Contract owner in Detailed Design | Implementation Stories |
+|---|---|---|
+| B1 Review completeness | [Coding §8](../detailed-design/coding-orchestration.md#review-completeness-b1) | ORCH-014, ORCH-015, ORCH-016 |
+| B2 Validation authority | [Coding §7](../detailed-design/coding-orchestration.md#validation-authority-b2) | ORCH-013 |
+| B3 Jev evidence | [Coding §9](../detailed-design/coding-orchestration.md#runtime-evidence-assembly-b3) | ORCH-010, ORCH-015, ORCH-016 |
+| B4 Uncertainty / Human escalation | [Coding §11](../detailed-design/coding-orchestration.md#policy-precedence-b4) | ORCH-010, ORCH-011, ORCH-016 |
+| B5 Code Review binding | [Coding §15](../detailed-design/coding-orchestration.md#durable-code-review-binding-b5) | ORCH-017 |
+| I1 Decision freshness | [Persistence §7–8](../detailed-design/persistence-recovery.md#8-decision-freshness) | ORCH-011, ORCH-012, ORCH-015, ORCH-016 |
+| I2 Worker evidence | [Persistence §6.1](../detailed-design/persistence-recovery.md#61-worker-attempt-evidence-i2) | ORCH-012; consumed by ORCH-018 |
+| I3 Validation infrastructure failure | [Coding §7](../detailed-design/coding-orchestration.md#validation-infrastructure-policy-i3) | ORCH-013, ORCH-016 |
+| I4 pi-subagents timeout | [Runtime §6](../detailed-design/runtime-design.md#durable-dispatch-and-bounded-wait-i2--i4) | ORCH-012, ORCH-014 |
+| I5 Jev consent / budget | [Runtime §8](../detailed-design/runtime-design.md#product-runtime-consent-and-budget-i5) | ORCH-010 and all Jev call sites |
+
+Phase C owns current-path guards, durable evidence production, and regression tests. ORCH-018 still owns the full resume controller, phase-specific reconciliation, and orphan recovery. No third-party contract change, v1.1+ feature, Integration Readiness approval, or real Pi smoke is implied by this documentation update.
+
 ## ORCH-010 — Jev Transport and Response Normalization
 
 ### Goal
@@ -750,6 +769,10 @@ src/runtime/integrations/jev-contracts.ts   # pi-typesafe/external-only types if
 - boolean semantic questions use confidence-bearing bounded choices when domain confidence is required.
 - pi-orchestrator owns its Product Runtime consent/budget policy rather than treating pi-typesafe agent-tool opt-in as authority.
 - adapter does not decide ACCEPT/REJECT/ESCALATE or state transitions.
+- B3: Finding/Round requests forward runtime-assembled bounded authoritative evidence; the adapter does not resolve/read/summarize/truncate Artifacts or infer missing Plan constraints from refs.
+- B4: normalized Round responses retain action confidence and required escalation-reason confidence separately through core policy and persistence; malformed/missing required confidence fails closed.
+- I5: explicit project/workflow/destination/evidence-scoped Product Runtime consent and a finite per-workflow request allowance are checked before network dispatch. Durable reservation covers every per-finding call and transport retry; recreating a client does not reset the allowance. Missing/revoked consent or exhausted/unknown allowance blocks without network access. API keys, Plan approval, and `/typesafe enable` are not consent.
+- consent/policy identity, allowance reservations, and available usage evidence are non-secret durable runtime data; reservation persistence failure prevents dispatch. Unknown timed-out usage does not automatically refund the allowance.
 
 ### Tests
 
@@ -768,6 +791,12 @@ transport/API failure
 ```
 
 Tests must not require `/typesafe enable` or the Pi agent tool.
+
+Additional regressions:
+
+- B3: request capture proves Finding/Round inputs include runtime-supplied Plan/Architecture/Scope constraints and provenance; Round includes retry State and previous decision evidence. Adapter has no ArtifactStore dependency.
+- B4: high-confidence ESCALATE with low-confidence reason preserves both values; missing required confidence is rejected, never replaced by action confidence.
+- I5: missing/revoked/mismatched consent, exhausted/unknown allowance, and reservation save failure make zero network calls. Per-finding calls and transport retries consume reservations; client restart does not reset them. Timeout retains its reservation; no secret is persisted.
 
 ### Depends on
 
@@ -803,10 +832,16 @@ decision freshness helpers
 - accepted blocking finding overrides Jev COMPLETE.
 - `implementation-capability`, `plan-conflict`, `human-decision`, `uncertain` map deterministically to v1 routing.
 - decision freshness checks schema, plan version, implementation revision, input refs/digest, policy/config digest.
+- B4: [Round policy precedence](../detailed-design/coding-orchestration.md#policy-precedence-b4) applies to every action, not only COMPLETE. No automated RETRY/stronger retry bypasses low-confidence action/reason, Human-decision evidence, or uncertainty.
+- I1: all three decision families produce the mandatory freshness header; missing fields cannot be defaulted into reuse eligibility.
 
 ### Tests
 
 Dense table-driven tests covering all policy combinations and confidence boundaries.
+
+B4 regressions must cover low-confidence RETRY and ESCALATE, high-confidence action with low-confidence reason, Human/uncertain findings mixed with accepted blocking findings, and raw RETRY/capability escalation trying to bypass Human attention. Human-decision evidence takes precedence, then uncertainty; only afterwards may deterministic retry overrides and budgets run. Test threshold equality and below-threshold values for both action and required reason.
+
+I1 freshness tests vary each field independently, including missing legacy fields, input implementation revision, exact ref digest, bounded input digest, retry State, policy digest, and configuration digest. A valid helper alone is insufficient: ORCH-012 must exercise it at the actual reuse boundary.
 
 ### Depends on
 
@@ -850,6 +885,10 @@ src/runtime/integrations/subagents.ts
 - Worker does not receive raw rejected findings as Fix Authority.
 - temporary subagent infrastructure failure blocks.
 - implementation result artifact is persisted before `IMPLEMENTATION_COMPLETE`.
+- I1: every execution-routing reuse validates the full freshness contract, including current input implementation revision, exact refs/input digest, retry State, and policy/configuration digests. Stale routing is re-evaluated or blocked before Worker; re-evaluation cannot downgrade a required stronger profile.
+- I2: routing Artifact → routing State → immutable Worker attempt intent → intent State → dispatch. Persist request correlation, repository baseline, exact authority/profile inputs, and actual runId when exposed; do not require an early third-party run handle or relabel requestId as runId.
+- I2: success/failure/timeout/ambiguous evidence retains known run identity, pre/post repository content identity and unavailable observations. Output prose hash is not repository identity. An unresolved attempt cannot be blindly relaunched. Lifecycle evidence is not a successful implementation result.
+- I4: adapter wait is finite even without a responder; expiry settles once and releases resources. A proven pre-dispatch failure blocks as infrastructure-unavailable; possible dispatch with unknown outcome blocks as agent-execution-ambiguous, without automatic Worker retry.
 
 ### Tests
 
@@ -858,6 +897,9 @@ src/runtime/integrations/subagents.ts
 - Jev unavailable blocks before Worker launch.
 - Worker infra failure.
 - crash after decision persistence/before Worker launch.
+- I1: same Plan but changed revision/context/retry count/input/policy/configuration rejects old routing. Missing freshness header fails closed. New decision and State persist before dispatch; stronger-profile lower bound survives re-evaluation.
+- I2: routing/intent Artifact or State save failure starts zero Workers. Failure with runId retains that exact ID; runId unavailable until completion retains correlation and explicit unknown status. Repository changes are identified independently of output text. Persistence failure after possible dispatch never authorizes a duplicate Worker.
+- I4: no responder, mismatched/late result, response at timeout, and child timeout all settle safely with bounded wait and no duplicate launch. Fake adapter tests require no real Pi process.
 
 ### Depends on
 
@@ -908,6 +950,8 @@ tests/fakes/*                         # update ValidationExecutor fake contract 
 - infrastructure error is distinct from test/build/lint failure.
 - validation failure never directly emits `RETRY_REQUIRED` without Round Decision policy.
 - reviewer fanout may be skipped for failed validation rounds.
+- B2: ValidationRunner reads/hash-validates the current Approved Plan Artifact and parses its contract; it does not accept caller-selected commands/checks. Invalid authority prevents execution. Result coverage/aggregation and exact Plan/implementation refs, versions, and contract digest are validated/persisted.
+- I3: persist infrastructure evidence and apply `stopOnInfrastructureFailure`: true blocks with validation-infrastructure-error before Jev/review/Worker; false can feed Round Decision only for Human/uncertain escalation, never automated retry or completion while unresolved. Executor infrastructure exceptions follow the same safe boundary.
 
 ### Tests
 
@@ -918,6 +962,8 @@ tests/fakes/*                         # update ValidationExecutor fake contract 
 - optional/non-required semantics if supported by contract.
 - timeout/spawn infrastructure error.
 - failed validation cannot emit `REVIEW_COMPLETE`.
+- B2: substitute/remove required checks, commands, cwd, or required flags and assert rejection before executor invocation. Missing/corrupt/stale approved Plan and invalid contract cannot produce pass; successful execution receives exactly the parsed approved contract.
+- I3: spawn/timeout and thrown infrastructure errors remain distinct from exit-code failure. Test both stopOnInfrastructureFailure values, raw RETRY/COMPLETE/capability responses, retained evidence, and no unsafe Worker/reviewer launch.
 
 ### Depends on
 
@@ -964,6 +1010,8 @@ src/runtime/integrations/subagents.ts
 - each result is schema validated and persisted separately.
 - reviewer `blocking` flag is evidence only, not Fix Authority.
 - partial reviewer infrastructure failure does not fabricate a clean round.
+- B1: both raw review artifacts bind the current workflow, approved Plan/version, exact implementationRef/revision, and round. Clean findings are explicitly persisted, not represented by absent refs.
+- I4: bounded adapter timeout applies to each reviewer; partial timeout retains evidence and blocks, never substitutes a clean result.
 
 ### Tests
 
@@ -972,6 +1020,8 @@ src/runtime/integrations/subagents.ts
 - invalid finding schema.
 - one reviewer infrastructure failure.
 - parallel execution behavior via fake adapter.
+- B1: missing one/both reviewers, stale round/revision/Plan/digest, duplicate IDs, or caller-substituted evidence cannot advance the downstream Round Decision. Empty reviews are still durable artifacts.
+- I4: one reviewer never responds or responds late; fanout ends boundedly and no clean-round authority is fabricated.
 
 ### Depends on
 
@@ -1006,6 +1056,9 @@ acceptedFindingsRef update
 - Human-decision findings escalate.
 - accepted/rejected/escalated results remain traceable to original finding IDs.
 - accepted findings artifact is persisted before state ref update.
+- B1: evaluation covers every persisted current-round raw finding exactly once; accepted-findings equals the ACCEPT subset. Even an empty raw set produces both empty evaluation and accepted artifacts before State publication.
+- B3: runtime assembles bounded approved Scope/Architecture/Plan constraints and implementation evidence with source refs/provenance. Missing or insufficient evidence fails closed; refs and reviewer assertions alone are not enough.
+- I1: persist input/freshness identity with evaluation; previous decisions remain traceable without becoming new authority.
 
 ### Tests
 
@@ -1014,6 +1067,9 @@ acceptedFindingsRef update
 - ESCALATE human-decision case.
 - uncertain case.
 - mixed reviewer findings.
+- B1: missing/stale raw artifacts, missing/extra evaluation IDs, and incorrect accepted subset are rejected; empty reviews persist both downstream artifacts.
+- B3: capture the actual Jev request and verify approved constraints plus relevant implementation evidence/provenance. Missing required evidence or unsafe truncation yields no accepted authority. Changing constraints changes input identity.
+- Artifact save or State save failure publishes no new Fix Authority and starts no Worker.
 
 ### Depends on
 
@@ -1064,6 +1120,10 @@ No change beyond `STRONG + HIGH`.
 - `human-decision` goes to clarification, then new planning/Human Plan Gate.
 - uncertain decisions do not silently continue.
 - no infinite loop is possible through automatic events.
+- B1: passed-validation rounds require all four current review/evaluation/accepted artifacts with exact bindings and consistent IDs before Round Jev call or event. Missing artifacts cannot default to supplied findings or an empty array. Failed-validation rounds are explicit and cannot produce REVIEW_COMPLETE.
+- B3: runtime assembles approved constraints, validation/evaluation evidence, retry counters/limits/profile, and previous decision evidence from durable authority. Lost previous evidence is not silently treated as no history.
+- B4: Human/uncertain evidence and low action/required-reason confidence outrank raw RETRY, capability escalation, and accepted-blocking retry overrides.
+- I1/I3: decision artifacts carry full freshness identity; unresolved infrastructure cannot lead to automated retry or completion under either validation policy setting.
 
 ### Tests
 
@@ -1075,6 +1135,14 @@ max   → next retry blocked
 ```
 
 for both retry counters, plus every escalation reason route.
+
+Additional cross-contract regressions:
+
+- B1: invoke Round Decision immediately after validation pass, with each required review/evaluation/accepted ref missing, and with same-round stale implementation/Plan evidence; reject before Jev and REVIEW_COMPLETE. Explicit empty complete artifacts are accepted. A failed-validation round may skip fanout but never complete.
+- B3: capture retry counters, previous-decision evidence and approved constraints in actual Jev input, including across a Fix. Changed evidence changes the persisted input digest.
+- B4: low-confidence RETRY/ESCALATE and mixed Human/uncertain + accepted-blocking findings cannot launch automated Fix; confident capability escalation still obeys both budgets and strongest-profile limit.
+- I3: infrastructure-error plus raw RETRY/COMPLETE/capability never authorizes Worker. Ordinary failed validation routes only via persisted Round policy evidence.
+- Round/stronger-routing Artifact or State save failure prevents the next Worker; previous decision evidence survives current-round clearing.
 
 ### Depends on
 
@@ -1116,6 +1184,9 @@ src/runtime/orchestrator/coding-orchestrator.ts
 - `CODE_APPROVED` is the only successful path to `completed`.
 - feedback returns to `fixing` without consuming automated retry budget.
 - Plannotator unavailable causes `blocked`.
+- B5: persist `coding.codeReview` = reviewId + exact implementationRef + implementationRevision together with the external index before returning a usable handle or polling. Both direct apply and reconciliation validate it against current State.
+- missing binding (including legacy identity-only State) or mismatch cannot be rebound to current implementation after adapter restart. External results need not add new fields: only a previously persisted exact tuple may supply omitted binding metadata.
+- existing identity is reconciled without unconditional reopen/overwrite; unknown status is not approval. Identical settled duplicates preserve current persisted State; changed results are rejected. New implementation revision clears current binding/result and requires a new gate.
 
 ### Tests
 
@@ -1124,6 +1195,9 @@ src/runtime/orchestrator/coding-orchestrator.ts
 - stale revision result.
 - unavailable gate.
 - repeated/duplicate settled result.
+- B5: identity-only/missing binding, mismatched reviewId, same revision with changed implementation ref/hash, and old revision all reject with zero approval/feedback authority; cover direct apply and fresh-adapter reconciliation.
+- open succeeds but binding State save fails: no usable handle, polling, or result apply. Artifact save failure emits no event; Artifact success/State failure permits only identical durable-result retry.
+- existing pending/settled/unknown identity is not reopened; duplicate after phase advancement returns current State unchanged. New revision invalidates old binding, and feedback does not consume automated retry budget.
 
 ### Depends on
 
@@ -1148,6 +1222,36 @@ All retry/escalation branches are bounded.
 
 `ponytail-reviewer` product Agent definition exists and participates in the fixed v1 reviewer set.
 
+Phase C cannot exit on isolated Story test success alone. B1–B5 / I1–I5 remediation and regression evidence are required before Phase D:
+
+- Complete current-round authority is mandatory after validation pass; deterministic validation-failure rounds are distinct.
+- Approved Plan owns validation checks and semantic constraints; runtime assembles Jev evidence, never the adapter.
+- Human/uncertain evidence and confidence gates cannot be bypassed by automated retry.
+- Routing freshness, durable exact Code Review binding, consent/budget reservation, and all Artifact → State → next-side-effect barriers are exercised at runtime boundaries.
+- Worker request/run identity and repository mutation evidence survive failure/ambiguity; adapter waits are bounded and unresolved mutation cannot relaunch blindly.
+- Full fake end-to-end tests connect the real planning/gate/coding/validation/review/evaluation/round/gate runners and real core policies with temporary durable stores and fake external ports. No manual transition or fabricated authority may replace a required stage in a successful scenario. Negative tests may corrupt/omit evidence deliberately to prove rejection.
+
+Required full fake scenarios (not deferred to ORCH-020):
+
+| Scenario | Required cross-stage assertion |
+|---|---|
+| happy path | Planning → actual fake Human Plan Gate → Worker → validation pass → both reviews → evaluation/accepted artifacts → Round COMPLETE → actual fake Human Code Gate → completed |
+| validation retry | Failed validation stays out of fixing until persisted Round policy; next Worker is followed by all required validation/review/gate stages |
+| finding retry | Only evaluated ACCEPT findings reach Fix Worker; raw/rejected findings do not |
+| stronger retry | Both budgets charged; stronger fresh Worker and monotonic profile; strongest/exhausted paths block |
+| plan-conflict | Approval invalidated → new Plan → new Human Plan Approval before another Worker |
+| human-decision / uncertain | Mixed blocking findings, low action confidence, and low reason confidence cannot bypass clarification/Human attention; continuation requires planning and Human Plan Gate |
+| Human Code Feedback | Exact feedback evidence reaches Fix Worker without automated budget charge; new revision needs new validation/review and Code Gate |
+| review stage bypass rejection | Each missing/stale review/evaluation/accepted artifact prevents REVIEW_COMPLETE; clean means persisted empty artifacts |
+| Validation Contract substitution rejection | Altered caller checks cannot reach Executor or mint validation pass |
+| stale decision reuse rejection | Same Plan with changed revision/input/retry/policy/configuration cannot reuse routing to launch Worker |
+| stale Code Review binding rejection | Identity-only, changed ref/hash at same revision, old revision, and restarted adapter cannot rebind approval |
+| integration timeout / infrastructure failure | No responder, ambiguous Worker, partial reviewer failure, validation infrastructure failure, and unavailable Jev/Plannotator remain bounded and block/escalate safely |
+
+Also verify consent denial/exhaustion and persistence fault barriers with zero unauthorized network/Worker/gate continuation, and inspect the durable identities/evidence left for ORCH-018. [Test Strategy](../detailed-design/test-strategy.md#9-orchestration-scenario-tests) defines the harness boundary.
+
+These are fake-domain exit criteria, not slash-command wiring (ORCH-019), Integration Readiness approval, full resume/reconciliation (ORCH-018), or real Pi/Herdr smoke (ORCH-020). Third-party modification is never a prerequisite.
+
 ---
 
 # Phase D — Recovery & Productization
@@ -1157,6 +1261,8 @@ All retry/escalation branches are bounded.
 ### Goal
 
 Resume safely from persisted authority without duplicating unsafe side effects.
+
+Phase C must already produce the freshness headers, exact Code Review binding, Worker lifecycle/repository evidence, and durable consent/budget reservations described above. ORCH-018 consumes those contracts; it is not the first place normal-path authority checks are added. Full resume control, phase-specific status reconciliation, orphan matching, and safe recovery remain in this Story.
 
 ### Scope
 

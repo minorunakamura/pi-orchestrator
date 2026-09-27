@@ -1,6 +1,6 @@
 # Pi Orchestrator Domain Model
 
-Version: 1.0
+Version: 1.1
 
 ## 1. Purpose
 
@@ -172,9 +172,26 @@ export interface CodingState {
   acceptedFindingsRef?: ArtifactRef<"accepted-findings">;
   roundDecisionRef?: ArtifactRef<"round-decision">;
 
+  // Lifecycle evidence; not a successful implementation result.
+  workerAttemptRef?: ArtifactRef<"implementation">;
+  codeReview?: CodeReviewBinding;
   latestCodeReviewRef?: ArtifactRef<"code-review">;
 }
+
+export interface CodeReviewBinding {
+  reviewId: PlannotatorReviewId;
+  implementationRef: ArtifactRef<"implementation">;
+  implementationRevision: number;
+}
 ```
+
+`codeReview` and `external["plannotator.code-review.rN"]` are persisted together before a usable review handle is returned. The exact tuple must match the current implementation ref (including digest) and revision; an external identity alone cannot reconstruct it. New implementation completion clears the current Code Review binding/result but retains historical evidence. Missing/mismatched bindings reject both direct result application and reconciliation; they never grant Completion Authority (B5).
+
+`workerAttemptRef` points to the latest immutable lifecycle observation defined in [Worker Attempt Evidence](./persistence-recovery.md#61-worker-attempt-evidence-i2). Pending, failed, or ambiguous records cannot populate `implementationRef` as success. Known external run IDs and request correlation survive failure; they do not themselves authorize another Worker (I2).
+
+Current review evidence is bound to workflow, approved Plan/version, exact implementation ref/revision, and review round. Passed validation requires correctness review, ponytail review, evaluation, and accepted-findings, even when all findings arrays are empty. In the ordinary pass/fail pipeline, only a deterministic failed-validation round can omit review evidence, and it cannot complete (B1). Infrastructure-error is a separate blocked/Human-attention path under I3, never a clean review round.
+
+Decision artifacts carry the [mandatory freshness header](./persistence-recovery.md#7-decision-artifact-header), and durable history retains the previous round decision link across clearing current-round refs (I1/B3). No new Workflow phase, Human authority, or third-party type is introduced.
 
 ## 8. Retry Counters
 
@@ -306,7 +323,16 @@ export type EscalationReason =
   | "plan-conflict"
   | "human-decision"
   | "uncertain";
+
+export type NormalizedRoundDecision =
+  | { action: Decision<"COMPLETE" | "RETRY"> }
+  | {
+      action: Decision<"ESCALATE">;
+      escalationReason: Decision<EscalationReason>;
+    };
 ```
+
+Action and required escalation reason retain separate confidence through normalization, core policy, and persisted decision evidence. The resulting policy outcome records why it differs from the raw decision; a high action confidence cannot replace reason confidence. [Policy Precedence](./coding-orchestration.md#policy-precedence-b4) applies to RETRY and ESCALATE as well as COMPLETE (B4).
 
 ## 13. Blocked / Failed Reasons
 

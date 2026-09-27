@@ -1,6 +1,6 @@
 # Persistence and Recovery Detailed Design
 
-Version: 1.0
+Version: 1.1
 
 ## 1. Purpose
 
@@ -86,9 +86,28 @@ Mandatory ordering:
 
 The next stage must never begin before State persistence succeeds.
 
+### 6.1 Worker Attempt Evidence (I2)
+
+Phase C must leave a durable, append-only attempt history under `implementation/`, using the existing implementation evidence kind with schema-validated lifecycle records. Intent/failure records are not successful implementation results and must never be used as `coding.implementationRef` or emit `IMPLEMENTATION_COMPLETE`. `coding.workerAttemptRef` points to the latest lifecycle record; each later record links its predecessor.
+
+Required contract:
+
+| Evidence | Required data |
+|---|---|
+| Pre-dispatch intent | workflowId, unique attemptId, input/target implementation revisions, exact approved Plan/version, input implementation ref when present, routing/accepted-findings/Human feedback refs, resolved profile, public request correlation identity, timestamp and deadline |
+| Repository baseline | canonical repository/worktree location, HEAD/base identity where applicable, index/worktree diff digest and untracked-file content manifest (or an equivalent content identity); pre-existing changes must remain distinguishable |
+| External observation | request/owner/node identities where supported, actual runId when exposed, explicit launch/run status including unknown; never label requestId as runId |
+| Terminal or ambiguous observation | succeeded/failed/timed-out/ambiguous status, known run identity, available result/error refs, post-run repository identity and baseline comparison, explicit unavailable observations |
+
+The Orchestrator persists intent Artifact → State ref before dispatch, and later observations Artifact → State ref before subsequent work. Actual runId is saved as soon as the public API exposes it, including on failure; if unavailable until completion, the pre-dispatch correlation identity remains the crash breadcrumb. A pending intent proves only that dispatch was possible, not that a Worker started or did not start.
+
+Failure, timeout, and ambiguous completion retain identity/evidence and block further mutation when execution status is unresolved. A failed write after dispatch cannot authorize relaunch. Worker output text hash is supplemental evidence, never a repository/diff identity. If a safe baseline or correlation cannot be established through existing public contracts/orchestrator-side observation, stop as blocked/unsupported rather than weakening evidence or modifying a third party.
+
+Phase C defines and produces this evidence and refuses blind duplicate dispatch. ORCH-018 owns status queries, orphan matching, evidence reconstruction, and normal recovery transitions; this section does not move the full resume controller into Phase C.
+
 ## 7. Decision Artifact Header
 
-All Jev decision artifacts should include:
+All Jev decision artifacts must include:
 
 ```ts
 export interface DecisionArtifactHeader {
@@ -96,11 +115,12 @@ export interface DecisionArtifactHeader {
   decisionSchemaVersion: 1;
 
   planVersion: number;
-  implementationRevision?: number;
+  implementationRevision: number;
 
   inputRefs: ArtifactRef[];
 
   policyVersion: string;
+  policyDigest: string;
   configurationDigest: string;
   inputDigest: string;
 
@@ -112,14 +132,20 @@ export interface DecisionArtifactHeader {
 
 A persisted Jev decision is reusable only when all relevant fields match current authority and evidence:
 
-- decision schema version
-- Plan version
-- implementation revision
-- input artifact references / hashes
-- policy version
-- configuration digest
+- artifact schema and decision schema version
+- approved Plan version and exact Plan ref
+- input implementation revision (0 before initial implementation) and exact implementation ref when present
+- exact input artifact references / hashes and `inputDigest`
+- policy version and `policyDigest`
+- relevant non-secret `configurationDigest`
 
-Otherwise the decision is stale and must not be reused.
+`inputDigest` is computed from a deterministic serialization of the assembled bounded request, including branch, excerpts/provenance, retry counters, previous decision identity, and other relevant State inputs. Policy/configuration digests include the evidence-bounding rules and execution/decision policies; secret values are never included or persisted.
+
+These checks apply to execution-routing as well as finding/round decisions, on normal reuse paths as well as ORCH-018 resume. Missing fields, changed context/counts/profile constraints, or a changed input implementation revision make a decision stale. Do not copy an old outcome under a new header to manufacture freshness. Runtime re-evaluates under current authority or blocks before Worker launch; a new decision Artifact and State must persist first. Re-evaluation cannot downgrade a required stronger retry.
+
+Previous round decision evidence remains linked in durable history when current-round State refs are cleared. Historical decisions may inform a new request but cannot authorize it merely by being referenced. A deterministic stronger-routing record also binds its source round decision and current input identity.
+
+Freshness production and normal-path rejection are Phase C requirements. Full discovery/reuse/re-evaluation control during resume remains ORCH-018.
 
 ## 9. Workflow Lock
 
@@ -211,9 +237,9 @@ Never infer approval from disappearance or UI state.
 
 ### awaiting-code-review
 
-Approval is valid only when persisted and bound to the current implementation revision.
+Require the persisted `coding.codeReview` tuple (`reviewId`, exact implementationRef, implementationRevision), matching external index and current implementation, before polling or applying a result. Identity-only State is insufficient. Neither fresh adapter memory nor current State may be used to rebind an unbound historical result.
 
-If no valid result exists, reopen/reconcile review for the exact current revision.
+An existing identity/binding must be reconciled without automatic reopen/overwrite, even when status is unknown. Missing/conflicting bindings fail closed for explicit recovery. A new open is allowed only for a current revision without a prior identity/binding or unresolved review ambiguity. Settled-result persistence, duplicate behavior, and invalidation follow [Human Code Gate](./coding-orchestration.md#15-human-code-gate). Full orphan recovery remains ORCH-018.
 
 ### blocked
 
@@ -276,6 +302,8 @@ during Code review
 ```
 
 Phase B must already test the planning-specific subset: missing/stale review binding after adapter restart, duplicate settled results after State advancement, durable resolved planning policy after `BLOCK_RESOLVED`, existing-identity reconciliation without reopen, Plan State save failure before gate open, and identity save failure after external open. These tests exercise the ORCH-007–009 contracts without requiring the full ORCH-018 resume controller. See [Phase B acceptance criteria](../implementation/implementation-plan.md#phase-b--planning-orchestration).
+
+Phase C must already test producer-side persistence barriers, normal decision freshness reuse, exact Code Review binding after adapter restart, and timeout/failure evidence retention. Tests must demonstrate that a failed routing/intent/identity State write prevents the next side effect. These are not the full ORCH-018 phase-specific resume/fault suite.
 
 Primary safety assertions:
 

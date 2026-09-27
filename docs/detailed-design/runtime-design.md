@@ -1,6 +1,6 @@
 # Pi Orchestrator Runtime Design
 
-Version: 1.5
+Version: 1.6
 
 ## 1. Purpose
 
@@ -114,7 +114,7 @@ export interface PlannotatorGate {
   openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle>;
   getPlanReview(reviewId: PlannotatorReviewId, persistedBinding?: PlanReviewBinding): Promise<PlanReviewStatus>;
   openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle>;
-  getCodeReview(reviewId: PlannotatorReviewId): Promise<CodeReviewStatus>;
+  getCodeReview(reviewId: PlannotatorReviewId, persistedBinding?: CodeReviewBinding): Promise<CodeReviewStatus>;
 }
 
 export interface ValidationExecutionResult {
@@ -131,14 +131,15 @@ export interface ClarificationPort {
 }
 ```
 
-`ValidationExecutor` is intentionally unaware of Workflow State and implementation revision. It owns deterministic execution of the Validation Contract only. `validation-runner.ts`, which owns the current Workflow context, attaches `state.coding.implementationRevision` when constructing the authoritative `ValidationResult` artifact.
+`ValidationExecutor` is intentionally unaware of Workflow State and implementation revision. It owns deterministic execution of the Validation Contract only. `ValidationRunner` obtains that contract exclusively by reading/hash-validating the current Approved Plan Artifact and parsing its machine-readable block; callers cannot substitute a contract (B2). The runner validates result coverage/aggregation and binds `ValidationResult` to exact Plan/implementation refs, versions, and contract digest before persistence.
 
 ```text
 ValidationExecutor
     → ValidationExecutionResult (status / checks)
 
-ValidationRunner + current WorkflowState
-    → ValidationResult (implementationRevision / status / checks)
+ValidationRunner + current WorkflowState + Approved Plan Artifact
+    → parsed authoritative Validation Contract → ValidationExecutor
+    → ValidationResult (Plan/implementation binding / contract digest / status / checks)
 ```
 
 This prevents hidden State access or fabricated revision values inside the execution port.
@@ -191,6 +192,16 @@ Default policy:
 
 A retained child must never be used when escalation requires a stronger execution profile.
 
+### Durable Dispatch and Bounded Wait (I2 / I4)
+
+The orchestrator-side dispatch boundary persists [Worker attempt intent](./persistence-recovery.md#61-worker-attempt-evidence-i2) and State before emitting a public request. The adapter exposes the request correlation identity to that boundary before dispatch and reports actual runId as soon as available through the existing public API. This may require an orchestrator-owned wrapper/port lifecycle notification; it does not require new third-party events or early run IDs.
+
+Every adapter request has a positive finite response deadline, including when no subscriber responds. Passing a child timeout in the request alone is insufficient. On response, error, or expiry, the adapter settles once and releases its timer/listener. Mismatched identities cannot settle the request; late results cannot silently authorize work after timeout.
+
+A proven pre-dispatch failure maps to `agent-infrastructure-unavailable`. Once dispatch may have happened, no response, timeout, or ambiguous completion preserves correlation/run identity and maps to `agent-execution-ambiguous`; timeout does not prove cancellation or absence of repository mutation. The runtime persists evidence and `BLOCK` before any subsequent Worker. There is no automatic redispatch of an unresolved mutating attempt. Public status/resume capability gaps remain blocked/unsupported, not patched dependencies.
+
+Phase C owns evidence production and these bounded failure paths; full reconciliation and late/orphan-result recovery remain ORCH-018.
+
 ## 7. Plannotator Integration
 
 `runtime/integrations/plannotator.ts` translates Plannotator events / statuses into domain results.
@@ -204,6 +215,8 @@ The adapter must not mutate Workflow State.
 Duplicate settled-result handling uses current persisted State and never a cached State snapshot. These are orchestrator-side contracts; they do not add fields or persistence responsibilities to the third-party Plannotator API.
 
 Human review result must first be persisted as an artifact. Only then may the runtime emit `PLAN_APPROVED`, `PLAN_FEEDBACK`, `CODE_APPROVED`, or `CODE_FEEDBACK`.
+
+For Code Review, `coding.codeReview` durably binds `reviewId + exact implementationRef + implementationRevision` together with the versioned external index (B5). `getCodeReview` accepts that validated persisted tuple, not a synthesized current-implementation expectation. Missing/mismatched bindings fail closed, including after restart and for direct apply. An external result without implementation metadata may use only the original durable binding; no third-party field is required. Existing identities are reconciled without unconditional reopen. See [Human Code Gate](./coding-orchestration.md#15-human-code-gate) for persistence, duplicate handling, and invalidation.
 
 ## 8. Jev Integration
 
@@ -238,9 +251,25 @@ Where the domain requires `Decision<T>.confidence`, use a confidence-bearing bou
 
 The adapter converts `pi-typesafe` success/failure results into the existing `JevDecisionClient` contract and domain integration errors. `pi-typesafe` result/error types must not escape into `core/`.
 
-pi-orchestrator owns its own consent and budget policy for Product Runtime use. The package's agent-tool opt-in state is not Workflow authority.
+### Product Runtime Consent and Budget (I5)
+
+pi-orchestrator owns and enforces the permission to send evidence and incur Jev requests. The package's agent-tool opt-in state is not Workflow authority. Neither `/typesafe enable`, an available API key, a Plan approval, nor model confidence constitutes Product Runtime consent.
+
+Minimum v1 contract:
+
+- Before any network request, runtime requires explicit operator-authorized Product Runtime consent scoped to the project/workflow, destination/backend, and permitted evidence categories. Record a non-secret consent identity/scope and policy version; missing, revoked, or mismatched consent denies dispatch. No new Human Gate bypass or consent UI is implied.
+- Product configuration supplies a finite per-workflow outbound-request allowance. Runtime durably reserves an attempt before each dispatch, including per-finding requests and transport retries. The persisted counter survives client recreation/restart; library defaults or an in-memory counter are not the budget authority.
+- Exhausted/unknown budget or consent denial makes no network call and produces `BLOCK` for `operator-attention-required` with non-secret diagnostic evidence. A reservation save failure also prevents dispatch. An uncertain timed-out request remains charged to the allowance; automatic refunds/retries cannot reset the cap.
+- The adapter's transport retry loop must obtain permission/reservation for every attempt through the orchestrator-owned boundary; public library budget checks can add restrictions but cannot replace that boundary. Provider/auth/transport failures still normalize to the integration failure path, with no LLM fallback.
+- Retain consent/policy identity, allowance/attempt count, and available usage metadata as bounded durable runtime evidence. Never persist API keys, auth headers, or secret-bearing URLs. Full accounting recovery belongs to ORCH-018; conservative denial on ambiguity is required now.
+
+These are orchestrator-side policy and persistence contracts. They require no change to `pi-typesafe`, no dependency on `/typesafe enable`, and no v1.1 decision family.
+
+### Runtime Evidence / Adapter Policy Boundary
 
 For Coding Entry Routing, the Orchestrator/runtime assembles bounded `planEvidence` and `contextEvidence` after reading and validating the referenced immutable artifacts. The `JevDecisionClient` input carries both the authoritative refs and those excerpts. `runtime/integrations/jev.ts` only forwards the supplied evidence; it never reads `ArtifactStore`, resolves refs, or invents missing context.
+
+The same boundary applies to Finding Evaluation and Round Decision (B3): runtime assembles Approved Plan/Architecture/Scope constraints, provenance-bearing implementation/finding/validation evidence, retry State, and previous decision evidence as defined in [Runtime Evidence Assembly](./coding-orchestration.md#runtime-evidence-assembly-b3). Missing evidence is not delegated to Jev to infer. The adapter preserves action and escalation-reason confidence separately for [core precedence policy](./coding-orchestration.md#policy-precedence-b4) (B4).
 
 It does not own:
 
@@ -274,6 +303,8 @@ validation process spawn failure
 ```
 
 External SDK error classes must not escape into `core/`.
+
+ValidationRunner persists infrastructure evidence separately from ordinary check failure and applies `stopOnInfrastructureFailure` (I3): `true` blocks with `validation-infrastructure-error` before Jev/review/Worker; `false` may feed Round Decision only for deterministic Human/uncertain escalation, never automated retry or completion while unresolved. See [Validation Infrastructure Policy](./coding-orchestration.md#validation-infrastructure-policy-i3).
 
 ## 10. Concurrency
 
