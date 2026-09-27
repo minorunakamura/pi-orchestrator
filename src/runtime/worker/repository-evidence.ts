@@ -65,6 +65,13 @@ async function observe(
   ).split("\0");
   if (entries.some((entry) => entry.startsWith("160000 ")))
     throw Error("Submodule/gitlink repository evidence is unsupported");
+  const flaggedEntries = (
+    await git(root, ["ls-files", "-v", "-z", ...paths])
+  ).split("\0");
+  if (flaggedEntries.some((entry) => /^[a-zS] /u.test(entry)))
+    throw Error(
+      "assume-unchanged/skip-worktree repository evidence is unsupported",
+    );
   const indexDigest = calculateSha256(
     await git(root, [
       "diff",

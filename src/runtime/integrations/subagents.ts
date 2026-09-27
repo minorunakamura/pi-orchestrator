@@ -240,7 +240,11 @@ export class SubagentsIntegration implements SubagentExecutor {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        unsubscribe();
+        try {
+          unsubscribe();
+        } catch {
+          // Host cleanup is best-effort; preserve settlement and launch evidence.
+        }
         resolve(response);
       };
       const timer = setTimeout(

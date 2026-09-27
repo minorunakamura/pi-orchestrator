@@ -206,6 +206,40 @@ describe("CodingOrchestrator ORCH-012", () => {
     );
   });
 
+  test.each([
+    ["--assume-unchanged"],
+    ["--skip-worktree"],
+    ["--assume-unchanged", "--skip-worktree"],
+  ])(
+    "hidden tracked mutations are rejected before dispatch: %j",
+    async (...flags) => {
+      const started = await makeApproved();
+      const git = (...args: string[]) =>
+        promisify(execFile)("git", ["-C", started.repositoryCwd, ...args]);
+      const name = "tracked file\nwith whitespace.txt";
+      await writeFile(join(started.repositoryCwd, name), "baseline");
+      await git("add", "--", name);
+      for (const flag of flags) await git("update-index", flag, "--", name);
+      await writeFile(join(started.repositoryCwd, name), "hidden mutation");
+      const before = (await git("ls-files", "-v", "-z")).stdout;
+      const worker = new FakeSubagentExecutor({
+        run: succeeded("must not run"),
+      });
+      await expect(
+        new CodingOrchestrator(
+          dependencies(started, { subagentExecutor: worker }),
+        ).execute({ state: started.state }),
+      ).rejects.toThrow(/assume-unchanged|skip-worktree/iu);
+      expect(worker.calls.run).toHaveLength(0);
+      const state = await persistedState(started.runDirectory);
+      expect(state.phase).toBe("blocked");
+      expect(state.block?.reason).toBe("agent-infrastructure-unavailable");
+      expect(state.coding.workerAttemptRef).toBeUndefined();
+      expect(state.coding.implementationRef).toBeUndefined();
+      expect((await git("ls-files", "-v", "-z")).stdout).toBe(before);
+    },
+  );
+
   test("received run identity is durable before an unavailable post-run scan", async () => {
     const started = await makeApproved();
     const worker = new FakeSubagentExecutor();
@@ -239,6 +273,76 @@ describe("CodingOrchestrator ORCH-012", () => {
     expect(terminal.after.status).toBe("unavailable");
     expect(state.phase).toBe("blocked");
   });
+
+  test.each(["timeout", "malformed-result"])(
+    "unsubscribe throw reaches durable BLOCK with evidence: %s",
+    async (path) => {
+      const started = await makeApproved();
+      let listener: (payload: unknown) => void = () => {};
+      let emissions = 0;
+      let cleanups = 0;
+      let sent: Record<string, unknown> = {};
+      const adapter = new SubagentsIntegration(
+        {
+          on: (_event, receive) => {
+            listener = receive;
+            return () => {
+              cleanups++;
+              throw Error("unsubscribe failed");
+            };
+          },
+          emit: (_event, payload) => {
+            emissions++;
+            sent = payload as Record<string, unknown>;
+            if (path === "malformed-result")
+              listener({ ...sent, status: "completed", runId, result: null });
+          },
+        },
+        { timeoutMs: 20 },
+      );
+      const orchestrator = new CodingOrchestrator(
+        dependencies(started, { subagentExecutor: adapter }),
+      );
+      await expect(
+        orchestrator.execute({ state: started.state }),
+      ).rejects.toThrow("Worker did not succeed");
+      const state = await persistedState(started.runDirectory);
+      expect(state.phase).toBe("blocked");
+      expect(state.block?.reason).toBe("agent-execution-ambiguous");
+      expect(state.coding.implementationRef).toBeUndefined();
+      const record = JSON.parse(
+        await started.artifactStore.readText!(state.coding.workerAttemptRef!),
+      );
+      expect(record).toMatchObject({
+        status: path === "timeout" ? "timed-out" : "ambiguous",
+        launchStatus: path === "timeout" ? "unknown" : "observed",
+        dispatch: {
+          requestId: sent.requestId,
+          ownerRunId: sent.ownerRunId,
+          nodeId: sent.nodeId,
+        },
+        after: { status: "observed" },
+      });
+      expect(record.runId).toBe(path === "timeout" ? undefined : runId);
+      const received = JSON.parse(
+        await started.artifactStore.readText!(record.previousRef),
+      );
+      expect(received.after.status).toBe("pending");
+      expect(received.runId).toBe(record.runId);
+      listener({
+        ...sent,
+        status: "completed",
+        runId: "late",
+        result: { kind: "text", text: "late" },
+      });
+      await expect(orchestrator.execute({ state })).rejects.toThrow();
+      expect(emissions).toBe(1);
+      expect(cleanups).toBe(1);
+      expect((await persistedState(started.runDirectory)).phase).toBe(
+        "blocked",
+      );
+    },
+  );
 
   test("proven subscription failure is durable not-started infrastructure evidence", async () => {
     const started = await makeApproved();

@@ -30,6 +30,71 @@ function bus(
 }
 afterEach(() => vi.useRealTimers());
 
+test.each([
+  "timeout",
+  "sync-response",
+  "async-response",
+  "malformed-result",
+  "malformed-identity",
+  "child-timeout",
+  "emit-throw",
+])("unsubscribe throw cannot prevent settlement: %s", async (path) => {
+  vi.useFakeTimers();
+  let sent: Record<string, unknown> = {};
+  const b = bus((request, deliver) => {
+    sent = request;
+    if (path === "timeout") return;
+    if (path === "emit-throw") throw Error("dispatch outcome unknown");
+    const response = {
+      ...request,
+      status: path === "child-timeout" ? "timed_out" : "completed",
+      runId: path === "malformed-identity" ? 123 : "exact-child",
+      result:
+        path === "malformed-result" ? null : { kind: "text", text: "done" },
+    };
+    if (path === "async-response") setTimeout(() => deliver(response), 1);
+    else deliver(response);
+  });
+  const subscribe = b.events.on.bind(b.events);
+  const cleanup = vi.fn(() => {
+    throw Error("unsubscribe failed before removing listener");
+  });
+  b.events.on = (event, listener) => {
+    subscribe(event, listener);
+    return cleanup;
+  };
+  const results: AgentRunResult[] = [];
+  void new SubagentsIntegration(b.events, { timeoutMs: 10 })
+    .run({ agent: "worker", task: "fake" })
+    .then((result) => results.push(result));
+  await vi.advanceTimersByTimeAsync(11);
+  expect(results).toHaveLength(1);
+  const successful = path === "sync-response" || path === "async-response";
+  expect(results[0]?.status).toBe(successful ? "succeeded" : "ambiguous");
+  expect(results[0]?.dispatch).toMatchObject({
+    requestId: sent.requestId,
+    ownerRunId: sent.ownerRunId,
+    nodeId: sent.nodeId,
+  });
+  const hasIdentity = !["timeout", "malformed-identity", "emit-throw"].includes(
+    path,
+  );
+  expect(results[0]?.runId).toBe(hasIdentity ? "exact-child" : undefined);
+  if (["timeout", "malformed-identity", "child-timeout"].includes(path))
+    expect(results[0]).toMatchObject({ timedOut: true });
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+  b.deliver({
+    ...sent,
+    status: "completed",
+    runId: "late",
+    result: { kind: "text", text: "late" },
+  });
+  await vi.advanceTimersByTimeAsync(20);
+  expect(results).toHaveLength(1);
+  expect(cleanup).toHaveBeenCalledTimes(1);
+});
+
 test("absent responder settles as ambiguous timeout and releases the listener", async () => {
   vi.useFakeTimers();
   const b = bus();
