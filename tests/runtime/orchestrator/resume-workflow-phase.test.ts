@@ -1,4 +1,8 @@
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { parseWorkerAttempt } from "../../../src/runtime/worker/attempt-evidence.ts";
+import { FakeSubagentExecutor } from "../../fakes/index.ts";
 import {
   phaseCWorkflow,
   type PhaseCWorkflow,
@@ -29,6 +33,64 @@ async function reachReview(workflow: PhaseCWorkflow) {
 }
 
 describe("ORCH-018 phase-specific reconciliation", () => {
+  test("resumes matching approval against a valid Plan Artifact", async () => {
+    const workflow = await setup();
+    const created = await workflow.createPlan();
+    const resumed = await workflow.resume();
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("implementing");
+    expect(resumed.state.planning.approvedPlanRef).toEqual(created.planRef);
+    expect(
+      workflow.children.filter((child) => child.agent === "worker"),
+    ).toHaveLength(0);
+  });
+
+  test.each(["corrupt", "missing"] as const)(
+    "rejects %s Plan authority on resume despite matching approval",
+    async (damage) => {
+      const workflow = await setup();
+      const created = await workflow.createPlan();
+      const path = join(
+        workflow.artifactStore.rootDirectory,
+        created.planRef.path,
+      );
+      if (damage === "missing") await rm(path);
+      else await writeFile(path, "corrupted plan");
+
+      const resumed = await workflow.resume();
+
+      expect(["blocked", "failed"]).toContain(resumed.status);
+      expect(resumed.state.planning.approvedPlanRef).toBeUndefined();
+      expect(resumed.state.planning.latestPlanReviewRef).toBeUndefined();
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(0);
+    },
+  );
+
+  test.each(["corrupt", "missing"] as const)(
+    "rejects %s implementation authority on resume despite matching approval",
+    async (damage) => {
+      const workflow = await setup();
+      await reachReview(workflow);
+      await workflow.evaluate();
+      await workflow.decide();
+      const opened = await workflow.openCode();
+      const path = join(
+        workflow.artifactStore.rootDirectory,
+        opened.state.coding.implementationRef!.path,
+      );
+      if (damage === "missing") await rm(path);
+      else await writeFile(path, "corrupted implementation");
+
+      const resumed = await workflow.resume();
+
+      expect(["blocked", "failed"]).toContain(resumed.status);
+      expect(resumed.state.phase).not.toBe("completed");
+      expect(resumed.state.coding.latestCodeReviewRef).toBeUndefined();
+    },
+  );
+
   test("reconciles a persisted Code Gate identity without opening a second review", async () => {
     const workflow = await setup();
     await reachReview(workflow);
@@ -134,22 +196,130 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     ).toHaveLength(1);
   });
 
-  test("keeps an ambiguous Worker blocked and never dispatches a duplicate", async () => {
-    const workflow = await setup({ workers: ["ambiguous"] });
+  test("resumes fixing after a completed Worker and validation retry without duplicating work", async () => {
+    const workflow = await setup({
+      validations: ["failed", "passed"],
+      rounds: [{ action: "RETRY" }],
+    });
     await approvePlan(workflow);
-    await expect(workflow.implement()).rejects.toThrow();
-    const before = workflow.children.filter(
-      (child) => child.agent === "worker",
-    ).length;
+    await workflow.implement();
+    await workflow.validate();
+    const retry = await workflow.decide();
+    expect(retry.state.phase).toBe("fixing");
+    expect(retry.state.coding.implementationRevision).toBe(1);
+    const completedAttemptRef = retry.state.coding.workerAttemptRef;
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("blocked");
-    expect(resumed.state.phase).toBe("blocked");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("validating");
+    expect(resumed.state.coding.implementationRevision).toBe(2);
+    expect(resumed.state.coding.workerAttemptRef).not.toEqual(
+      completedAttemptRef,
+    );
     expect(
       workflow.children.filter((child) => child.agent === "worker"),
-    ).toHaveLength(before);
+    ).toHaveLength(2);
+    await workflow.resume();
+    expect(
+      workflow.children.filter((child) => child.agent === "worker"),
+    ).toHaveLength(2);
   });
+
+  test.each([
+    "attempt-hash",
+    "workflow",
+    "implementation-ref",
+    "implementation-hash",
+  ] as const)(
+    "does not bypass inconsistent completed Worker evidence: %s",
+    async (damage) => {
+      const workflow = await setup({
+        validations: ["failed"],
+        rounds: [{ action: "RETRY" }],
+      });
+      await approvePlan(workflow);
+      await workflow.implement();
+      await workflow.validate();
+      const { state } = await workflow.decide();
+      const store = workflow.artifactStore;
+      const ref = state.coding.workerAttemptRef!;
+      if (damage === "attempt-hash")
+        await writeFile(join(store.rootDirectory, ref.path), "corrupt");
+      else if (damage === "implementation-hash")
+        await writeFile(
+          join(store.rootDirectory, state.coding.implementationRef!.path),
+          "corrupt",
+        );
+      else {
+        const attempt = parseWorkerAttempt(
+          JSON.parse(await store.readText(ref)),
+        );
+        if (damage === "workflow") attempt.workflowId = "another-workflow";
+        else
+          attempt.implementationRef = {
+            ...attempt.implementationRef!,
+            sha256: "a".repeat(64),
+          };
+        const damagedRef = await store.writeJson(
+          "implementation",
+          "damaged-attempt.json",
+          attempt,
+          parseWorkerAttempt,
+        );
+        await workflow.stateStore.saveState(
+          {
+            ...state,
+            coding: { ...state.coding, workerAttemptRef: damagedRef },
+          },
+          state.stateRevision,
+        );
+      }
+
+      const resumed = await workflow.resume();
+
+      expect(resumed.status).toBe("failed");
+      expect(resumed.state.coding.implementationRevision).toBe(1);
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(1);
+    },
+  );
+
+  test.each(["running", "unknown", "ambiguous"] as const)(
+    "keeps an unresolved %s Worker blocked and never dispatches a duplicate",
+    async (status) => {
+      const workflow = await setup({ workers: ["ambiguous"] });
+      await approvePlan(workflow);
+      await expect(workflow.implement()).rejects.toThrow();
+      const before = workflow.children.filter(
+        (child) => child.agent === "worker",
+      ).length;
+
+      const state = await workflow.load();
+      const attempt = parseWorkerAttempt(
+        JSON.parse(
+          await workflow.artifactStore.readText(state.coding.workerAttemptRef!),
+        ),
+      );
+      expect(attempt.runId).toBeDefined();
+      const executor = new FakeSubagentExecutor({
+        status: { type: "result", value: { runId: attempt.runId!, status } },
+      });
+      const resumed = await workflow.resume({ subagentExecutor: executor });
+
+      expect(resumed.status).toBe("blocked");
+      expect(resumed.state.phase).toBe("blocked");
+      expect(resumed.state.coding.workerAttemptRef).toEqual(
+        state.coding.workerAttemptRef,
+      );
+      expect(executor.calls.status).toEqual([attempt.runId]);
+      expect(executor.calls.run).toHaveLength(0);
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(before);
+    },
+  );
 
   test("continues a blocked Jev workflow only after BLOCK_RESOLVED", async () => {
     const workflow = await setup({ jevFailures: 1 });

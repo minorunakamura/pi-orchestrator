@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
@@ -7,10 +7,15 @@ import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workf
 import {
   CodingOrchestrator,
   type CodingOrchestratorDependencies,
+  parseImplementationArtifact,
 } from "../../../src/runtime/orchestrator/coding-orchestrator.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
+import {
+  ArtifactStore,
+  calculateSha256,
+} from "../../../src/runtime/persistence/artifact-store.ts";
 import type {
   CodeReviewHandle,
   CodeReviewStatus,
@@ -124,7 +129,20 @@ async function makeAwaitingCodeReview() {
   const implementationRef = await started.artifactStore.writeText(
     "implementation",
     "implementation-1.md",
-    "implemented",
+    JSON.stringify({
+      schemaVersion: 1,
+      implementationRevision: 1,
+      approvedPlanRef: created.planRef,
+      executionRoutingRef: routingRef,
+      executionProfile: {
+        provider: "standard",
+        model: "standard",
+        thinking: "medium",
+      },
+      repository: { outputSha256: calculateSha256("implemented") },
+      runId,
+      output: "implemented",
+    }),
   );
   state = await advanceWorkflow(
     state,
@@ -187,6 +205,85 @@ afterEach(async () => {
 });
 
 describe("ORCH-017 Plannotator code gate", () => {
+  test.each([
+    "missing",
+    "hash",
+    "schema",
+    "revision",
+    "plan",
+    "routing",
+    "output-hash",
+  ] as const)(
+    "rejects %s implementation authority before direct approval or feedback",
+    async (damage) => {
+      const current = await makeAwaitingCodeReview();
+      const gate = new FakePlannotatorGate({
+        openCodeReview: { type: "result", value: handle(current) },
+      });
+      const orchestrator = new CodingOrchestrator(dependencies(current, gate));
+      let { state } = await orchestrator.openCodeReview({
+        state: current.state,
+      });
+      const store = new ArtifactStore(current.started.runDirectory);
+      let ref = current.implementationRef;
+      const path = join(store.rootDirectory, ref.path);
+      if (damage === "missing") await rm(path);
+      else if (damage === "hash") await writeFile(path, "tampered");
+      else {
+        const implementation = parseImplementationArtifact(
+          JSON.parse(await store.readText(ref)),
+        );
+        if (damage === "revision") implementation.implementationRevision = 2;
+        if (damage === "plan")
+          implementation.approvedPlanRef = {
+            ...implementation.approvedPlanRef,
+            sha256: "a".repeat(64),
+          };
+        if (damage === "routing")
+          implementation.executionRoutingRef = {
+            ...implementation.executionRoutingRef,
+            sha256: "a".repeat(64),
+          };
+        if (damage === "output-hash")
+          implementation.repository.outputSha256 = "a".repeat(64);
+        ref = await store.writeText(
+          "implementation",
+          "invalid-implementation.md",
+          JSON.stringify(damage === "schema" ? {} : implementation),
+        );
+        state = await current.started.stateStore.saveState(
+          {
+            ...state,
+            coding: {
+              ...state.coding,
+              implementationRef: ref,
+              codeReview: {
+                ...state.coding.codeReview!,
+                implementationRef: ref,
+              },
+            },
+          },
+          state.stateRevision,
+        );
+      }
+      for (const status of ["approved", "feedback"] as const) {
+        // Keep result applications sequential against the same durable authority.
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await expect(
+          orchestrator.applyCodeReview({
+            state,
+            reviewId,
+            status: { ...state.coding.codeReview!, status, feedback: "revise" },
+          }),
+        ).rejects.toThrow();
+      }
+      expect(
+        await new StateStore(current.started.runDirectory).loadState(),
+      ).toEqual(state);
+      expect(await readdir(store.rootDirectory)).not.toContain("code-reviews");
+    },
+  );
+
   test("rejects identity-only State rather than rebinding a settled approval", async () => {
     const current = await makeAwaitingCodeReview();
     current.state.external["plannotator.code-review.r1"] = reviewId;

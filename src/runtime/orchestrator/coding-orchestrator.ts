@@ -74,6 +74,7 @@ import {
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 
 import { decisionFreshness } from "./coding-evidence.ts";
+import { parsePlan } from "../planning/plan-parser.ts";
 import {
   isDecisionFresh,
   isDecisionFreshness,
@@ -892,6 +893,7 @@ export class CodingOrchestrator {
     const gate = this.dependencies.plannotatorGate;
     if (!gate) throw new Error("PlannotatorGate is required");
     const binding = requirePersistedCodeReview(input.state, input.reviewId);
+    await this.validateCodeReviewAuthority(input.state);
     let status: CodeReviewStatus;
     try {
       status = await gate.getCodeReview(input.reviewId, binding);
@@ -961,6 +963,7 @@ export class CodingOrchestrator {
       );
     }
 
+    await this.validateCodeReviewAuthority(state);
     const store = requireArtifactStore(this.dependencies.artifactStore);
     const reviewRef = await persistCodeReview(store, status);
     const event =
@@ -978,6 +981,42 @@ export class CodingOrchestrator {
       reviewId,
       reviewRef,
     };
+  }
+
+  private async validateCodeReviewAuthority(
+    state: WorkflowState,
+  ): Promise<void> {
+    const store = requireArtifactStore(this.dependencies.artifactStore);
+    assertStateInvariants(state);
+    const planRef = state.planning.approvedPlanRef;
+    if (!planRef) throw new Error("Missing approved Plan authority");
+    parsePlan(await readAuthoritativeText(store, planRef, "approved plan"), {
+      architectureRequired: state.planning.architectureRequired !== false,
+    });
+    const current = currentCodeReviewBinding(state);
+    const implementation = parseImplementationArtifact(
+      JSON.parse(
+        await readAuthoritativeText(
+          store,
+          current.implementationRef,
+          "implementation",
+        ),
+      ),
+    );
+    if (
+      implementation.implementationRevision !==
+        current.implementationRevision ||
+      !sameArtifactRef(implementation.approvedPlanRef, planRef) ||
+      !sameArtifactRef(
+        implementation.executionRoutingRef,
+        state.coding.executionRoutingRef,
+      ) ||
+      calculateSha256(implementation.output) !==
+        implementation.repository.outputSha256
+    )
+      throw new Error(
+        "Implementation artifact binding or output hash mismatch",
+      );
   }
 
   async execute(input: CodingEntryInput): Promise<CodingExecutionResult> {

@@ -12,6 +12,7 @@ import {
   ArtifactImmutableError,
   calculateSha256,
   createArtifactRef,
+  validateArtifactRef,
 } from "../persistence/artifact-store.ts";
 import type {
   WorkflowEvent,
@@ -595,6 +596,7 @@ export class PlanningOrchestrator {
       throw new Error("PlannotatorGate is required");
     }
     const binding = requirePlanReviewBinding(input.state, input.reviewId);
+    await this.validatePlanAuthority(input.state);
     let status: PlanReviewStatus;
     try {
       status = await this.dependencies.plannotatorGate.getPlanReview(
@@ -662,6 +664,7 @@ export class PlanningOrchestrator {
       );
     }
 
+    await this.validatePlanAuthority(state);
     const reviewRef = await this.persistPlanReview(reviewId, status);
     const event: WorkflowEvent =
       status.status === "approved"
@@ -683,6 +686,20 @@ export class PlanningOrchestrator {
       reviewId,
       reviewRef,
     };
+  }
+
+  private async validatePlanAuthority(state: WorkflowState): Promise<void> {
+    const ref = currentPlan(state);
+    validateArtifactRef(ref);
+    const store = this.dependencies.artifactStore;
+    if (!store.readText)
+      throw new Error("Readable authoritative ArtifactStore required");
+    const content = await store.readText(ref);
+    if (calculateSha256(content) !== ref.sha256)
+      throw new Error("Authoritative Plan artifact hash mismatch");
+    parsePlan(content, {
+      architectureRequired: state.planning.architectureRequired !== false,
+    });
   }
 
   private async persistPlanReview(

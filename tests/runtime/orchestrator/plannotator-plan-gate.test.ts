@@ -1,4 +1,4 @@
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -110,6 +110,67 @@ afterEach(async () => {
 });
 
 describe("ORCH-009 Plannotator plan gate", () => {
+  test.each(["missing", "hash", "schema"] as const)(
+    "rejects %s Plan authority before direct approval or feedback",
+    async (damage) => {
+      const root = await makeRoot();
+      const gate = new FakePlannotatorGate({
+        openPlanReview: {
+          type: "result",
+          value: { reviewId, planRef: planRef(), planVersion: 1 },
+        },
+      });
+      const { started, created, orchestrator } = await createPlanWithGate(
+        root,
+        gate,
+      );
+      let state = created.state;
+      let ref = created.planRef;
+      const path = join(started.runDirectory, ref.path);
+      if (damage === "missing") await rm(path);
+      else if (damage === "hash") await writeFile(path, validPlan + "tampered");
+      else {
+        ref = await started.artifactStore.writeText(
+          "plan",
+          "invalid-plan.md",
+          "# No required sections",
+        );
+        state = await started.stateStore.saveState(
+          {
+            ...state,
+            planning: {
+              ...state.planning,
+              currentPlanRef: ref,
+              planReview: { ...state.planning.planReview!, planRef: ref },
+            },
+          },
+          state.stateRevision,
+        );
+      }
+      for (const status of ["approved", "feedback"] as const) {
+        // Keep result applications sequential against the same durable authority.
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await expect(
+          orchestrator.applyPlanReview({
+            state,
+            reviewId,
+            status: {
+              reviewId,
+              planRef: ref,
+              planVersion: 1,
+              status,
+              feedback: "revise",
+            },
+          }),
+        ).rejects.toThrow();
+      }
+      expect(await new StateStore(started.runDirectory).loadState()).toEqual(
+        state,
+      );
+      expect(await readdir(started.runDirectory)).not.toContain("plan-reviews");
+    },
+  );
+
   test("persists the Human approval artifact before PLAN_APPROVED", async () => {
     const root = await makeRoot();
     const expectedRef = planRef();
@@ -459,6 +520,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
     }).openPlanReview({ state: created.state });
     const orchestrator = new PlanningOrchestrator({
       artifactStore: {
+        readText: started.artifactStore.readText!.bind(started.artifactStore),
         writeText: async () => {
           throw new Error("disk full");
         },

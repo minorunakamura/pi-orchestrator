@@ -999,12 +999,70 @@ export class WorkflowReconciler {
       );
     }
     if (!current) return undefined;
+    const { ref, attempt } = current;
+    // A retained success describes the implementation already published, not
+    // the inputs of the next fix (whose routing/findings may have changed).
+    if (
+      attempt.status === "succeeded" &&
+      attempt.targetRevision === state.coding.implementationRevision
+    ) {
+      if (
+        attempt.workflowId !== state.workflowId ||
+        attempt.dispatch.ownerRunId !== state.workflowId ||
+        attempt.launchStatus !== "observed" ||
+        !sameArtifactRef(
+          attempt.implementationRef,
+          state.coding.implementationRef,
+        )
+      ) {
+        return this.fail(state, "authority-inconsistent", ref);
+      }
+      try {
+        const implementation = await readJson(
+          this.deps.artifactStore,
+          attempt.implementationRef!,
+          parseImplementationArtifact,
+          "completed implementation",
+        );
+        if (
+          implementation.implementationRevision !== attempt.targetRevision ||
+          implementation.runId !== attempt.runId ||
+          !sameArtifactRef(
+            implementation.approvedPlanRef,
+            attempt.approvedPlanRef,
+          ) ||
+          !sameArtifactRef(
+            implementation.executionRoutingRef,
+            attempt.executionRoutingRef,
+          ) ||
+          !implementation.workerAttemptRef ||
+          (!sameArtifactRef(implementation.workerAttemptRef, ref) &&
+            !sameArtifactRef(
+              implementation.workerAttemptRef,
+              attempt.previousRef,
+            )) ||
+          calculateSha256(implementation.output) !==
+            implementation.repository.outputSha256 ||
+          !sameDispatch(
+            implementation.executionProfile,
+            attempt.executionProfile,
+          )
+        )
+          throw new Error("Completed implementation binding mismatch");
+      } catch {
+        return this.fail(
+          state,
+          "authoritative-artifact-corrupt",
+          attempt.implementationRef,
+        );
+      }
+      return undefined;
+    }
     try {
       this.validateAttemptBinding(state, current.ref, current.attempt);
     } catch {
       return this.fail(state, "authority-inconsistent", current.ref);
     }
-    const { ref, attempt } = current;
     if (attempt.launchStatus === "not-started") {
       const reconciliationRef = await this.record(
         state,
