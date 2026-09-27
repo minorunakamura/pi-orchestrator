@@ -39,6 +39,17 @@ import {
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 import { parseReviewArtifact, type ReviewArtifact } from "./review-runner.ts";
 
+import {
+  assembleCodingEvidence,
+  decisionFreshness,
+  reviewEvidenceRefs,
+  sourcedFindings,
+} from "./coding-evidence.ts";
+import {
+  assertCodingAuthority,
+  codingAuthority,
+} from "../../core/coding/authority.ts";
+
 export type {
   AcceptedFindingsArtifact,
   FindingEvaluationArtifact,
@@ -253,7 +264,7 @@ async function readReview(
   }
 }
 
-async function persistedFindings(
+export async function persistedFindings(
   store: ReadableArtifactStore,
   state: WorkflowState,
 ): Promise<ReviewFinding[]> {
@@ -262,6 +273,7 @@ async function persistedFindings(
     readReview(store, correctness),
     readReview(store, ponytail),
   ]);
+  for (const review of reviews) assertCodingAuthority(state, review.authority);
   if (
     reviews.some(
       (review) =>
@@ -376,11 +388,16 @@ function findingEvaluationInput(
   approvedPlanRef: ArtifactRef<"plan">,
   state: WorkflowState,
   findings: readonly ReviewFinding[],
+  evidence: FindingEvaluationInput["evidence"],
 ): FindingEvaluationInput {
+  const refs = reviewEvidenceRefs(state);
+  sourcedFindings(findings, refs);
   return {
     approvedPlanRef,
     implementationRevision: state.coding.implementationRevision,
     findings,
+    evidence,
+    reviewRefs: refs,
   };
 }
 
@@ -409,14 +426,30 @@ export class FindingEvaluationRunner {
       );
     }
 
+    const evidence = await assembleCodingEvidence(store, input.state);
+    const request = findingEvaluationInput(
+      approvedPlanRef,
+      input.state,
+      findings,
+      evidence,
+    );
+    const freshness = decisionFreshness(
+      input.state,
+      request,
+      [
+        approvedPlanRef,
+        input.state.coding.implementationRef!,
+        ...reviewRefs(input.state),
+        ...(evidence.previousDecision ? [evidence.previousDecision.ref] : []),
+      ],
+      this.dependencies.configuration.decision,
+    );
     let evaluated: EvaluatedFinding[];
     try {
       const rawDecisions =
         findings.length === 0
           ? []
-          : await this.dependencies.jevDecisionClient.evaluateFindings(
-              findingEvaluationInput(approvedPlanRef, input.state, findings),
-            );
+          : await this.dependencies.jevDecisionClient.evaluateFindings(request);
       if (!Array.isArray(rawDecisions)) {
         throw new FindingEvaluationError(
           "Jev finding evaluation response is not an array",
@@ -433,6 +466,8 @@ export class FindingEvaluationRunner {
 
     const evaluation: FindingEvaluationArtifact = {
       schemaVersion: 1,
+      freshness,
+      authority: codingAuthority(input.state),
       round: input.state.coding.reviewRound,
       planVersion: input.state.planning.approvedPlanVersion!,
       implementationRevision: input.state.coding.implementationRevision,
@@ -441,6 +476,7 @@ export class FindingEvaluationRunner {
     };
     const acceptedFindings: AcceptedFindingsArtifact = {
       schemaVersion: 1,
+      authority: codingAuthority(input.state),
       round: input.state.coding.reviewRound,
       planVersion: input.state.planning.approvedPlanVersion!,
       implementationRevision: input.state.coding.implementationRevision,

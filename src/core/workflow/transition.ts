@@ -93,6 +93,7 @@ function clearCurrentRoundEvidence(state: WorkflowState): void {
   delete state.coding.acceptedFindingsRef;
   delete state.coding.roundDecisionRef;
   delete state.coding.latestCodeReviewRef;
+  delete state.coding.codeReview;
 }
 
 function setContextRefs(
@@ -209,8 +210,8 @@ function applyTransition(
       return next;
 
     case "EXECUTION_ROUTED":
-      if (state.phase !== "implementing")
-        fail("EXECUTION_ROUTED is only valid while implementing");
+      if (state.phase !== "implementing" && state.phase !== "fixing")
+        fail("EXECUTION_ROUTED is only valid while implementing or fixing");
       requireApprovedPlan(state);
       next.coding.executionRoutingRef = event.decisionRef;
       return next;
@@ -225,6 +226,8 @@ function applyTransition(
       requireExecutionRouting(state);
       next.coding.implementationRef = event.resultRef;
       next.coding.implementationRevision += 1;
+      if (state.coding.roundDecisionRef)
+        next.coding.previousRoundDecisionRef = state.coding.roundDecisionRef;
       clearCurrentRoundEvidence(next);
       next.phase = "validating";
       return next;

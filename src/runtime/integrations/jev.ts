@@ -100,6 +100,8 @@ function findingRequest(
       approvedPlanRef: input.approvedPlanRef,
       implementationRevision: input.implementationRevision,
       finding: findingState(finding),
+      reviewRef: input.reviewRefs[finding.source],
+      evidence: input.evidence,
     },
     {
       evidenceSupported: choice(
@@ -161,6 +163,12 @@ function roundRequest(input: RoundDecisionInput): JevRequest {
       implementationRevision: input.implementationRevision,
       validation: input.validation,
       findings: input.findings,
+      findingSummaries: input.findingSummaries,
+      evidence: input.evidence,
+      branch: input.branch,
+      retryLimits: input.retryLimits,
+      currentProfile: input.currentProfile,
+      inputRefs: input.inputRefs,
     },
     {
       decision: choice("How should the current coding round be handled?", {
@@ -374,6 +382,7 @@ export class JevIntegration implements JevDecisionClient {
       decision: "ESCALATE",
       confidence: decision.confidence,
       escalationReason: escalationReason.value,
+      escalationReasonConfidence: escalationReason.confidence,
     };
   }
 

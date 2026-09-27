@@ -14,6 +14,11 @@ import {
 } from "../../../src/runtime/integrations/jev.ts";
 import type { ExecutionRoutingInput } from "../../../src/runtime/ports/jev-decision-client.ts";
 
+import {
+  decisionEvidence,
+  roundEvidence,
+  reviewRefs,
+} from "../../fakes/coding-scenario.ts";
 const planRef: ArtifactRef<"plan"> = {
   kind: "plan",
   path: "plans/plan-v1.md",
@@ -185,6 +190,8 @@ describe("JevIntegration", () => {
 
     await expect(
       integration.evaluateFindings({
+        evidence: decisionEvidence,
+        reviewRefs,
         approvedPlanRef: planRef,
         implementationRevision: 1,
         findings: [finding],
@@ -202,6 +209,8 @@ describe("JevIntegration", () => {
 
     await expect(
       integration.decideRound({
+        ...roundEvidence,
+        findingSummaries: [{ finding, sourceRef: reviewRefs.correctness }],
         approvedPlanRef: planRef,
         implementationRevision: 1,
         validation,
@@ -211,6 +220,7 @@ describe("JevIntegration", () => {
       decision: "ESCALATE",
       confidence: 0.91,
       escalationReason: "human-decision",
+      escalationReasonConfidence: 0.91,
     });
 
     expect(client.calls[0].request.questions).toMatchObject({
@@ -231,11 +241,18 @@ describe("JevIntegration", () => {
         },
       },
     });
+    expect(client.calls[1].request.state).toMatchObject({
+      reviewRef: reviewRefs.correctness,
+      finding: { summary: finding.summary, evidence: finding.evidence },
+    });
     expect(client.calls[1].request.questions).toMatchObject({
       evidenceSupported: {
         type: "choice",
         criteria: { true: expect.anything(), false: expect.anything() },
       },
+    });
+    expect(client.calls[2].request.state).toMatchObject({
+      findingSummaries: [{ finding, sourceRef: reviewRefs.correctness }],
     });
     expect(client.calls[2].request.questions).toMatchObject({
       decision: {
@@ -454,6 +471,8 @@ describe("JevIntegration", () => {
 
     await expect(
       new JevIntegration({ client }).evaluateFindings({
+        evidence: decisionEvidence,
+        reviewRefs,
         approvedPlanRef: planRef,
         implementationRevision: 1,
         findings: [],

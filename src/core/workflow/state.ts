@@ -89,7 +89,32 @@ export interface PlanningState {
   latestPlanReviewRef?: ArtifactRef<"plan-review">;
 }
 
+export interface CodeReviewBinding {
+  reviewId: PlannotatorReviewId;
+  implementationRef: ArtifactRef<"implementation">;
+  implementationRevision: number;
+}
+
+export function isCodeReviewBinding(
+  value: unknown,
+): value is CodeReviewBinding {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "reviewId",
+      "implementationRef",
+      "implementationRevision",
+    ]) &&
+    isNonEmptyString(value.reviewId) &&
+    isArtifactOfKind(value.implementationRef, "implementation") &&
+    isNonNegativeInteger(value.implementationRevision) &&
+    value.implementationRevision > 0
+  );
+}
+
 export interface CodingState {
+  codeReview?: CodeReviewBinding;
+  previousRoundDecisionRef?: ArtifactRef<"round-decision">;
   implementationRevision: number;
   reviewRound: number;
   executionRoutingRef?: ArtifactRef<"execution-routing">;
@@ -321,7 +346,10 @@ function isCodingState(value: unknown): value is CodingState {
       "acceptedFindingsRef",
       "roundDecisionRef",
       "latestCodeReviewRef",
+      "codeReview",
+      "previousRoundDecisionRef",
     ]) ||
+    !optional(value, "codeReview", isCodeReviewBinding) ||
     !isNonNegativeInteger(value.implementationRevision) ||
     !isNonNegativeInteger(value.reviewRound)
   ) {
@@ -337,6 +365,7 @@ function isCodingState(value: unknown): value is CodingState {
     ["findingEvaluationRef", "finding-evaluation"],
     ["acceptedFindingsRef", "accepted-findings"],
     ["roundDecisionRef", "round-decision"],
+    ["previousRoundDecisionRef", "round-decision"],
     ["latestCodeReviewRef", "code-review"],
   ];
 

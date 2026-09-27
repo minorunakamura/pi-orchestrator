@@ -580,6 +580,8 @@ describe("escalation mapping", () => {
 describe("decision freshness", () => {
   const expected: DecisionFreshnessExpectation = {
     schemaVersion: 1,
+    decisionSchemaVersion: 1,
+    policyVersion: "test-policy",
     planVersion: 1,
     implementationRevision: 2,
     inputRefs: [planRef, contextRef],

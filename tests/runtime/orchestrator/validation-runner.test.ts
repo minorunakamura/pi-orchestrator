@@ -96,6 +96,13 @@ async function makeRunner(
   const root = await makeRoot();
   const artifactStore = new ArtifactStore(root);
   const stateStore = new StateStore(root);
+  const planRef = await artifactStore.writeText(
+    "plan",
+    "plan-v1.md",
+    `# Plan\n\n\`\`\`orchestrator-validation\n${JSON.stringify(contract)}\n\`\`\``,
+  );
+  state.planning.currentPlanRef = planRef;
+  state.planning.approvedPlanRef = planRef;
   const persistedState = await stateStore.saveState(state, 0);
   const executor = new FakeValidationExecutor({
     execute: { type: "result", value: execution },
@@ -121,6 +128,22 @@ afterEach(async () => {
 });
 
 describe("ValidationRunner ORCH-013", () => {
+  test("rejects caller substitution of Approved Plan checks before execution", async () => {
+    const fixture = await makeRunner(validatingState(1), {
+      status: "passed",
+      checks: [{ id: "tests", status: "passed", exitCode: 0 }],
+    });
+    await expect(
+      fixture.runner.execute({
+        state: fixture.state,
+        contract: {
+          ...contract,
+          checks: [{ ...contract.checks[0]!, command: "true" }],
+        },
+      }),
+    ).rejects.toThrow(/contract/iu);
+    expect(fixture.executor.calls).toHaveLength(0);
+  });
   test("binds the current implementation revision and persists a passed result before VALIDATION_PASSED", async () => {
     const execution: ValidationExecutionResult = {
       status: "passed",
@@ -133,7 +156,7 @@ describe("ValidationRunner ORCH-013", () => {
       contract,
     });
 
-    expect(result.validation).toEqual({
+    expect(result.validation).toMatchObject({
       schemaVersion: 1,
       implementationRevision: 7,
       status: "passed",

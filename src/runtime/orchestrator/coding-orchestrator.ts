@@ -54,6 +54,14 @@ import {
 } from "./advance-workflow.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 
+import { decisionFreshness } from "./coding-evidence.ts";
+import {
+  isDecisionFresh,
+  isDecisionFreshness,
+  type DecisionFreshness,
+} from "../../core/decisions/decision-freshness.ts";
+import { assertCodingAuthority } from "../../core/coding/authority.ts";
+
 export const CODING_ENTRY_EVIDENCE_LIMITS = {
   maxPlanSummaryChars: 2_000,
   maxPlanSectionChars: 3_000,
@@ -68,6 +76,8 @@ const routingPlanSections: readonly PlanSection[] = [
 ];
 
 export interface ExecutionRoutingArtifact {
+  freshness?: DecisionFreshness;
+  sourceDecisionRef?: ArtifactRef<"round-decision">;
   schemaVersion: 1;
   approvedPlanRef: ArtifactRef<"plan">;
   planVersion: number;
@@ -107,7 +117,13 @@ export function isExecutionRoutingArtifact(
       "modelTier",
       "reasoningTier",
       "effectiveConfidence",
+      "freshness",
+      "sourceDecisionRef",
     ]) &&
+    (value.sourceDecisionRef === undefined ||
+      (isArtifactRef(value.sourceDecisionRef) &&
+        value.sourceDecisionRef.kind === "round-decision")) &&
+    (value.freshness === undefined || isDecisionFreshness(value.freshness)) &&
     value.schemaVersion === 1 &&
     isArtifactRef(value.approvedPlanRef) &&
     value.approvedPlanRef.kind === "plan" &&
@@ -746,7 +762,14 @@ function requirePersistedCodeReview(
       "Persisted code review identity does not match the current implementation revision",
     );
   }
-  return { reviewId, ...current };
+  const binding = state.coding.codeReview;
+  if (!binding || binding.reviewId !== reviewId) {
+    throw new StaleCodeReviewError(
+      "Missing or mismatched durable Code Review binding",
+    );
+  }
+  assertCodeReviewMatchesCurrent(state, binding);
+  return binding;
 }
 
 function codeReviewArtifact(
@@ -799,7 +822,9 @@ export class CodingOrchestrator {
     const existingId = input.state.external[identityKey] as
       | PlannotatorReviewId
       | undefined;
-    if (existingId) {
+    if (existingId || input.state.coding.codeReview) {
+      if (!existingId)
+        throw new StaleCodeReviewError("Missing external Code Review binding");
       const outcome = await this.reconcileCodeReview({
         state: input.state,
         reviewId: existingId,
@@ -833,6 +858,7 @@ export class CodingOrchestrator {
     assertCodeReviewMatchesCurrent(input.state, handle);
     const stateWithIdentity = structuredClone(input.state);
     stateWithIdentity.external[identityKey] = handle.reviewId;
+    stateWithIdentity.coding.codeReview = structuredClone(handle);
     const state = await this.dependencies.stateStore.saveState(
       stateWithIdentity,
       input.state.stateRevision,
@@ -975,8 +1001,36 @@ export class CodingOrchestrator {
       throw new CodingOrchestrationError("Coding entry change scope is empty");
     }
 
+    const routingInput = {
+      approvedPlanRef,
+      planEvidence,
+      playbook: input.state.playbook,
+      changeScope,
+      contextRefs: refs,
+      contextEvidence,
+      priorRetryCount: input.state.counters.automatedFixRoundsUsed,
+    } as const;
+    const authorityRefs: ArtifactRef[] = [approvedPlanRef, ...refs];
+    for (const ref of [
+      input.state.coding.implementationRef,
+      input.state.coding.roundDecisionRef,
+      input.state.coding.acceptedFindingsRef,
+      input.state.coding.latestCodeReviewRef,
+    ]) {
+      if (ref) {
+        await readAuthoritativeText(store, ref, "routing input");
+        authorityRefs.push(ref);
+      }
+    }
+    const freshness = decisionFreshness(
+      input.state,
+      routingInput,
+      authorityRefs,
+      this.dependencies.configuration,
+    );
     let routingArtifact: ExecutionRoutingArtifact;
     let routingRef = input.state.coding.executionRoutingRef;
+    let priorRouting: ExecutionRoutingArtifact | undefined;
     if (routingRef) {
       const routingContent = await readAuthoritativeText(
         store,
@@ -996,16 +1050,16 @@ export class CodingOrchestrator {
           "Execution routing decision does not match the approved plan",
         );
       }
-    } else {
-      const routingInput = {
-        approvedPlanRef,
-        planEvidence,
-        playbook: input.state.playbook,
-        changeScope,
-        contextRefs: refs,
-        contextEvidence,
-        priorRetryCount: input.state.counters.automatedFixRoundsUsed,
-      } as const;
+      priorRouting = routingArtifact;
+      if (!isDecisionFresh(routingArtifact.freshness, freshness)) {
+        if (input.state.phase !== "fixing" || !routingArtifact.freshness)
+          throw new CodingOrchestrationError(
+            "Stale execution routing freshness; reconciliation required",
+          );
+        routingRef = undefined;
+      }
+    }
+    if (!routingRef) {
       let rawDecision;
       try {
         rawDecision =
@@ -1026,7 +1080,22 @@ export class CodingOrchestrator {
         escalationThreshold:
           this.dependencies.configuration.decision.escalationThreshold,
       });
+      if (priorRouting && input.state.counters.strongerRetriesUsed > 0) {
+        const models = ["ECONOMY", "STANDARD", "STRONG"] as const;
+        const reasoning = ["LOW", "MEDIUM", "HIGH"] as const;
+        if (
+          models.indexOf(decision.modelTier.value) <
+          models.indexOf(priorRouting.modelTier.value)
+        )
+          decision.modelTier.value = priorRouting.modelTier.value;
+        if (
+          reasoning.indexOf(decision.reasoningTier.value) <
+          reasoning.indexOf(priorRouting.reasoningTier.value)
+        )
+          decision.reasoningTier.value = priorRouting.reasoningTier.value;
+      }
       routingArtifact = {
+        freshness,
         schemaVersion: 1,
         approvedPlanRef,
         planVersion: input.state.planning.approvedPlanVersion!,
@@ -1039,7 +1108,7 @@ export class CodingOrchestrator {
       routingRef = await persistJson(
         store,
         "execution-routing",
-        `execution-routing-${routingArtifact.attempt}.json`,
+        `execution-routing-${routingArtifact.attempt}-${freshness.inputDigest.slice(0, 16)}-${freshness.configurationDigest.slice(0, 16)}.json`,
         routingArtifact,
         isExecutionRoutingArtifact,
       );
@@ -1054,7 +1123,7 @@ export class CodingOrchestrator {
             this.dependencies.stateStore,
           );
     const resolvedProfile = executionProfile(
-      routingArtifact,
+      routingArtifact!,
       this.dependencies.configuration,
     );
 
@@ -1083,12 +1152,14 @@ export class CodingOrchestrator {
           acceptedArtifact.planVersion !==
             input.state.planning.currentPlanVersion ||
           acceptedArtifact.implementationRevision !==
-            routedState.coding.implementationRevision
+            routedState.coding.implementationRevision ||
+          acceptedArtifact.round !== routedState.coding.reviewRound
         ) {
           throw new CodingOrchestrationError(
             "Accepted findings artifact does not match the current coding authority",
           );
         }
+        assertCodingAuthority(routedState, acceptedArtifact.authority);
         acceptedFindingsRef = candidate;
       }
 

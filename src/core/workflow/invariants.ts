@@ -97,6 +97,22 @@ export function assertStateInvariants(state: WorkflowState): void {
     fail(`${resumedPhase} requires approvedPlanRef`);
   }
 
+  if (
+    coding.codeReview &&
+    (coding.codeReview.implementationRevision !==
+      coding.implementationRevision ||
+      !sameArtifactRef(
+        coding.codeReview.implementationRef,
+        coding.implementationRef,
+      ) ||
+      state.external[
+        `plannotator.code-review.r${coding.implementationRevision}`
+      ] !== coding.codeReview.reviewId)
+  )
+    fail(
+      "Code Review binding must match the current implementation and external identity",
+    );
+
   if (phase === "awaiting-plan-review" && !planning.currentPlanRef) {
     fail("awaiting-plan-review requires currentPlanRef");
   }

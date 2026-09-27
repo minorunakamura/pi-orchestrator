@@ -14,6 +14,15 @@ import {
   parseSchema,
 } from "../schema.ts";
 
+import {
+  isCodingAuthority,
+  type CodingAuthority,
+} from "../coding/authority.ts";
+import {
+  isDecisionFreshness,
+  type DecisionFreshness,
+} from "./decision-freshness.ts";
+
 export interface Decision<T> {
   value: T;
   confidence: number;
@@ -183,11 +192,38 @@ export type NormalizedRoundDecision =
       confidence: number;
       reason?: string;
       escalationReason: EscalationReason;
+      escalationReasonConfidence: number;
     };
+
+export function isNormalizedRoundDecision(
+  value: unknown,
+): value is NormalizedRoundDecision {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "decision",
+      "confidence",
+      "reason",
+      "escalationReason",
+      "escalationReasonConfidence",
+    ]) ||
+    !isOneOf(roundActions, value.decision) ||
+    !isConfidence(value.confidence) ||
+    !optional(value, "reason", isNonEmptyString)
+  )
+    return false;
+  return value.decision === "ESCALATE"
+    ? isOneOf(escalationReasons, value.escalationReason) &&
+        isConfidence(value.escalationReasonConfidence)
+    : value.escalationReason === undefined &&
+        value.escalationReasonConfidence === undefined;
+}
 
 export type EvaluatedFinding = FindingEvaluation & { blocking: boolean };
 
 export interface FindingEvaluationArtifact {
+  authority?: CodingAuthority;
+  freshness?: DecisionFreshness;
   schemaVersion: 1;
   round: number;
   planVersion: number;
@@ -197,6 +233,7 @@ export interface FindingEvaluationArtifact {
 }
 
 export interface AcceptedFindingsArtifact {
+  authority?: CodingAuthority;
   schemaVersion: 1;
   round: number;
   planVersion: number;
@@ -225,7 +262,11 @@ export function isFindingEvaluationArtifact(
       "implementationRevision",
       "approvedPlanRef",
       "findings",
+      "authority",
+      "freshness",
     ]) &&
+    optional(value, "authority", isCodingAuthority) &&
+    optional(value, "freshness", isDecisionFreshness) &&
     isSchemaVersion(value.schemaVersion) &&
     isNonNegativeInteger(value.round) &&
     value.round > 0 &&
@@ -265,7 +306,9 @@ export function isAcceptedFindingsArtifact(
       "implementationRevision",
       "approvedPlanRef",
       "accepted",
+      "authority",
     ]) &&
+    optional(value, "authority", isCodingAuthority) &&
     isSchemaVersion(value.schemaVersion) &&
     isNonNegativeInteger(value.round) &&
     value.round > 0 &&
@@ -329,6 +372,8 @@ export function parseRoundDecision(value: unknown): RoundDecision {
 }
 
 export type RoundDecisionArtifact = {
+  freshness?: DecisionFreshness;
+  rawDecision?: NormalizedRoundDecision;
   schemaVersion: 1;
   round: number;
   planVersion: number;
@@ -347,11 +392,15 @@ export function isRoundDecisionArtifact(
       "planVersion",
       "implementationRevision",
       "approvedPlanRef",
+      "freshness",
+      "rawDecision",
       "decision",
       "confidence",
       "reason",
       "escalationReason",
     ]) ||
+    !optional(value, "freshness", isDecisionFreshness) ||
+    !optional(value, "rawDecision", isNormalizedRoundDecision) ||
     !isSchemaVersion(value.schemaVersion) ||
     !isNonNegativeInteger(value.round) ||
     value.round <= 0 ||
@@ -502,6 +551,11 @@ export function parseValidationExecutionResult(
 export interface ValidationResult extends ValidationExecutionResult {
   schemaVersion: 1;
   implementationRevision: number;
+  /** Optional only for diagnostic loading of legacy artifacts, never authority. */
+  approvedPlanRef?: ArtifactRef<"plan">;
+  planVersion?: number;
+  implementationRef?: ArtifactRef<"implementation">;
+  validationContractDigest?: string;
 }
 
 export function isValidationResult(value: unknown): value is ValidationResult {
@@ -512,7 +566,23 @@ export function isValidationResult(value: unknown): value is ValidationResult {
       "implementationRevision",
       "status",
       "checks",
+      "approvedPlanRef",
+      "planVersion",
+      "implementationRef",
+      "validationContractDigest",
     ]) &&
+    optional(
+      value,
+      "approvedPlanRef",
+      (ref) => isArtifactRef(ref) && ref.kind === "plan",
+    ) &&
+    optional(value, "planVersion", isNonNegativeInteger) &&
+    optional(
+      value,
+      "implementationRef",
+      (ref) => isArtifactRef(ref) && ref.kind === "implementation",
+    ) &&
+    optional(value, "validationContractDigest", isNonEmptyString) &&
     isSchemaVersion(value.schemaVersion) &&
     isNonNegativeInteger(value.implementationRevision) &&
     isOneOf(validationCheckStatuses, value.status) &&

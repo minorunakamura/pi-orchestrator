@@ -18,6 +18,8 @@ import {
   type ReviewArtifact,
 } from "../../../src/runtime/orchestrator/review-runner.ts";
 
+import { plan, contract } from "../../fakes/coding-scenario.ts";
+import { calculateSha256 } from "../../../src/runtime/persistence/artifact-store.ts";
 const roots: string[] = [];
 const runId = "review-run-1" as unknown as SubagentRunId;
 
@@ -65,7 +67,7 @@ async function fixture() {
   const artifactStore = new ArtifactStore(root);
   const stateStore = new StateStore(root);
   const taskRef = await artifactStore.writeText("task", "task.md", "task");
-  const planRef = await artifactStore.writeText("plan", "plan-v1.md", "plan");
+  const planRef = await artifactStore.writeText("plan", "plan-v1.md", plan);
   const implementationRef = await artifactStore.writeText(
     "implementation",
     "implementation-1.md",
@@ -79,7 +81,13 @@ async function fixture() {
   const validationRef = await artifactStore.writeJson(
     "validation",
     "validation-1.json",
-    validation,
+    {
+      ...validation,
+      approvedPlanRef: planRef,
+      planVersion: 1,
+      implementationRef,
+      validationContractDigest: calculateSha256(JSON.stringify(contract)),
+    },
     parseValidationResult,
   );
   const state: WorkflowState = {
@@ -145,6 +153,39 @@ afterEach(async () => {
 });
 
 describe("ReviewRunner ORCH-014", () => {
+  test("rejects an explicit stale reviewer binding instead of relabeling it as current", async () => {
+    const current = await fixture();
+    const stale = {
+      workflowId: current.state.workflowId,
+      approvedPlanRef: current.state.planning.approvedPlanRef!,
+      planVersion: 1,
+      implementationRef: {
+        ...current.state.coding.implementationRef!,
+        sha256: "f".repeat(64),
+      },
+      implementationRevision: 1,
+    };
+    const executor = new FakeSubagentExecutor({
+      runParallel: {
+        type: "result",
+        value: [
+          succeeded(
+            JSON.stringify({
+              ...JSON.parse(output("correctness", [])),
+              authority: stale,
+            }),
+          ),
+          succeeded(output("ponytail", [])),
+        ],
+      },
+    });
+    await expect(
+      makeRunner(current, executor).execute({ state: current.state }),
+    ).rejects.toThrow(/authority|binding/iu);
+    const persisted = await current.stateStore.loadState();
+    expect(persisted.phase).toBe("blocked");
+    expect(persisted.coding.correctnessReviewRef).toBeUndefined();
+  });
   test("runs the fixed reviewer set through runParallel with fresh review inputs and persists clean artifacts separately", async () => {
     const current = await fixture();
     const executor = new FakeSubagentExecutor({
@@ -193,7 +234,7 @@ describe("ReviewRunner ORCH-014", () => {
         result.correctnessReviewRef,
         parseReviewArtifact,
       ),
-    ).toEqual({
+    ).toMatchObject({
       schemaVersion: 1,
       round: 1,
       source: "correctness",
@@ -204,7 +245,7 @@ describe("ReviewRunner ORCH-014", () => {
         result.ponytailReviewRef,
         parseReviewArtifact,
       ),
-    ).toEqual({
+    ).toMatchObject({
       schemaVersion: 1,
       round: 1,
       source: "ponytail",

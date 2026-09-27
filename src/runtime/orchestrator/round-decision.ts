@@ -37,12 +37,26 @@ import {
   isExecutionRoutingArtifact,
   type ExecutionRoutingArtifact,
 } from "./coding-orchestrator.ts";
-import type { JevDecisionClient } from "../ports/jev-decision-client.ts";
+import type {
+  JevDecisionClient,
+  RoundDecisionInput,
+} from "../ports/jev-decision-client.ts";
 import {
   advanceWorkflow,
   type WorkflowStateWriter,
 } from "./advance-workflow.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
+
+import { assertCodingAuthority } from "../../core/coding/authority.ts";
+import { isDecisionFresh } from "../../core/decisions/decision-freshness.ts";
+import { persistedFindings } from "./finding-evaluation.ts";
+import {
+  assembleCodingEvidence,
+  decisionFreshness,
+  assertValidationAuthority,
+  reviewEvidenceRefs,
+  sourcedFindings,
+} from "./coding-evidence.ts";
 
 export interface RoundDecisionRunInput {
   state: WorkflowState;
@@ -201,15 +215,33 @@ async function authoritativeFindings(
   state: WorkflowState,
   supplied: readonly RoundDecisionFinding[] | undefined,
   suppliedBlockingIds: readonly string[] | undefined,
+  policy: OrchestratorConfiguration["decision"],
 ): Promise<{
   findings: readonly RoundDecisionFinding[];
+  findingSummaries: RoundDecisionInput["findingSummaries"];
   acceptedBlockingFindingIds?: readonly string[];
 }> {
   const evaluationRef = state.coding.findingEvaluationRef;
   const acceptedRef = state.coding.acceptedFindingsRef;
+  if (
+    state.phase === "reviewing" &&
+    (!state.coding.correctnessReviewRef ||
+      !state.coding.ponytailReviewRef ||
+      !evaluationRef ||
+      !acceptedRef)
+  ) {
+    throw new RoundDecisionRunnerError(
+      "Passed review round requires both reviews, finding evaluation and accepted findings",
+    );
+  }
   if (!evaluationRef && !acceptedRef) {
+    if (supplied?.length || suppliedBlockingIds?.length)
+      throw new RoundDecisionRunnerError(
+        "Failed-validation rounds cannot accept supplied findings",
+      );
     return {
       findings: supplied ?? [],
+      findingSummaries: [],
       ...(suppliedBlockingIds
         ? { acceptedBlockingFindingIds: suppliedBlockingIds }
         : {}),
@@ -234,6 +266,61 @@ async function authoritativeFindings(
   );
   assertFindingArtifactBinding(state, evaluation);
   assertFindingArtifactBinding(state, accepted);
+  assertCodingAuthority(state, evaluation.authority);
+  assertCodingAuthority(state, accepted.authority);
+  if (!store.readText)
+    throw new RoundDecisionRunnerError("Missing readable review evidence");
+  const raw = await persistedFindings(
+    {
+      ...store,
+      readText: store.readText.bind(store),
+      writeText: store.writeText.bind(store),
+    },
+    state,
+  );
+  if (
+    !sameIds(
+      raw.map((f) => f.id),
+      evaluation.findings.map((f) => f.findingId),
+    )
+  )
+    throw new RoundDecisionRunnerError(
+      "Finding evaluation does not cover current raw review IDs",
+    );
+  const expectedAccepted = raw.filter((f) =>
+    evaluation.findings.some(
+      (e) => e.findingId === f.id && e.decision === "ACCEPT",
+    ),
+  );
+  if (
+    JSON.stringify(expectedAccepted) !== JSON.stringify(accepted.accepted) ||
+    raw.some((f, index) => f.blocking !== evaluation.findings[index]?.blocking)
+  )
+    throw new RoundDecisionRunnerError(
+      "Accepted findings differ from current raw review evidence",
+    );
+  const evidence = await assembleCodingEvidence(store, state);
+  const request = {
+    approvedPlanRef: state.planning.approvedPlanRef!,
+    implementationRevision: state.coding.implementationRevision,
+    findings: raw,
+    evidence,
+    reviewRefs: reviewEvidenceRefs(state),
+  };
+  const expectedFreshness = decisionFreshness(
+    state,
+    request,
+    [
+      request.approvedPlanRef,
+      state.coding.implementationRef!,
+      state.coding.correctnessReviewRef!,
+      state.coding.ponytailReviewRef!,
+      ...(evidence.previousDecision ? [evidence.previousDecision.ref] : []),
+    ],
+    policy,
+  );
+  if (!isDecisionFresh(evaluation.freshness, expectedFreshness))
+    throw new RoundDecisionRunnerError("Stale finding evaluation freshness");
   const acceptedIds = accepted.accepted.map(({ id }) => id);
   const evaluatedAcceptedIds = evaluation.findings
     .filter(({ decision }) => decision === "ACCEPT")
@@ -261,6 +348,7 @@ async function authoritativeFindings(
   }
   return {
     findings: evaluation.findings,
+    findingSummaries: sourcedFindings(raw, request.reviewRefs),
     acceptedBlockingFindingIds: blockingIds,
   };
 }
@@ -474,6 +562,19 @@ export class RoundDecisionRunner {
         "Round Decision validation evidence is stale",
       );
     }
+    await assertValidationAuthority(
+      this.dependencies.artifactStore,
+      input.state,
+      validation,
+    );
+    if (input.state.phase === "reviewing" && validation.status !== "passed")
+      throw new RoundDecisionRunnerError(
+        "Review round requires passed validation",
+      );
+    if (input.state.phase === "validating" && validation.status === "passed")
+      throw new RoundDecisionRunnerError(
+        "Passed validation must enter the complete review pipeline",
+      );
     const currentRouting = await authoritativeRouting(
       this.dependencies.artifactStore,
       input.state,
@@ -501,20 +602,44 @@ export class RoundDecisionRunner {
       input.state,
       input.findings,
       input.acceptedBlockingFindingIds,
+      this.dependencies.configuration.decision,
     );
     const currentProfile = {
       modelTier: currentRouting.modelTier.value,
       reasoningTier: currentRouting.reasoningTier.value,
     };
 
+    const evidence = await assembleCodingEvidence(
+      this.dependencies.artifactStore,
+      input.state,
+    );
+    const request: RoundDecisionInput = {
+      evidence,
+      branch:
+        input.state.phase === "reviewing"
+          ? "review-passed"
+          : "validation-failed",
+      retryLimits: this.dependencies.configuration.retries,
+      currentProfile,
+      inputRefs: [
+        validationRef!,
+        ...[
+          input.state.coding.correctnessReviewRef,
+          input.state.coding.ponytailReviewRef,
+          input.state.coding.findingEvaluationRef,
+          input.state.coding.acceptedFindingsRef,
+        ].filter((ref) => ref !== undefined),
+      ],
+      approvedPlanRef: input.state.planning.approvedPlanRef!,
+      implementationRevision: input.state.coding.implementationRevision,
+      validation,
+      findings: authoritative.findings,
+      findingSummaries: authoritative.findingSummaries,
+    };
     let rawDecision;
     try {
-      rawDecision = await this.dependencies.jevDecisionClient.decideRound({
-        approvedPlanRef: input.state.planning.approvedPlanRef!,
-        implementationRevision: input.state.coding.implementationRevision,
-        validation,
-        findings: authoritative.findings,
-      });
+      rawDecision =
+        await this.dependencies.jevDecisionClient.decideRound(request);
     } catch (error) {
       return blockAndThrow(input.state, this.dependencies.stateStore, error);
     }
@@ -527,7 +652,21 @@ export class RoundDecisionRunner {
       },
       this.dependencies.configuration.decision,
     );
-    const artifact = decisionArtifact(input.state, decision);
+    const artifact = {
+      ...decisionArtifact(input.state, decision),
+      rawDecision,
+      freshness: decisionFreshness(
+        input.state,
+        request,
+        [
+          request.approvedPlanRef,
+          input.state.coding.implementationRef!,
+          ...request.inputRefs,
+          ...(evidence.previousDecision ? [evidence.previousDecision.ref] : []),
+        ],
+        this.dependencies.configuration,
+      ),
+    };
     const roundDecisionRef = await persistDecision(
       this.dependencies.artifactStore,
       artifact,
@@ -552,6 +691,17 @@ export class RoundDecisionRunner {
         nextExecutionProfile,
         decision.confidence,
         currentRouting,
+      );
+      routingArtifact.sourceDecisionRef = roundDecisionRef;
+      routingArtifact.freshness = decisionFreshness(
+        input.state,
+        { sourceDecisionRef: roundDecisionRef, nextExecutionProfile },
+        [
+          input.state.planning.approvedPlanRef!,
+          input.state.coding.implementationRef!,
+          roundDecisionRef,
+        ],
+        this.dependencies.configuration,
       );
       const executionRoutingRef = await persistStrongerRouting(
         this.dependencies.artifactStore,

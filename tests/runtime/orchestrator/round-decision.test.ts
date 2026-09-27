@@ -4,9 +4,30 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { OrchestratorConfiguration } from "../../../src/core/configuration.ts";
 import type { ValidationResult } from "../../../src/core/decisions/types.ts";
 import type { WorkflowState } from "../../../src/core/workflow/state.ts";
-import { FakeJevDecisionClient, failure } from "../../fakes/index.ts";
+import {
+  assembleCodingEvidence,
+  decisionFreshness,
+} from "../../../src/runtime/orchestrator/coding-evidence.ts";
+import { codingAuthority } from "../../../src/core/coding/authority.ts";
+import { ReviewRunner } from "../../../src/runtime/orchestrator/review-runner.ts";
+import { FindingEvaluationRunner } from "../../../src/runtime/orchestrator/finding-evaluation.ts";
+import {
+  plan,
+  contract,
+  succeeded,
+  implementationEvidence,
+} from "../../fakes/coding-scenario.ts";
+import {
+  FakeSubagentExecutor,
+  FakeJevDecisionClient,
+  failure,
+} from "../../fakes/index.ts";
 import { RoundDecisionRunner } from "../../../src/runtime/orchestrator/round-decision.ts";
-import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
+import {
+  ArtifactStore,
+  createArtifactRef,
+  calculateSha256,
+} from "../../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 
 const roots: string[] = [];
@@ -15,46 +36,48 @@ const configuration: Pick<OrchestratorConfiguration, "decision" | "retries"> = {
   retries: { maxAutomatedFixRounds: 3, maxStrongerRetries: 1 },
 };
 
-async function fixture(phase: "validating" | "reviewing") {
+const routingEvidence = {
+  schemaVersion: 1,
+  approvedPlanRef: createArtifactRef("plan", "plans/plan.md", plan),
+  planVersion: 1,
+  attempt: 1,
+  priorRetryCount: 0,
+  modelTier: { value: "STANDARD", confidence: 0.9 },
+  reasoningTier: { value: "HIGH", confidence: 0.9 },
+  effectiveConfidence: 0.9,
+};
+const implementationContent = JSON.stringify(
+  implementationEvidence(
+    routingEvidence.approvedPlanRef,
+    createArtifactRef(
+      "execution-routing",
+      "decisions/routing.md",
+      JSON.stringify(routingEvidence),
+    ),
+  ),
+);
+
+async function fixture(phase: "validating" | "reviewing", complete = true) {
   const root = await mkdtemp(join("/tmp", "pi-orchestrator-round-decision-"));
   roots.push(root);
   const artifactStore = new ArtifactStore(root);
   const stateStore = new StateStore(root);
   const taskRef = await artifactStore.writeText("task", "task.md", "task");
-  const planRef = await artifactStore.writeText("plan", "plan.md", "plan");
+  const planRef = await artifactStore.writeText("plan", "plan.md", plan);
   const routingRef = await artifactStore.writeText(
     "execution-routing",
     "routing.md",
-    JSON.stringify({
-      schemaVersion: 1,
-      approvedPlanRef: planRef,
-      planVersion: 1,
-      attempt: 1,
-      priorRetryCount: 0,
-      modelTier: { value: "STANDARD", confidence: 0.9 },
-      reasoningTier: { value: "HIGH", confidence: 0.9 },
-      effectiveConfidence: 0.9,
-    }),
+    JSON.stringify(routingEvidence),
   );
   const implementationRef = await artifactStore.writeText(
     "implementation",
     "implementation.md",
-    "implementation",
+    implementationContent,
   );
   const validationRef = await artifactStore.writeText(
     "validation",
     "validation.md",
-    JSON.stringify({
-      schemaVersion: 1,
-      implementationRevision: 1,
-      status: phase === "reviewing" ? "passed" : "failed",
-      checks: [
-        {
-          id: "tests",
-          status: phase === "reviewing" ? "passed" : "failed",
-        },
-      ],
-    }),
+    JSON.stringify(validation(phase === "reviewing" ? "passed" : "failed")),
   );
   const state: WorkflowState = {
     schemaVersion: 1,
@@ -86,12 +109,38 @@ async function fixture(phase: "validating" | "reviewing") {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
-  return {
-    artifactStore,
-    stateStore,
-    state: await stateStore.saveState(state, 0),
-    validationRef,
-  };
+  let persisted = await stateStore.saveState(state, 0);
+  if (phase === "reviewing" && complete) {
+    const reviewed = await new ReviewRunner({
+      artifactStore,
+      stateStore,
+      subagentExecutor: new FakeSubagentExecutor({
+        runParallel: {
+          type: "result",
+          value: (["correctness", "ponytail"] as const).map(
+            (source) =>
+              succeeded(
+                JSON.stringify({
+                  schemaVersion: 1,
+                  round: 1,
+                  source,
+                  findings: [],
+                }),
+              ).value,
+          ),
+        },
+      }),
+    }).execute({ state: persisted });
+    persisted = (
+      await new FindingEvaluationRunner({
+        artifactStore,
+        stateStore,
+        configuration,
+        jevDecisionClient: new FakeJevDecisionClient(),
+      }).execute({ state: reviewed.state })
+    ).state;
+  }
+  return { artifactStore, stateStore, state: persisted, validationRef };
 }
 
 function validation(status: ValidationResult["status"]): ValidationResult {
@@ -99,7 +148,15 @@ function validation(status: ValidationResult["status"]): ValidationResult {
     schemaVersion: 1,
     implementationRevision: 1,
     status,
-    checks: [{ id: "tests", status }],
+    checks: [{ id: "tests", status, exitCode: status === "passed" ? 0 : 1 }],
+    approvedPlanRef: createArtifactRef("plan", "plans/plan.md", plan),
+    planVersion: 1,
+    implementationRef: createArtifactRef(
+      "implementation",
+      "implementation/implementation.md",
+      implementationContent,
+    ),
+    validationContractDigest: calculateSha256(JSON.stringify(contract)),
   };
 }
 
@@ -110,6 +167,23 @@ afterEach(async () => {
 });
 
 describe("RoundDecisionRunner ORCH-016", () => {
+  test("rejects a passed round that skips reviewers and finding evaluation", async () => {
+    const current = await fixture("reviewing", false);
+    const jev = new FakeJevDecisionClient({
+      decideRound: {
+        type: "result",
+        value: { decision: "COMPLETE", confidence: 0.99 },
+      },
+    });
+    await expect(
+      new RoundDecisionRunner({
+        ...current,
+        jevDecisionClient: jev,
+        configuration,
+      }).execute({ state: current.state, validation: validation("passed") }),
+    ).rejects.toThrow(/review|finding/iu);
+    expect(jev.calls.decideRound).toHaveLength(0);
+  });
   test("persists the deterministic retry event before routing a failed validation", async () => {
     const current = await fixture("validating");
     const jev = new FakeJevDecisionClient({
@@ -155,11 +229,49 @@ describe("RoundDecisionRunner ORCH-016", () => {
       evidence: "evidence",
       blocking: true,
     };
+    const correctnessReviewRef = await current.artifactStore.writeText(
+      "correctness-review",
+      "with-finding.md",
+      JSON.stringify({
+        schemaVersion: 1,
+        round: 1,
+        source: "correctness",
+        authority: codingAuthority(current.state),
+        findings: [finding],
+      }),
+    );
+    current.state.coding.correctnessReviewRef = correctnessReviewRef;
+    const evidence = await assembleCodingEvidence(
+      current.artifactStore,
+      current.state,
+    );
+    const freshness = decisionFreshness(
+      current.state,
+      {
+        approvedPlanRef: current.state.planning.approvedPlanRef!,
+        implementationRevision: 1,
+        findings: [finding],
+        evidence,
+        reviewRefs: {
+          correctness: correctnessReviewRef,
+          ponytail: current.state.coding.ponytailReviewRef!,
+        },
+      },
+      [
+        current.state.planning.approvedPlanRef!,
+        current.state.coding.implementationRef!,
+        correctnessReviewRef,
+        current.state.coding.ponytailReviewRef!,
+      ],
+      configuration.decision,
+    );
     const evaluationRef = await current.artifactStore.writeText(
       "finding-evaluation",
       "evaluation.md",
       JSON.stringify({
         schemaVersion: 1,
+        freshness,
+        authority: codingAuthority(current.state),
         round: 1,
         planVersion: 1,
         implementationRevision: 1,
@@ -184,6 +296,7 @@ describe("RoundDecisionRunner ORCH-016", () => {
       "accepted.md",
       JSON.stringify({
         schemaVersion: 1,
+        authority: codingAuthority(current.state),
         round: 1,
         planVersion: 1,
         implementationRevision: 1,
@@ -196,6 +309,7 @@ describe("RoundDecisionRunner ORCH-016", () => {
         ...current.state,
         coding: {
           ...current.state.coding,
+          correctnessReviewRef,
           findingEvaluationRef: evaluationRef,
           acceptedFindingsRef: acceptedRef,
         },
@@ -224,6 +338,9 @@ describe("RoundDecisionRunner ORCH-016", () => {
       reason: "accepted-blocking-findings",
     });
     expect(result.event.type).toBe("REVIEW_RETRY_REQUIRED");
+    expect(jev.calls.decideRound[0]?.findingSummaries).toEqual([
+      { finding, sourceRef: correctnessReviewRef },
+    ]);
   });
 
   test("rejects a write-only artifact store at the authority boundary", async () => {
@@ -254,6 +371,7 @@ describe("RoundDecisionRunner ORCH-016", () => {
           decision: "ESCALATE",
           confidence: 0.99,
           escalationReason: "implementation-capability",
+          escalationReasonConfidence: 0.99,
         },
       },
     });
@@ -281,6 +399,7 @@ describe("RoundDecisionRunner ORCH-016", () => {
           decision: "ESCALATE",
           confidence: 0.99,
           escalationReason: "implementation-capability",
+          escalationReasonConfidence: 0.99,
         },
       },
     });
@@ -349,6 +468,7 @@ describe("RoundDecisionRunner ORCH-016", () => {
           decision: "ESCALATE",
           confidence: 0.99,
           escalationReason: "plan-conflict",
+          escalationReasonConfidence: 0.99,
         },
       },
     });

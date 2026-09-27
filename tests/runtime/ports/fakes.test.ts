@@ -105,12 +105,20 @@ const routingInput = {
   contextEvidence,
   priorRetryCount: 0,
 };
+import {
+  decisionEvidence,
+  roundEvidence,
+  reviewRefs,
+} from "../../fakes/coding-scenario.ts";
 const findingInput = {
+  evidence: decisionEvidence,
+  reviewRefs,
   approvedPlanRef: planRef,
   implementationRevision: 1,
   findings: [reviewFinding],
 };
 const roundInput = {
+  ...roundEvidence,
   approvedPlanRef: planRef,
   implementationRevision: 1,
   validation: {

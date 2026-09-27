@@ -246,12 +246,23 @@ export function decideRound(
   if (raw.decision === "ESCALATE") {
     if (
       raw.escalationReason === undefined ||
-      !escalationReasons.includes(raw.escalationReason)
+      !escalationReasons.includes(raw.escalationReason) ||
+      !isConfidence(raw.escalationReasonConfidence)
     ) {
       throw new Error("ESCALATE requires a valid escalation reason");
     }
-    return escalate(raw, raw.escalationReason);
   }
+
+  const findingReason = findingEscalationReason(input.findings);
+  if (findingReason) return escalate(raw, findingReason);
+  if (
+    applyConfidencePolicy(raw.confidence, policy) !== "auto" ||
+    (raw.decision === "ESCALATE" &&
+      applyConfidencePolicy(raw.escalationReasonConfidence, policy) !== "auto")
+  ) {
+    return escalate(raw, "uncertain");
+  }
+  if (raw.decision === "ESCALATE") return escalate(raw, raw.escalationReason);
 
   if (raw.decision === "RETRY") {
     return {
@@ -274,13 +285,6 @@ export function decideRound(
   if (blockingStatus === "invalid") return escalate(raw, "uncertain");
   if (blockingStatus === "blocking") {
     return retry(raw, "accepted-blocking-findings");
-  }
-
-  const findingReason = findingEscalationReason(input.findings);
-  if (findingReason) return escalate(raw, findingReason);
-
-  if (applyConfidencePolicy(raw.confidence, policy) !== "auto") {
-    return escalate(raw, "uncertain");
   }
 
   return {

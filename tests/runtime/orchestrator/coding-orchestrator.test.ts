@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { OrchestratorConfiguration } from "../../../src/core/configuration.ts";
+import { codingAuthority } from "../../../src/core/coding/authority.ts";
 import { parseAcceptedFindingsArtifact } from "../../../src/core/decisions/types.ts";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import {
@@ -154,6 +155,77 @@ afterEach(async () => {
 });
 
 describe("CodingOrchestrator ORCH-012", () => {
+  test.each([
+    "configuration",
+    "revision",
+    "retryCount",
+    "context",
+    "input",
+    "policy",
+    "schema",
+    "missingHeader",
+  ])(
+    "rejects stale routing after %s changes before another Worker starts",
+    async (change) => {
+      const started = await makeApproved();
+      const first = new CodingOrchestrator(
+        dependencies(started, {
+          subagentExecutor: new FakeSubagentExecutor({
+            run: failure("infrastructure", "unavailable"),
+          }),
+        }),
+      );
+      await expect(first.execute({ state: started.state })).rejects.toThrow();
+      const resumed = await advanceWorkflow(
+        await persistedState(started.runDirectory),
+        { type: "BLOCK_RESOLVED" },
+        started.stateStore,
+      );
+      const config = structuredClone(configuration);
+      if (change === "configuration")
+        config.decision.autoDecisionThreshold = 0.99;
+      if (change === "revision") resumed.coding.implementationRevision += 1;
+      if (change === "retryCount") resumed.counters.automatedFixRoundsUsed += 1;
+      if (change === "context")
+        resumed.taskRef = await started.artifactStore.writeText(
+          "task",
+          "changed.md",
+          "changed scope",
+        );
+      if (["policy", "schema", "missingHeader"].includes(change)) {
+        const value = JSON.parse(
+          await started.artifactStore.readText!(
+            resumed.coding.executionRoutingRef!,
+          ),
+        );
+        if (change === "policy")
+          value.freshness.policyDigest = "changed-policy";
+        if (change === "schema") value.freshness.decisionSchemaVersion = 2;
+        if (change === "missingHeader") delete value.freshness;
+        resumed.coding.executionRoutingRef =
+          await started.artifactStore.writeText(
+            "execution-routing",
+            "stale.md",
+            JSON.stringify(value),
+          );
+      }
+      const worker = new FakeSubagentExecutor({
+        run: succeeded("must not run"),
+      });
+      await expect(
+        new CodingOrchestrator(
+          dependencies(started, {
+            subagentExecutor: worker,
+            configuration: config,
+          }),
+        ).execute({
+          state: resumed,
+          ...(change === "input" ? { changeScope: "changed input" } : {}),
+        }),
+      ).rejects.toThrow(/stale|fresh|routing/iu);
+      expect(worker.calls.run).toHaveLength(0);
+    },
+  );
   test("routes from authoritative bounded evidence and launches Worker only after durable routing", async () => {
     const started = await makeApproved();
     const jev = new FakeJevDecisionClient({
@@ -515,6 +587,7 @@ describe("CodingOrchestrator ORCH-012", () => {
     );
     const acceptedFindings = {
       schemaVersion: 1,
+      authority: codingAuthority(initial.state),
       round: 1,
       planVersion: 1,
       implementationRevision: 1,
@@ -538,9 +611,23 @@ describe("CodingOrchestrator ORCH-012", () => {
       "accepted-findings-1.md",
       JSON.stringify(acceptedFindings),
     );
-    const fixing = await advanceWorkflow(
+    const validationRef = await started.artifactStore.writeText(
+      "validation",
+      "validation-1.md",
+      "passed",
+    );
+    const reviewing = await advanceWorkflow(
       initial.state,
-      { type: "RETRY_REQUIRED", decisionRef, findingsRef: acceptedFindingsRef },
+      { type: "VALIDATION_PASSED", resultRef: validationRef },
+      started.stateStore,
+    );
+    const fixing = await advanceWorkflow(
+      reviewing,
+      {
+        type: "REVIEW_RETRY_REQUIRED",
+        decisionRef,
+        findingsRef: acceptedFindingsRef,
+      },
       started.stateStore,
     );
     const fixWorker = new FakeSubagentExecutor({ run: succeeded("fixed") });

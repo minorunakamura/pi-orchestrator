@@ -42,7 +42,17 @@ import {
 } from "./advance-workflow.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 
+import { assertValidationAuthority } from "./coding-evidence.ts";
+import {
+  codingAuthority,
+  assertCodingAuthority,
+  isCodingAuthority,
+  type CodingAuthority,
+} from "../../core/coding/authority.ts";
+
 export interface ReviewArtifact {
+  /** Missing only on external reviewer output, never on persisted authority. */
+  authority?: CodingAuthority;
   schemaVersion: 1;
   round: number;
   source: ReviewFindingSource;
@@ -52,7 +62,14 @@ export interface ReviewArtifact {
 export function isReviewArtifact(value: unknown): value is ReviewArtifact {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ["schemaVersion", "round", "source", "findings"]) ||
+    !hasOnlyKeys(value, [
+      "schemaVersion",
+      "round",
+      "source",
+      "findings",
+      "authority",
+    ]) ||
+    (value.authority !== undefined && !isCodingAuthority(value.authority)) ||
     !isSchemaVersion(value.schemaVersion) ||
     typeof value.round !== "number" ||
     !Number.isSafeInteger(value.round) ||
@@ -390,6 +407,7 @@ export class ReviewRunner {
     let validation: ValidationResult;
     try {
       validation = await readValidation(store, validationRef);
+      await assertValidationAuthority(store, input.state, validation);
     } catch (error) {
       return failAndThrow(
         input.state,
@@ -455,9 +473,16 @@ export class ReviewRunner {
 
     let reviews: ReviewArtifact[];
     try {
-      reviews = fixedReviewerSet.map((reviewer, index) =>
-        parseOutput(results[index], reviewer, input.state.coding.reviewRound),
-      );
+      reviews = fixedReviewerSet.map((reviewer, index) => {
+        const review = parseOutput(
+          results[index],
+          reviewer,
+          input.state.coding.reviewRound,
+        );
+        if (review.authority !== undefined)
+          assertCodingAuthority(input.state, review.authority);
+        return { ...review, authority: codingAuthority(input.state) };
+      });
       assertUniqueFindingIds(reviews);
     } catch (error) {
       const result = results.find(({ status }) => status !== "succeeded");

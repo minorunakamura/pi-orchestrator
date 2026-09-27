@@ -39,13 +39,49 @@ export interface ExecutionRoutingInput {
   priorRetryCount: number;
 }
 
+export interface CodingDecisionEvidence {
+  plan: { ref: ArtifactRef<"plan">; content: string };
+  architecture: "included-in-plan" | "not-required";
+  implementation: { ref: ArtifactRef<"implementation">; content: string };
+  counters: {
+    automatedFixRoundsUsed: number;
+    strongerRetriesUsed: number;
+    humanCodeFeedbackRounds: number;
+  };
+  previousDecision: {
+    ref: ArtifactRef<"round-decision">;
+    content: string;
+  } | null;
+}
+
+export interface ReviewEvidenceRefs {
+  correctness: ArtifactRef<"correctness-review">;
+  ponytail: ArtifactRef<"ponytail-review">;
+}
+
+export interface SourcedFinding {
+  finding: ReviewFinding;
+  sourceRef: ArtifactRef<"correctness-review" | "ponytail-review">;
+}
+
 export interface FindingEvaluationInput {
+  evidence: CodingDecisionEvidence;
+  reviewRefs: ReviewEvidenceRefs;
   approvedPlanRef: ArtifactRef<"plan">;
   implementationRevision: number;
   findings: readonly ReviewFinding[];
 }
 
 export interface RoundDecisionInput {
+  evidence: CodingDecisionEvidence;
+  findingSummaries: readonly SourcedFinding[];
+  branch: "validation-failed" | "review-passed";
+  retryLimits: { maxAutomatedFixRounds: number; maxStrongerRetries: number };
+  currentProfile: {
+    modelTier: import("../../core/decisions/types.ts").ModelTier;
+    reasoningTier: import("../../core/decisions/types.ts").ReasoningTier;
+  };
+  inputRefs: readonly ArtifactRef[];
   approvedPlanRef: ArtifactRef<"plan">;
   implementationRevision: number;
   validation: ValidationResult;

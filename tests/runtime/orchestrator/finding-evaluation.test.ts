@@ -16,6 +16,8 @@ import { FakeJevDecisionClient, failure } from "../../fakes/index.ts";
 import type { WorkflowState } from "../../../src/core/workflow/state.ts";
 import type { WorkflowId } from "../../../src/types.ts";
 
+import { plan, implementationEvidence } from "../../fakes/coding-scenario.ts";
+import { createArtifactRef } from "../../../src/runtime/persistence/artifact-store.ts";
 const roots: string[] = [];
 const policy = {
   autoDecisionThreshold: 0.8,
@@ -64,11 +66,20 @@ async function fixture(findings: readonly ReviewFinding[] = []) {
   const artifactStore = new ArtifactStore(root);
   const stateStore = new StateStore(root);
   const taskRef = await artifactStore.writeText("task", "task.md", "task");
-  const planRef = await artifactStore.writeText("plan", "plan-v1.md", "plan");
+  const planRef = await artifactStore.writeText("plan", "plan-v1.md", plan);
   const implementationRef = await artifactStore.writeText(
     "implementation",
     "implementation-1.md",
-    "implementation",
+    JSON.stringify(
+      implementationEvidence(
+        planRef,
+        createArtifactRef(
+          "execution-routing",
+          "decisions/execution-routing-1.md",
+          "routing",
+        ),
+      ),
+    ),
   );
   const executionRoutingRef = await artifactStore.writeText(
     "execution-routing",
@@ -80,6 +91,13 @@ async function fixture(findings: readonly ReviewFinding[] = []) {
     "validation-1.md",
     "validation",
   );
+  const authority = {
+    workflowId: "workflow-finding-evaluation-1",
+    approvedPlanRef: planRef,
+    planVersion: 1,
+    implementationRef,
+    implementationRevision: 1,
+  };
   const correctnessReviewRef = await artifactStore.writeText(
     "correctness-review",
     "correctness-1.md",
@@ -87,6 +105,7 @@ async function fixture(findings: readonly ReviewFinding[] = []) {
       schemaVersion: 1,
       round: 1,
       source: "correctness",
+      authority,
       findings: findings.filter(
         (candidate) => candidate.source === "correctness",
       ),
@@ -99,6 +118,7 @@ async function fixture(findings: readonly ReviewFinding[] = []) {
       schemaVersion: 1,
       round: 1,
       source: "ponytail",
+      authority,
       findings: findings.filter((candidate) => candidate.source === "ponytail"),
     }),
   );
@@ -180,13 +200,26 @@ describe("FindingEvaluationRunner ORCH-015", () => {
       findings: [accepted, escalated, rejected],
     });
 
-    expect(jev.calls.evaluateFindings).toEqual([
+    expect(jev.calls.evaluateFindings).toMatchObject([
       {
         approvedPlanRef: current.planRef,
         implementationRevision: 1,
         findings: [accepted, escalated, rejected],
       },
     ]);
+    expect(jev.calls.evaluateFindings[0]?.reviewRefs).toEqual({
+      correctness: current.state.coding.correctnessReviewRef,
+      ponytail: current.state.coding.ponytailReviewRef,
+    });
+    expect(jev.calls.evaluateFindings[0]?.evidence.plan.content).toContain(
+      "Preserve the public API",
+    );
+    expect(jev.calls.evaluateFindings[0]?.evidence.plan.content).toContain(
+      "Keep decisions in core",
+    );
+    expect(
+      jev.calls.evaluateFindings[0]?.evidence.implementation.content,
+    ).toContain('"output":"implementation"');
     expect(result.state.coding.findingEvaluationRef?.kind).toBe(
       "finding-evaluation",
     );

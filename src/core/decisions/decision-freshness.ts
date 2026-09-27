@@ -9,12 +9,14 @@ import {
 
 export interface DecisionFreshness {
   schemaVersion: 1;
+  decisionSchemaVersion: 1;
+  policyVersion: string;
   planVersion: number;
   implementationRevision: number;
   inputRefs: readonly ArtifactRef[];
   inputDigest: string;
   policyDigest: string;
-  configurationDigest?: string;
+  configurationDigest: string;
 }
 
 export interface DecisionFreshnessExpectation
@@ -29,6 +31,8 @@ export interface DecisionFreshnessCheck {
 
 const freshnessKeys = [
   "schemaVersion",
+  "decisionSchemaVersion",
+  "policyVersion",
   "planVersion",
   "implementationRevision",
   "inputRefs",
@@ -61,14 +65,15 @@ function hasFreshnessFields(value: unknown): value is DecisionFreshness {
   if (!isRecord(value)) return false;
   return (
     isSchemaVersion(value.schemaVersion) &&
+    isSchemaVersion(value.decisionSchemaVersion) &&
+    isNonEmptyString(value.policyVersion) &&
     isNonNegativeInteger(value.planVersion) &&
     isNonNegativeInteger(value.implementationRevision) &&
     Array.isArray(value.inputRefs) &&
     value.inputRefs.every(isArtifactRef) &&
     isNonEmptyString(value.inputDigest) &&
     isNonEmptyString(value.policyDigest) &&
-    (value.configurationDigest === undefined ||
-      isNonEmptyString(value.configurationDigest))
+    isNonEmptyString(value.configurationDigest)
   );
 }
 
@@ -87,6 +92,13 @@ export function checkDecisionFreshness(
   expected: DecisionFreshnessExpectation,
 ): DecisionFreshnessCheck {
   const mismatches: string[] = [];
+  if (
+    !isRecord(decision) ||
+    decision.decisionSchemaVersion !== expected.decisionSchemaVersion
+  )
+    mismatches.push("decisionSchemaVersion");
+  if (!isRecord(decision) || decision.policyVersion !== expected.policyVersion)
+    mismatches.push("policyVersion");
   if (!isRecord(decision) || !isSchemaVersion(decision.schemaVersion)) {
     mismatches.push("schemaVersion");
   }

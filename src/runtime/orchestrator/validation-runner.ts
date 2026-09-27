@@ -13,6 +13,7 @@ import type { WorkflowState } from "../../core/workflow/state.ts";
 import {
   ArtifactImmutableError,
   createArtifactRef,
+  calculateSha256,
   validateArtifactRef,
 } from "../persistence/artifact-store.ts";
 import { artifactRelativePath } from "../persistence/artifact-paths.ts";
@@ -22,6 +23,8 @@ import {
   type WorkflowStateWriter,
 } from "./advance-workflow.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
+import { parseValidationContractBlock } from "../validation/contract-parser.ts";
+import { assertValidationChecks } from "./coding-evidence.ts";
 
 export interface ValidationRunnerDependencies {
   artifactStore: WorkflowArtifactWriter;
@@ -31,7 +34,8 @@ export interface ValidationRunnerDependencies {
 
 export interface ValidationRunInput {
   state: WorkflowState;
-  contract: ValidationContract;
+  /** Compatibility hint only; must equal the Approved Plan contract. */
+  contract?: ValidationContract;
 }
 
 export interface ValidationRunResult {
@@ -111,16 +115,38 @@ export class ValidationRunner {
       );
     }
 
-    const execution = await this.dependencies.validationExecutor.execute(
-      input.contract,
-    );
+    const planRef = input.state.planning.approvedPlanRef!;
+    const store = this.dependencies.artifactStore;
+    if (!store.readText)
+      throw new ValidationRunnerError(
+        "Validation requires readable Approved Plan authority",
+      );
+    const plan = await store.readText(planRef);
+    if (calculateSha256(plan) !== planRef.sha256)
+      throw new ValidationRunnerError("Approved Plan hash mismatch");
+    const contract = parseValidationContractBlock(plan);
+    if (
+      input.contract &&
+      JSON.stringify(input.contract) !== JSON.stringify(contract)
+    ) {
+      throw new ValidationRunnerError(
+        "Caller contract does not match Approved Plan Validation Contract",
+      );
+    }
+    const execution =
+      await this.dependencies.validationExecutor.execute(contract);
     if (!isValidationExecutionResult(execution)) {
       throw new ValidationRunnerError(
         "ValidationExecutor returned an invalid execution result",
       );
     }
+    assertValidationChecks(contract, execution);
     const validation: ValidationResult = {
       schemaVersion: 1,
+      approvedPlanRef: planRef,
+      planVersion: input.state.planning.approvedPlanVersion!,
+      implementationRef: input.state.coding.implementationRef!,
+      validationContractDigest: calculateSha256(JSON.stringify(contract)),
       implementationRevision: input.state.coding.implementationRevision,
       status: execution.status,
       checks: execution.checks,

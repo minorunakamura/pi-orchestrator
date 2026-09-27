@@ -187,6 +187,76 @@ afterEach(async () => {
 });
 
 describe("ORCH-017 Plannotator code gate", () => {
+  test("rejects identity-only State rather than rebinding a settled approval", async () => {
+    const current = await makeAwaitingCodeReview();
+    current.state.external["plannotator.code-review.r1"] = reviewId;
+    const gate = new FakePlannotatorGate({
+      getCodeReview: {
+        type: "result",
+        value: { ...handle(current), status: "approved" },
+      },
+    });
+    const orchestrator = new CodingOrchestrator(dependencies(current, gate));
+    await expect(
+      orchestrator.reconcileCodeReview({ state: current.state, reviewId }),
+    ).rejects.toThrow(/binding/iu);
+    await expect(
+      orchestrator.applyCodeReview({
+        state: current.state,
+        reviewId,
+        status: { ...handle(current), status: "approved" },
+      }),
+    ).rejects.toThrow(/binding/iu);
+    expect(gate.calls.getCodeReview).toHaveLength(0);
+  });
+
+  test("persists the exact binding and rejects replacement implementation at the same revision after restart", async () => {
+    const current = await makeAwaitingCodeReview();
+    const gate = new FakePlannotatorGate({
+      openCodeReview: { type: "result", value: handle(current) },
+    });
+    const opened = await new CodingOrchestrator(
+      dependencies(current, gate),
+    ).openCodeReview({ state: current.state });
+    expect(opened.state.coding.codeReview).toEqual(handle(current));
+    const changed = structuredClone(opened.state);
+    changed.coding.implementationRef = {
+      ...current.implementationRef,
+      sha256: "f".repeat(64),
+    };
+    await expect(
+      new CodingOrchestrator(
+        dependencies(current, new FakePlannotatorGate()),
+      ).reconcileCodeReview({ state: changed, reviewId }),
+    ).rejects.toThrow(/binding|implementation/iu);
+  });
+  test("identity persistence failure cannot return a usable Code Gate handle", async () => {
+    const current = await makeAwaitingCodeReview();
+    const gate = new FakePlannotatorGate({
+      openCodeReview: { type: "result", value: handle(current) },
+    });
+    const orchestrator = new CodingOrchestrator(
+      dependencies(current, gate, {
+        stateStore: {
+          saveState: async () => {
+            throw Error("identity persistence failed");
+          },
+        },
+      }),
+    );
+    await expect(
+      orchestrator.openCodeReview({ state: current.state }),
+    ).rejects.toThrow("identity persistence failed");
+    await expect(
+      orchestrator.applyCodeReview({
+        state: current.state,
+        reviewId,
+        status: { ...handle(current), status: "approved" },
+      }),
+    ).rejects.toThrow();
+    expect(gate.calls.getCodeReview).toHaveLength(0);
+  });
+
   test("persists the exact Human approval artifact before CODE_APPROVED", async () => {
     const started = await makeAwaitingCodeReview();
     const review = handle(started);
