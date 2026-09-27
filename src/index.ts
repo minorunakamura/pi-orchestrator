@@ -3,6 +3,7 @@ import {
   createWorkflowCommandRuntime,
   registerWorkflowCommands,
 } from "./commands/index.ts";
+import { loadProductionConfiguration } from "./runtime/configuration/load-configuration.ts";
 
 // Composition callers supply the host event bus, ArtifactStore reader, and
 // workflow-scoped options. Importing these adapters does not dispatch work.
@@ -23,6 +24,10 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
   // starts only from an explicit command invocation.
   registerWorkflowCommands(pi, {
     createRuntime: (context) =>
-      createWorkflowCommandRuntime(pi.events, context.cwd),
+      createWorkflowCommandRuntime(pi.events, context.cwd, {
+        configuration: loadProductionConfiguration(context.cwd, {
+          projectTrusted: context.isProjectTrusted(),
+        }),
+      }),
   });
 }

@@ -3,10 +3,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-  DEFAULT_RETRY_LIMITS,
-  type OrchestratorConfiguration,
-} from "../core/configuration.ts";
+import type { OrchestratorConfiguration } from "../core/configuration.ts";
 import type { WorkflowState } from "../core/workflow/state.ts";
 import { CommandValidationExecutor } from "../runtime/validation/command-executor.ts";
 import { JevIntegration } from "../runtime/integrations/jev.ts";
@@ -111,22 +108,6 @@ export function parseWorkflowId(args: string): string {
 
 function runsDirectory(cwd: string): string {
   return join(cwd, ...runsDirectoryName);
-}
-
-function commandRecoveryConfiguration(): OrchestratorConfiguration {
-  // No Product Runtime consent is configured here; Jev remains fail-closed.
-  return {
-    decision: { autoDecisionThreshold: 0.8, escalationThreshold: 0.5 },
-    executionProfiles: {
-      ECONOMY: { provider: "unconfigured", model: "unconfigured" },
-      STANDARD: { provider: "unconfigured", model: "unconfigured" },
-      STRONG: { provider: "unconfigured", model: "unconfigured" },
-    },
-    reasoningMapping: { LOW: "low", MEDIUM: "medium", HIGH: "high" },
-    retries: { ...DEFAULT_RETRY_LIMITS },
-    validation: { stopOnInfrastructureFailure: true },
-    jev: {},
-  };
 }
 
 function isMissingWorkflowError(error: unknown): boolean {
@@ -260,7 +241,7 @@ export function createWorkflowCommandRuntime(
 ): WorkflowCommandRuntime {
   const root = runsDirectory(cwd);
   const subagentExecutor = new SubagentsIntegration(events, { cwd });
-  const configuration = options.configuration ?? commandRecoveryConfiguration();
+  const configuration = options.configuration;
   return {
     start: (input) =>
       startWorkflow(
@@ -277,7 +258,7 @@ export function createWorkflowCommandRuntime(
         repositoryCwd: cwd,
         configuration,
         jevDecisionClient:
-          options.jevDecisionClient ?? new JevIntegration(configuration.jev),
+          options.jevDecisionClient ?? new JevIntegration(configuration?.jev),
         validationExecutor:
           options.validationExecutor ?? new CommandValidationExecutor(),
         plannotatorGate: new PlannotatorIntegration({

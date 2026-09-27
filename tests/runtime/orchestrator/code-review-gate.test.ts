@@ -307,6 +307,24 @@ describe("ORCH-017 Plannotator code gate", () => {
     expect(gate.calls.getCodeReview).toHaveLength(0);
   });
 
+  test("validates implementation authority before opening a new Code Gate", async () => {
+    const current = await makeAwaitingCodeReview();
+    await writeFile(
+      join(current.started.runDirectory, current.implementationRef.path),
+      "tampered implementation",
+    );
+    const gate = new FakePlannotatorGate({
+      openCodeReview: { type: "result", value: handle(current) },
+    });
+
+    await expect(
+      new CodingOrchestrator(dependencies(current, gate)).openCodeReview({
+        state: current.state,
+      }),
+    ).rejects.toThrow(/implementation|authority|hash/iu);
+    expect(gate.calls.openCodeReview).toHaveLength(0);
+  });
+
   test("persists the exact binding and rejects replacement implementation at the same revision after restart", async () => {
     const current = await makeAwaitingCodeReview();
     const gate = new FakePlannotatorGate({

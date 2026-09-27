@@ -14,7 +14,6 @@ import {
   parseFindingEvaluationArtifact,
   parseRoundDecisionArtifact,
   parseValidationResult,
-  type AcceptedFindingsArtifact,
   type FindingEvaluationArtifact,
   type RoundDecisionArtifact,
   type ValidationResult,
@@ -60,6 +59,9 @@ import {
 } from "./planning-orchestrator.ts";
 import {
   CodingOrchestrator,
+  CodeReviewAuthorityError,
+  CodeReviewOpenAttemptError,
+  StaleCodeReviewError,
   isImplementationArtifact,
   parseExecutionRoutingArtifact,
   parseImplementationArtifact,
@@ -122,6 +124,7 @@ export interface ReconciliationResult {
 export interface ResumeReconcilerDependencies {
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
+  loadState?: () => Promise<WorkflowState>;
   subagentExecutor: SubagentExecutor;
   jevDecisionClient?: JevDecisionClient;
   validationExecutor?: ValidationExecutor;
@@ -139,6 +142,16 @@ export class ReconciliationError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "ReconciliationError";
+  }
+}
+
+class IncompleteReviewArtifactsError extends ReconciliationError {
+  readonly evidenceRef?: ArtifactRef;
+
+  constructor(message: string, evidenceRef?: ArtifactRef) {
+    super(message);
+    this.name = "IncompleteReviewArtifactsError";
+    this.evidenceRef = evidenceRef;
   }
 }
 
@@ -205,6 +218,20 @@ function asReadable(
 
 function sameDispatch(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+const sensitiveIdentityValue =
+  /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[oprs]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/giu;
+
+function safeDiagnostic(value: string): string {
+  return value
+    .replace(/Bearer\s+[^\s,;]+/giu, "Bearer [redacted]")
+    .replace(
+      /((?:api[_-]?key|auth(?:orization)?|credential|password|secret|token)\s*[:=]\s*)([^\s,;]+)/giu,
+      "$1[redacted]",
+    )
+    .replace(sensitiveIdentityValue, "[redacted]")
+    .replace(/https?:\/\/[^/\s:@]+:[^@\s]+@/giu, "https://[redacted]@");
 }
 
 async function readAuthoritativeText(
@@ -499,7 +526,7 @@ export class WorkflowReconciler {
       outcome,
       sourceStateRevision: state.stateRevision,
       observedAt: this.now(),
-      ...(reason ? { reason } : {}),
+      ...(reason ? { reason: safeDiagnostic(reason) } : {}),
       evidenceRefs: [...evidenceRefs],
     };
     return persistJson(
@@ -865,6 +892,13 @@ export class WorkflowReconciler {
   ): Promise<ReconciliationResult> {
     const worker = await this.reconcileWorker(state);
     if (worker) return worker;
+    if (!this.deps.configuration || !this.deps.jevDecisionClient)
+      return this.block(
+        state,
+        "operator-attention-required",
+        undefined,
+        "Product Runtime configuration is unavailable",
+      );
     try {
       const result = await new CodingOrchestrator(
         this.codingDependencies(),
@@ -892,10 +926,7 @@ export class WorkflowReconciler {
   private async loadCurrentState(
     fallback: WorkflowState,
   ): Promise<WorkflowState> {
-    const candidate = this.deps.stateStore as WorkflowStateWriter & {
-      loadState?: () => Promise<WorkflowState>;
-    };
-    return candidate.loadState ? candidate.loadState() : fallback;
+    return this.deps.loadState ? this.deps.loadState() : fallback;
   }
 
   private async readAttempt(
@@ -1559,10 +1590,9 @@ export class WorkflowReconciler {
     }
   }
 
-  private async reviewRefsFromState(state: WorkflowState): Promise<{
-    state: WorkflowState;
-    refs?: [ArtifactRef<"correctness-review">, ArtifactRef<"ponytail-review">];
-  }> {
+  private async reviewRefsFromState(
+    state: WorkflowState,
+  ): Promise<WorkflowState> {
     let current = state;
     let correctness = current.coding.correctnessReviewRef;
     let ponytail = current.coding.ponytailReviewRef;
@@ -1578,10 +1608,11 @@ export class WorkflowReconciler {
         "ponytail-review",
         reviewFileName("ponytail-review", current.coding.reviewRound),
       );
-    if (!correctness && !ponytail) return { state: current };
+    if (!correctness && !ponytail) return current;
     if (!correctness || !ponytail)
-      throw new ReconciliationError(
+      throw new IncompleteReviewArtifactsError(
         "Automated review round is incomplete; clean completion cannot be inferred",
+        correctness ?? ponytail,
       );
     for (const [ref, source] of [
       [correctness, "correctness"],
@@ -1616,7 +1647,7 @@ export class WorkflowReconciler {
         this.deps.stateStore,
       );
     }
-    return { state: current, refs: [correctness, ponytail] };
+    return current;
   }
 
   private async reconcileReview(
@@ -1624,9 +1655,14 @@ export class WorkflowReconciler {
   ): Promise<ReconciliationResult> {
     let current: WorkflowState;
     try {
-      const result = await this.reviewRefsFromState(state);
-      current = result.state;
+      current = await this.reviewRefsFromState(state);
     } catch (error) {
+      if (error instanceof IncompleteReviewArtifactsError)
+        return this.fail(
+          state,
+          "authoritative-artifact-corrupt",
+          error.evidenceRef,
+        );
       if (
         error instanceof ReconciliationError &&
         !state.coding.correctnessReviewRef &&
@@ -1694,6 +1730,13 @@ export class WorkflowReconciler {
         throw error;
       }
     }
+    if (!this.deps.configuration || !this.deps.jevDecisionClient)
+      return this.block(
+        current,
+        "operator-attention-required",
+        undefined,
+        "Product Runtime configuration is unavailable",
+      );
     const evaluation = await this.evaluationFromState(current);
     if (evaluation === "incomplete")
       return this.block(
@@ -1712,9 +1755,9 @@ export class WorkflowReconciler {
       );
     } else if (evaluation) {
       return this.reconcileRound(
-        current,
-        await this.readCurrentValidation(evaluation.state),
-        evaluation.state.coding.validationRef!,
+        evaluation,
+        await this.readCurrentValidation(evaluation),
+        evaluation.coding.validationRef!,
       );
     }
     try {
@@ -1751,16 +1794,9 @@ export class WorkflowReconciler {
     };
   }
 
-  private async evaluationFromState(state: WorkflowState): Promise<
-    | "incomplete"
-    | "stale"
-    | {
-        state: WorkflowState;
-        evaluation: FindingEvaluationArtifact;
-        accepted: AcceptedFindingsArtifact;
-      }
-    | undefined
-  > {
+  private async evaluationFromState(
+    state: WorkflowState,
+  ): Promise<"incomplete" | "stale" | WorkflowState | undefined> {
     let evaluationRef = state.coding.findingEvaluationRef;
     let acceptedRef = state.coding.acceptedFindingsRef;
     if (!evaluationRef)
@@ -1888,7 +1924,7 @@ export class WorkflowReconciler {
           this.deps.stateStore,
         );
       }
-      return { state: current, evaluation, accepted };
+      return current;
     } catch {
       return "stale";
     }
@@ -2160,17 +2196,45 @@ export class WorkflowReconciler {
         undefined,
         "Code review identity exists without its exact implementation binding",
       );
-    if (!current)
-      return this.block(
-        state,
-        "human-gate-unavailable",
-        undefined,
-        "Possible orphan Code review; explicit external reconciliation is required",
-      );
     try {
-      const outcome = await new CodingOrchestrator(
-        this.codingDependencies(),
-      ).reconcileCodeReview({ state, reviewId: current.reviewId });
+      const orchestrator = new CodingOrchestrator(this.codingDependencies());
+      if (!current) {
+        const opened = await orchestrator.openCodeReview({ state });
+        if (opened.status === "opened")
+          return {
+            status: "pending",
+            state: opened.state,
+            phase: opened.state.phase,
+          };
+        if (opened.status === "blocked")
+          return {
+            status: "blocked",
+            state: opened.state,
+            phase: opened.state.phase,
+          };
+        if (
+          opened.outcome.status === "approved" ||
+          opened.outcome.status === "feedback"
+        )
+          return {
+            status: "advanced",
+            state: opened.state,
+            phase: opened.state.phase,
+          };
+        return {
+          status: opened.outcome.status === "blocked" ? "blocked" : "pending",
+          state: opened.state,
+          phase: opened.state.phase,
+          reason:
+            opened.outcome.status === "unknown"
+              ? opened.outcome.reason
+              : undefined,
+        };
+      }
+      const outcome = await orchestrator.reconcileCodeReview({
+        state,
+        reviewId: current.reviewId,
+      });
       if (outcome.status === "approved" || outcome.status === "feedback")
         return {
           status: "advanced",
@@ -2190,6 +2254,25 @@ export class WorkflowReconciler {
         reason: outcome.status === "unknown" ? outcome.reason : undefined,
       };
     } catch (error) {
+      if (error instanceof CodeReviewOpenAttemptError)
+        return this.block(
+          state,
+          "operator-attention-required",
+          undefined,
+          "A Code Review open attempt exists without a durable binding",
+        );
+      if (error instanceof CodeReviewAuthorityError)
+        return this.fail(
+          state,
+          "authoritative-artifact-corrupt",
+          current?.implementationRef ?? state.coding.implementationRef,
+        );
+      if (error instanceof StaleCodeReviewError)
+        return this.fail(
+          state,
+          "authority-inconsistent",
+          current?.implementationRef ?? state.coding.implementationRef,
+        );
       return this.block(
         state,
         "operator-attention-required",
@@ -2215,6 +2298,17 @@ export class WorkflowReconciler {
         phase: state.phase,
         reason: "authority-inconsistent",
       };
+    if (
+      blockedFrom === "awaiting-code-review" &&
+      state.block?.reason === "operator-attention-required"
+    ) {
+      return {
+        status: "blocked",
+        state,
+        phase: state.phase,
+        reason: state.block.reason,
+      };
+    }
     if (
       state.block?.reason === "agent-execution-ambiguous" &&
       (blockedFrom === "implementing" || blockedFrom === "fixing")

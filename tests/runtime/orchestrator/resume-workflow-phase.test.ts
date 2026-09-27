@@ -91,6 +91,32 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     },
   );
 
+  test("opens the normal first Code Gate entry exactly once, then approves it", async () => {
+    const workflow = await setup();
+    await reachReview(workflow);
+    await workflow.evaluate();
+    const round = await workflow.decide();
+    expect(round.state.phase).toBe("awaiting-code-review");
+
+    const opened = await workflow.resume();
+
+    expect(opened.status).toBe("pending");
+    expect(opened.state.phase).toBe("awaiting-code-review");
+    expect(
+      workflow.gates.filter((gate) => gate.action === "code-review"),
+    ).toHaveLength(1);
+
+    const approved = await workflow.resume();
+    expect(approved.status).toBe("advanced");
+    expect(approved.state.phase).toBe("completed");
+
+    const duplicate = await workflow.resume();
+    expect(duplicate.state.phase).toBe("completed");
+    expect(
+      workflow.gates.filter((gate) => gate.action === "code-review"),
+    ).toHaveLength(1);
+  });
+
   test("reconciles a persisted Code Gate identity without opening a second review", async () => {
     const workflow = await setup();
     await reachReview(workflow);
@@ -171,6 +197,33 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     expect(resumed.status).toBe("advanced");
     expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(workflow.roundCalls()).toBe(calls);
+  });
+
+  test("restores orphan finding-evaluation refs and continues to Round Decision in one resume", async () => {
+    const workflow = await setup();
+    await reachReview(workflow);
+    await workflow.evaluate();
+    const state = await workflow.load();
+    const withoutRefs = {
+      ...state,
+      coding: { ...state.coding },
+    };
+    delete withoutRefs.coding.findingEvaluationRef;
+    delete withoutRefs.coding.acceptedFindingsRef;
+    await workflow.stateStore.saveState(withoutRefs, state.stateRevision);
+    const roundCalls = workflow.jevRequests.filter(
+      (request) => "decision" in request.questions,
+    ).length;
+
+    const resumed = await workflow.resume();
+
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.state.coding.findingEvaluationRef).toBeDefined();
+    expect(resumed.state.coding.acceptedFindingsRef).toBeDefined();
+    expect(
+      workflow.jevRequests.filter((request) => "decision" in request.questions),
+    ).toHaveLength(roundCalls + 1);
   });
 
   test("re-evaluates stale routing during resume instead of reusing it", async () => {
@@ -352,6 +405,13 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     expect(resumed.status).toBe("blocked");
     expect(resumed.state.phase).toBe("blocked");
+    expect(
+      workflow.gates.filter((gate) => gate.action === "code-review"),
+    ).toHaveLength(before);
+    const blockedRevision = resumed.state.stateRevision;
+    const duplicate = await workflow.resume();
+    expect(duplicate.status).toBe("blocked");
+    expect(duplicate.state.stateRevision).toBe(blockedRevision);
     expect(
       workflow.gates.filter((gate) => gate.action === "code-review"),
     ).toHaveLength(before);

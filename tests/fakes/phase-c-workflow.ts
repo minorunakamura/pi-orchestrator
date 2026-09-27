@@ -142,7 +142,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   await mkdir(repositoryCwd);
   await promisify(execFile)("git", ["init", "--quiet", repositoryCwd]);
   const workflowId = "full-fake";
-  const runDirectory = join(root, "runs", workflowId);
+  const runsDirectory = join(repositoryCwd, ".pi", "orchestrator", "runs");
+  const runDirectory = join(runsDirectory, workflowId);
   const artifactStore = new ArtifactStore(runDirectory);
   const stateStore = new StateStore(runDirectory);
   const configuration = structuredClone(defaults);
@@ -536,7 +537,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         cwd: repositoryCwd,
       },
       {
-        runsDirectory: join(root, "runs"),
+        runsDirectory,
         workflowIdFactory: () => workflowId,
         artifactStore,
         stateStore: stateWriter,
@@ -554,6 +555,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     stateStore,
     configuration,
     subagentExecutor,
+    events,
+    gateEvents,
     jevDecisionClient,
     validationExecutor,
     clarificationPort,

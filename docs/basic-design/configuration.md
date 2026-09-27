@@ -78,6 +78,22 @@ export interface OrchestratorConfiguration {
 
 API key 等の secret はこの object を durable artifact として保存しない。
 
+### Product Runtime の source と precedence
+
+標準 package entry は Pi の既存 `SettingsManager` boundary を読み取り、次の
+`piOrchestrator` object を `loadConfiguration()` へ渡す。
+
+```text
+<agent-dir>/settings.json  →  piOrchestrator
+<project>/.pi/settings.json →  piOrchestrator
+```
+
+Project settings は Pi の既存 precedence（trusted project の project settings が
+user settings を deep override）に従う。Project が untrusted の場合は Pi の
+既存挙動どおり project settings を読み込まない。object が欠落または invalid
+の場合、Product Runtime は fail-closed し、secret は domain configuration に
+含めない。
+
 ---
 
 ## 4. Recommended v1 Defaults

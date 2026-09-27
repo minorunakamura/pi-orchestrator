@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
-import { realpath } from "node:fs/promises";
-import { relative, isAbsolute } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { join, relative, isAbsolute } from "node:path";
 import { JevAuthorization, jevBlockedReason } from "./jev-authorization.ts";
 import {
   captureRepository,
@@ -300,6 +300,32 @@ export interface CodingExecutionResult {
   executionProfile: ResolvedExecutionProfile;
 }
 
+export interface CodeReviewOpenIntent {
+  schemaVersion: 1;
+  recordType: "code-review-open-intent";
+  implementationRef: ArtifactRef<"implementation">;
+  implementationRevision: number;
+}
+
+export function isCodeReviewOpenIntent(
+  value: unknown,
+): value is CodeReviewOpenIntent {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "schemaVersion",
+      "recordType",
+      "implementationRef",
+      "implementationRevision",
+    ]) &&
+    value.schemaVersion === 1 &&
+    value.recordType === "code-review-open-intent" &&
+    isArtifactRef(value.implementationRef) &&
+    value.implementationRef.kind === "implementation" &&
+    isPositiveInteger(value.implementationRevision)
+  );
+}
+
 export interface CodeReviewArtifact {
   schemaVersion: 1;
   reviewId: string;
@@ -392,10 +418,24 @@ export class StaleCodeReviewError extends Error {
   }
 }
 
+export class CodeReviewOpenAttemptError extends StaleCodeReviewError {
+  constructor() {
+    super("A Code Review open attempt exists without a durable binding");
+    this.name = "CodeReviewOpenAttemptError";
+  }
+}
+
 export class CodingOrchestrationError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "CodingOrchestrationError";
+  }
+}
+
+export class CodeReviewAuthorityError extends CodingOrchestrationError {
+  constructor(options?: { cause?: unknown }) {
+    super("Code Review authority could not be validated", options);
+    this.name = "CodeReviewAuthorityError";
   }
 }
 
@@ -733,6 +773,10 @@ function codeReviewFileName(reviewId: PlannotatorReviewId): string {
   return `${encoded}.json`;
 }
 
+function codeReviewOpenIntentFileName(implementationRevision: number): string {
+  return `code-review-open-r${implementationRevision}.json`;
+}
+
 type CurrentCodeReviewBinding = Pick<
   CodeReviewHandle,
   "implementationRef" | "implementationRevision"
@@ -805,6 +849,87 @@ function codeReviewArtifact(
   };
 }
 
+async function hasCodeReviewOpenIntent(
+  store: ReadableArtifactStore,
+  implementationRevision: number,
+  implementationRef: ArtifactRef<"implementation">,
+): Promise<boolean> {
+  if (!store.rootDirectory) {
+    throw new StaleCodeReviewError(
+      "Code review requires durable open-attempt evidence",
+    );
+  }
+  const fileName = codeReviewOpenIntentFileName(implementationRevision);
+  const path = join(
+    store.rootDirectory,
+    artifactRelativePath("reconciliation", fileName),
+  );
+  let content: string;
+  try {
+    content = await readFile(path, "utf8");
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return false;
+    throw new StaleCodeReviewError(
+      "Unable to inspect durable Code Review open-attempt evidence",
+    );
+  }
+  const ref = createArtifactRef(
+    "reconciliation",
+    artifactRelativePath("reconciliation", fileName),
+    content,
+  );
+  try {
+    const persisted = parseArtifact(
+      content,
+      isCodeReviewOpenIntent,
+      "Code Review open-attempt evidence",
+    );
+    if (
+      persisted.implementationRevision !== implementationRevision ||
+      !sameArtifactRef(persisted.implementationRef, implementationRef)
+    )
+      throw new StaleCodeReviewError(
+        "Code Review open-attempt evidence does not match the current implementation",
+      );
+    if (!store.readText || (await store.readText(ref)) !== content)
+      throw new StaleCodeReviewError(
+        "Code Review open-attempt evidence cannot be verified",
+      );
+  } catch (error) {
+    if (error instanceof StaleCodeReviewError) throw error;
+    throw new StaleCodeReviewError(
+      "Invalid durable Code Review open-attempt evidence",
+    );
+  }
+  return true;
+}
+
+async function persistCodeReviewOpenIntent(
+  store: ReadableArtifactStore,
+  implementationRef: ArtifactRef<"implementation">,
+  implementationRevision: number,
+): Promise<ArtifactRef<"reconciliation">> {
+  const intent: CodeReviewOpenIntent = {
+    schemaVersion: 1,
+    recordType: "code-review-open-intent",
+    implementationRef,
+    implementationRevision,
+  };
+  return persistJson(
+    store,
+    "reconciliation",
+    codeReviewOpenIntentFileName(implementationRevision),
+    intent,
+    isCodeReviewOpenIntent,
+  );
+}
+
 async function persistCodeReview(
   store: ReadableArtifactStore,
   status: Extract<CodeReviewStatus, { status: "approved" | "feedback" }>,
@@ -852,6 +977,23 @@ export class CodingOrchestrator {
       });
       return { status: "reconciled", state: outcome.state, outcome };
     }
+
+    await this.validateCodeReviewAuthority(input.state);
+    const store = requireArtifactStore(this.dependencies.artifactStore);
+    if (
+      await hasCodeReviewOpenIntent(
+        store,
+        current.implementationRevision,
+        current.implementationRef,
+      )
+    ) {
+      throw new CodeReviewOpenAttemptError();
+    }
+    await persistCodeReviewOpenIntent(
+      store,
+      current.implementationRef,
+      current.implementationRevision,
+    );
 
     let handle: CodeReviewHandle;
     try {
@@ -986,37 +1128,42 @@ export class CodingOrchestrator {
   private async validateCodeReviewAuthority(
     state: WorkflowState,
   ): Promise<void> {
-    const store = requireArtifactStore(this.dependencies.artifactStore);
-    assertStateInvariants(state);
-    const planRef = state.planning.approvedPlanRef;
-    if (!planRef) throw new Error("Missing approved Plan authority");
-    parsePlan(await readAuthoritativeText(store, planRef, "approved plan"), {
-      architectureRequired: state.planning.architectureRequired !== false,
-    });
-    const current = currentCodeReviewBinding(state);
-    const implementation = parseImplementationArtifact(
-      JSON.parse(
-        await readAuthoritativeText(
-          store,
-          current.implementationRef,
-          "implementation",
+    try {
+      const store = requireArtifactStore(this.dependencies.artifactStore);
+      assertStateInvariants(state);
+      const planRef = state.planning.approvedPlanRef;
+      if (!planRef) throw new Error("Missing approved Plan authority");
+      parsePlan(await readAuthoritativeText(store, planRef, "approved plan"), {
+        architectureRequired: state.planning.architectureRequired !== false,
+      });
+      const current = currentCodeReviewBinding(state);
+      const implementation = parseImplementationArtifact(
+        JSON.parse(
+          await readAuthoritativeText(
+            store,
+            current.implementationRef,
+            "implementation",
+          ),
         ),
-      ),
-    );
-    if (
-      implementation.implementationRevision !==
-        current.implementationRevision ||
-      !sameArtifactRef(implementation.approvedPlanRef, planRef) ||
-      !sameArtifactRef(
-        implementation.executionRoutingRef,
-        state.coding.executionRoutingRef,
-      ) ||
-      calculateSha256(implementation.output) !==
-        implementation.repository.outputSha256
-    )
-      throw new Error(
-        "Implementation artifact binding or output hash mismatch",
       );
+      if (
+        implementation.implementationRevision !==
+          current.implementationRevision ||
+        !sameArtifactRef(implementation.approvedPlanRef, planRef) ||
+        !sameArtifactRef(
+          implementation.executionRoutingRef,
+          state.coding.executionRoutingRef,
+        ) ||
+        calculateSha256(implementation.output) !==
+          implementation.repository.outputSha256
+      )
+        throw new Error(
+          "Implementation artifact binding or output hash mismatch",
+        );
+    } catch (error) {
+      if (error instanceof CodeReviewAuthorityError) throw error;
+      throw new CodeReviewAuthorityError({ cause: error });
+    }
   }
 
   async execute(input: CodingEntryInput): Promise<CodingExecutionResult> {

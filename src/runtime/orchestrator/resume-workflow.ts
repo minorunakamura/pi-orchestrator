@@ -95,13 +95,16 @@ async function runResume(
     );
   }
   const fallbackReader = new StateStore(runDirectory);
-  const load: () => Promise<WorkflowState> = stateStore.loadState
-    ? stateStore.loadState.bind(stateStore)
-    : fallbackReader.loadState.bind(fallbackReader);
+  const load: () => Promise<WorkflowState> =
+    options.loadState ??
+    (stateStore.loadState
+      ? stateStore.loadState.bind(stateStore)
+      : fallbackReader.loadState.bind(fallbackReader));
   const deps: ResumeReconcilerDependencies = {
     ...options,
     artifactStore,
     stateStore: stateStore.withLock ? lockedWriter(stateStore) : stateStore,
+    loadState: load,
   };
   const execute = async (): Promise<ReconciliationResult> => {
     const state = await load();

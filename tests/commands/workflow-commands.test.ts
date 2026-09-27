@@ -30,10 +30,10 @@ type TestContext = ExtensionCommandContext & {
   notify: ReturnType<typeof vi.fn>;
 };
 
-function context(): TestContext {
+function context(cwd = "/tmp/project"): TestContext {
   const notify = vi.fn();
   return makeExtensionCommandContextFixture({
-    cwd: "/tmp/project",
+    cwd,
     ui: { notify },
     notify,
   });
@@ -269,6 +269,91 @@ describe("ORCH-019 workflow commands", () => {
         workflow.children.filter((child) => child.agent === "worker"),
       ).toHaveLength(workersBefore);
       expect((await workflow.load()).phase).toBe("blocked");
+    } finally {
+      await workflow.cleanup();
+    }
+  });
+
+  test("production command runtime continues through Worker, reviews, Code Gate, and duplicate resume", async () => {
+    const workflow = await phaseCWorkflow({
+      validations: ["failed", "passed"],
+      rounds: [{ action: "RETRY" }],
+    });
+    try {
+      const runtimeEvents: EventBus = {
+        on: (event, listener) => workflow.events.on(event, listener),
+        emit: (event, payload) =>
+          event === PLANNOTATOR_REQUEST_CHANNEL
+            ? workflow.gateEvents.emit(event, payload)
+            : workflow.events.emit(event, payload),
+      };
+      const runtime = createWorkflowCommandRuntime(
+        runtimeEvents,
+        workflow.repositoryCwd,
+        {
+          configuration: workflow.configuration,
+          jevDecisionClient: workflow.jevDecisionClient,
+          validationExecutor: workflow.validationExecutor,
+        },
+      );
+      const commands = registration(runtime);
+      const resume = async () => {
+        const ctx = context(workflow.repositoryCwd);
+        await commands.get("wf-resume")!.handler("full-fake", ctx);
+        return workflow.load();
+      };
+
+      expect((await workflow.load()).phase).toBe("planning");
+      expect((await resume()).phase).toBe("awaiting-plan-review");
+      expect((await resume()).phase).toBe("implementing");
+      expect((await resume()).phase).toBe("validating");
+      expect((await resume()).phase).toBe("validating");
+      expect((await resume()).phase).toBe("fixing");
+      expect((await resume()).phase).toBe("validating");
+      expect((await resume()).phase).toBe("reviewing");
+      expect((await resume()).phase).toBe("reviewing");
+      expect((await resume()).phase).toBe("reviewing");
+      expect((await resume()).phase).toBe("awaiting-code-review");
+      expect((await resume()).phase).toBe("awaiting-code-review");
+      expect((await resume()).phase).toBe("completed");
+      expect((await resume()).phase).toBe("completed");
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(2);
+      expect(
+        workflow.gates.filter((gate) => gate.action === "code-review"),
+      ).toHaveLength(1);
+      expect(
+        workflow.jevRequests.filter(
+          (request) => "decision" in request.questions,
+        ),
+      ).toHaveLength(2);
+    } finally {
+      await workflow.cleanup();
+    }
+  });
+
+  test("missing command runtime configuration blocks before Jev or Worker continuation", async () => {
+    const workflow = await phaseCWorkflow();
+    try {
+      await workflow.createPlan();
+      await workflow.settlePlan();
+      const runtime = createWorkflowCommandRuntime(
+        workflow.events,
+        workflow.repositoryCwd,
+      );
+      const commands = registration(runtime);
+      await commands
+        .get("wf-resume")!
+        .handler("full-fake", context(workflow.repositoryCwd));
+
+      const state = await workflow.load();
+      expect(state.phase).toBe("blocked");
+      expect(state.block?.reason).toBe("operator-attention-required");
+      expect(workflow.jevRequests).toHaveLength(0);
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(0);
     } finally {
       await workflow.cleanup();
     }

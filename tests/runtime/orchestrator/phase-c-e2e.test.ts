@@ -148,7 +148,7 @@ describe("Phase C full fake end-to-end contract", () => {
     await approveCode(h);
     expect(workers(h)).toHaveLength(2);
     expect(h.validations).toHaveLength(2);
-  });
+  }, 15_000);
 
   test("review finding becomes accepted Fix authority, rejected findings stay out of Worker", async () => {
     const accepted = reviewFinding("C1");

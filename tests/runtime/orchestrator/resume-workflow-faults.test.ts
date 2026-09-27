@@ -5,6 +5,7 @@ import {
 } from "../../fakes/phase-c-workflow.ts";
 import type { WorkflowArtifactWriter } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { resumeWorkflow } from "../../../src/runtime/orchestrator/resume-workflow.ts";
+import { RuntimePortError } from "../../../src/runtime/ports/errors.ts";
 
 const workflows: PhaseCWorkflow[] = [];
 async function setup() {
@@ -63,6 +64,59 @@ describe("ORCH-018 reconciliation fault boundaries", () => {
         subagentExecutor: workflow.subagentExecutor,
       }),
     ).rejects.toThrow(/identity/iu);
+  });
+
+  test("resume returns the State persisted by a failing review in the same locked invocation", async () => {
+    const workflow = await phaseCWorkflow({ silentReviewer: true });
+    workflows.push(workflow);
+    await approvedPlan(workflow);
+    await workflow.implement();
+    await workflow.validate();
+
+    const result = await workflow.resume({
+      stateStore: workflow.stateStore,
+      artifactStore: workflow.artifactStore,
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.state.phase).toBe("blocked");
+    expect(result.state.block?.reason).toBe("agent-execution-ambiguous");
+    expect((await workflow.load()).phase).toBe("blocked");
+  });
+
+  test("durable reconciliation diagnostics never persist external secrets", async () => {
+    const workflow = await phaseCWorkflow();
+    workflows.push(workflow);
+    await approvedPlan(workflow);
+    await workflow.implement();
+    await workflow.validate();
+    await workflow.review();
+    await workflow.evaluate();
+    await workflow.decide();
+    await workflow.openCode();
+    const secret = "Bearer super-secret-token";
+    const failingGate = {
+      openPlanReview: async () => {
+        throw new Error("unused");
+      },
+      getPlanReview: async () => {
+        throw new Error("unused");
+      },
+      openCodeReview: async () => {
+        throw new Error("unused");
+      },
+      getCodeReview: async () => {
+        throw new RuntimePortError("reconciliation", secret);
+      },
+    };
+
+    const result = await workflow.resume({ plannotatorGate: failingGate });
+
+    expect(result.status).toBe("failed");
+    const evidenceRef = result.state.failure?.evidenceRef;
+    if (!evidenceRef) throw Error("Missing reconciliation evidence");
+    const evidence = await workflow.artifactStore.readText(evidenceRef);
+    expect(evidence).not.toContain(secret);
   });
 
   test("Artifact persistence failure before BLOCK_RESOLVED leaves the durable block unchanged", async () => {
