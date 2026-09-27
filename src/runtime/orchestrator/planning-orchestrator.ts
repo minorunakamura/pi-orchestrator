@@ -10,6 +10,7 @@ import { isPlanReviewBinding } from "../../core/workflow/state.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import {
   ArtifactImmutableError,
+  calculateSha256,
   createArtifactRef,
 } from "../persistence/artifact-store.ts";
 import type {
@@ -371,7 +372,8 @@ export class PlanningOrchestrator {
   async requestClarification(
     input: ClarificationInput,
   ): Promise<ClarificationOutcome> {
-    if (input.state.phase !== "clarifying") {
+    const sourceState = structuredClone(input.state);
+    if (sourceState.phase !== "clarifying") {
       throw new Error("Clarification requires clarifying phase");
     }
     if (input.prompt.trim().length === 0) {
@@ -380,15 +382,19 @@ export class PlanningOrchestrator {
     const port = this.dependencies.clarificationPort;
     if (!port) throw new Error("ClarificationPort is required");
 
+    const request = {
+      prompt: input.prompt,
+      contextRefs: structuredClone(
+        input.contextRefs ?? planningContextRefs(sourceState),
+      ),
+    };
+    const sourceIdentity = JSON.stringify({ state: sourceState, request });
     let result: ClarificationResult;
     try {
-      result = await port.request({
-        prompt: input.prompt,
-        contextRefs: input.contextRefs ?? planningContextRefs(input.state),
-      });
+      result = await port.request(structuredClone(request));
     } catch {
       const state = await advanceWorkflow(
-        input.state,
+        sourceState,
         { type: "BLOCK", reason: "human-gate-unavailable" },
         this.dependencies.stateStore,
       );
@@ -398,7 +404,7 @@ export class PlanningOrchestrator {
     if (result.status === "declined") {
       return {
         status: "declined",
-        state: input.state,
+        state: sourceState,
         ...(result.reason ? { reason: result.reason } : {}),
       };
     }
@@ -406,13 +412,30 @@ export class PlanningOrchestrator {
       throw new Error("Clarification answer must not be empty");
     }
 
-    const clarificationRef = await this.dependencies.artifactStore.writeText(
+    const content = clarificationArtifact(result.answer, request.prompt);
+    const digest = calculateSha256(JSON.stringify({ sourceIdentity, content }));
+    const fileName = `clarification-r${sourceState.stateRevision}-${digest}.md`;
+    const clarificationRef = createArtifactRef(
       "clarification",
-      "clarification.md",
-      clarificationArtifact(result.answer, input.prompt),
+      `context/${fileName}`,
+      content,
     );
+    const store = this.dependencies.artifactStore;
+    try {
+      const written = await store.writeText("clarification", fileName, content);
+      if (!sameArtifactRef(written, clarificationRef)) {
+        throw new Error(
+          "Clarification writer returned a mismatched ArtifactRef",
+        );
+      }
+    } catch (error) {
+      // Only identical evidence for the same source State/request may survive a failed State save.
+      if (!(error instanceof ArtifactImmutableError) || !store.readText)
+        throw error;
+      if ((await store.readText(clarificationRef)) !== content) throw error;
+    }
     const state = await advanceWorkflow(
-      input.state,
+      sourceState,
       { type: "CLARIFICATION_COMPLETE", clarificationRef },
       this.dependencies.stateStore,
     );

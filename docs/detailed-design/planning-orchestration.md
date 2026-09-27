@@ -1,6 +1,6 @@
 # Planning Orchestration Detailed Design
 
-Version: 1.0
+Version: 1.1
 
 ## 1. Purpose
 
@@ -70,8 +70,14 @@ Jev must not generate Human-facing clarification questions.
 Result artifact:
 
 ```text
-context/clarification.md
+context/clarification-r<source-stateRevision>-<request-content-digest>.md
 ```
+
+Each answer is append-only. The identity digest binds the captured source Workflow State, exact question/context refs sent to the Human port, and the persisted answer content. A changed answer, request context, or source State produces a distinct Artifact; no extra clarification counter or directory scan is needed. Legacy `context/clarification.md` artifacts remain historical evidence and are never overwritten.
+
+A retry still obtains a Human response through `ClarificationPort`. After an Artifact write succeeds but State persistence fails, only an identical confirmed response for the same source State/request may reuse the existing file, after exact content/hash verification. File existence alone never supplies a Human answer or restores authority. A changed response is saved separately, and State revision checking rejects stale publication.
+
+`planning.context.clarificationRef` changes only through `CLARIFICATION_COMPLETE` and successful State persistence; Planner consumes that latest ref, while prior artifacts remain immutable. No subsequent stage may begin on a failed State save. This is normal-path persistence/idempotency, not the ORCH-018 resume controller or orphan reconciliation.
 
 After durable persistence, the Orchestrator emits:
 

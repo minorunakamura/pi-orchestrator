@@ -318,9 +318,7 @@ describe("Phase C full fake end-to-end contract", () => {
     },
   );
 
-  // Characterization of an unresolved production defect, NOT successful continuation evidence.
-  // Replace rejection with the third Plan/Gate continuation when clarification artifacts are versioned.
-  test("known production gap: second distinct Human clarification collides with immutable evidence", async () => {
+  test("two distinct Human clarifications retain immutable answers and continue through the third Plan and Code Gates", async () => {
     const h = await setup({
       rounds: [
         { action: "ESCALATE", reason: "human-decision" },
@@ -338,19 +336,42 @@ describe("Phase C full fake end-to-end contract", () => {
     const second = await reviewedRound(h);
     expect(second.state.phase).toBe("clarifying");
     expect(second.state.coding.implementationRevision).toBe(2);
-    await expect(h.clarify()).rejects.toMatchObject({
-      name: "ArtifactImmutableError",
-      message: "Immutable artifact already exists: context/clarification.md",
-    });
+    const clarified = await h.clarify();
+    expect(clarified.status).toBe("provided");
+    const secondRef = clarified.state.planning.context.clarificationRef!;
+    expect(secondRef).not.toEqual(firstRef);
+    expect(secondRef.path).not.toBe(firstRef.path);
+    expect(await h.artifactStore.readText(secondRef)).toContain(
+      "Approved scope choice 2",
+    );
     const state = await h.load();
-    expect(state.phase).toBe("clarifying");
-    expect(state.planning.context.clarificationRef).toEqual(firstRef);
+    expect(state.phase).toBe("planning");
+    expect(state.planning.context.clarificationRef).toEqual(secondRef);
     expect(await h.artifactStore.readText(firstRef)).toContain(
       "Approved scope choice 1",
     );
     expect(h.clarifications).toHaveLength(2);
-    expect(workers(h)).toHaveLength(2);
-    expect(codeGates(h)).toHaveLength(0);
+    const third = await approvePlan(h);
+    expect(third.state.planning.approvedPlanVersion).toBe(3);
+    const planner = h.children
+      .filter((child) => child.agent === "planner")
+      .at(-1)!;
+    expect(planner.task).toContain(JSON.stringify(secondRef));
+    expect(planner.task).not.toContain(JSON.stringify(firstRef));
+    await reviewedRound(h);
+    const completed = await approveCode(h);
+    expect(completed.state.coding.implementationRevision).toBe(3);
+    expect(completed.state.planning.context.clarificationRef).toEqual(
+      secondRef,
+    );
+    expect(workers(h)).toHaveLength(3);
+    expect(h.gates.filter((g) => g.action === "plan-review")).toHaveLength(3);
+    expect(await h.artifactStore.readText(firstRef)).toContain(
+      "Approved scope choice 1",
+    );
+    expect(await h.artifactStore.readText(secondRef)).toContain(
+      "Approved scope choice 2",
+    );
   }, 30000);
 
   test("Human Code Feedback returns to fixing without automated budget consumption", async () => {

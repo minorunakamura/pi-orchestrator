@@ -1,4 +1,4 @@
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -119,15 +119,231 @@ describe("PlanningOrchestrator ORCH-008", () => {
     });
     expect(result.status).toBe("provided");
     expect(result.state.phase).toBe("planning");
-    expect(result.state.planning.context.clarificationRef?.path).toBe(
-      "context/clarification.md",
+    const clarificationRef = result.state.planning.context.clarificationRef!;
+    expect(clarificationRef.path).toMatch(
+      /^context\/clarification-r\d+-[a-f0-9]{64}\.md$/u,
     );
+    expect(
+      (await new StateStore(started.runDirectory).loadState()).planning.context
+        .clarificationRef,
+    ).toEqual(clarificationRef);
     await expect(
-      readFile(
-        join(started.runDirectory, "context", "clarification.md"),
-        "utf8",
-      ),
+      readFile(join(started.runDirectory, clarificationRef.path), "utf8"),
     ).resolves.toContain("Use the existing parser boundary.");
+  });
+
+  test("restart after State save failure reuses only identical confirmed clarification evidence", async () => {
+    const executor = new FakeSubagentExecutor({
+      run: { type: "result", value: succeeded("facts") },
+    });
+    const started = await makeStarted(await makeRoot(), executor, {
+      requiresClarification: true,
+    });
+    const answer = {
+      status: "provided" as const,
+      answer: "First scope choice",
+    };
+    const prompt = "Choose the scope";
+    await expect(
+      new PlanningOrchestrator({
+        ...started,
+        subagentExecutor: executor,
+        clarificationPort: new FakeClarificationPort({
+          request: { type: "result", value: answer },
+        }),
+        stateStore: {
+          saveState: async () => {
+            throw Error("State save interrupted");
+          },
+        },
+      }).requestClarification({ state: started.state, prompt }),
+    ).rejects.toThrow("State save interrupted");
+    const files = (await readdir(join(started.runDirectory, "context"))).filter(
+      (name) => name.startsWith("clarification-"),
+    );
+    expect(files).toHaveLength(1);
+    const original = await readFile(
+      join(started.runDirectory, "context", files[0]!),
+      "utf8",
+    );
+    const store = new StateStore(started.runDirectory);
+    const before = await store.loadState();
+    expect(before.phase).toBe("clarifying");
+    expect(before.planning.context.clarificationRef).toBeUndefined();
+    const port = new FakeClarificationPort({
+      request: { type: "result", value: answer },
+    });
+    const result = await new PlanningOrchestrator({
+      ...started,
+      stateStore: store,
+      subagentExecutor: executor,
+      clarificationPort: port,
+    }).requestClarification({ state: before, prompt });
+    expect(port.calls).toHaveLength(1);
+    expect(result.state.planning.context.clarificationRef?.path).toBe(
+      `context/${files[0]}`,
+    );
+    expect(
+      (await readdir(join(started.runDirectory, "context"))).filter((name) =>
+        name.startsWith("clarification-"),
+      ),
+    ).toEqual(files);
+    expect(
+      await started.artifactStore.readText!(
+        result.state.planning.context.clarificationRef!,
+      ),
+    ).toBe(original);
+    expect((await store.loadState()).phase).toBe("planning");
+  });
+
+  test.each(["answer", "prompt", "context"])(
+    "restart with changed %s never rebinds an orphan clarification",
+    async (change) => {
+      const executor = new FakeSubagentExecutor({
+        run: { type: "result", value: succeeded("facts") },
+      });
+      const started = await makeStarted(await makeRoot(), executor, {
+        requiresClarification: true,
+      });
+      const port = (answer: string) =>
+        new FakeClarificationPort({
+          request: { type: "result", value: { status: "provided", answer } },
+        });
+      await expect(
+        new PlanningOrchestrator({
+          ...started,
+          subagentExecutor: executor,
+          clarificationPort: port("Choice one"),
+          stateStore: {
+            saveState: async () => {
+              throw Error("State save interrupted");
+            },
+          },
+        }).requestClarification({
+          state: started.state,
+          prompt: "Question one",
+        }),
+      ).rejects.toThrow("State save interrupted");
+      const first = (await readdir(join(started.runDirectory, "context"))).find(
+        (name) => name.startsWith("clarification-"),
+      )!;
+      const bytes = await readFile(
+        join(started.runDirectory, "context", first),
+        "utf8",
+      );
+      const store = new StateStore(started.runDirectory);
+      const result = await new PlanningOrchestrator({
+        ...started,
+        stateStore: store,
+        subagentExecutor: executor,
+        clarificationPort: port(
+          change === "answer" ? "Choice two" : "Choice one",
+        ),
+      }).requestClarification({
+        state: await store.loadState(),
+        prompt: change === "prompt" ? "Question two" : "Question one",
+        ...(change === "context" ? { contextRefs: [started.taskRef] } : {}),
+      });
+      expect(result.state.planning.context.clarificationRef?.path).not.toBe(
+        `context/${first}`,
+      );
+      expect(
+        (await readdir(join(started.runDirectory, "context"))).filter((name) =>
+          name.startsWith("clarification-"),
+        ),
+      ).toHaveLength(2);
+      expect(
+        await readFile(join(started.runDirectory, "context", first), "utf8"),
+      ).toBe(bytes);
+      expect(
+        (await store.loadState()).planning.context.clarificationRef,
+      ).toEqual(result.state.planning.context.clarificationRef);
+    },
+  );
+
+  test("stale clarification State cannot replace the latest confirmed ref", async () => {
+    const executor = new FakeSubagentExecutor({
+      run: { type: "result", value: succeeded("facts") },
+    });
+    const started = await makeStarted(await makeRoot(), executor, {
+      requiresClarification: true,
+    });
+    const make = (answer: string) =>
+      new PlanningOrchestrator({
+        ...started,
+        subagentExecutor: executor,
+        clarificationPort: new FakeClarificationPort({
+          request: { type: "result", value: { status: "provided", answer } },
+        }),
+      });
+    const first = await make("Latest confirmed choice").requestClarification({
+      state: started.state,
+      prompt: "Scope?",
+    });
+    await expect(
+      make("Stale different choice").requestClarification({
+        state: started.state,
+        prompt: "Scope?",
+      }),
+    ).rejects.toThrow(/revision/iu);
+    const current = await new StateStore(started.runDirectory).loadState();
+    expect(current).toEqual(first.state);
+    expect(
+      await started.artifactStore.readText!(
+        current.planning.context.clarificationRef!,
+      ),
+    ).toContain("Latest confirmed choice");
+  });
+
+  test("a corrupt immutable clarification collision cannot publish a State ref", async () => {
+    const executor = new FakeSubagentExecutor({
+      run: { type: "result", value: succeeded("facts") },
+    });
+    const started = await makeStarted(await makeRoot(), executor, {
+      requiresClarification: true,
+    });
+    const port = () =>
+      new FakeClarificationPort({
+        request: {
+          type: "result",
+          value: { status: "provided", answer: "Confirmed choice" },
+        },
+      });
+    await expect(
+      new PlanningOrchestrator({
+        ...started,
+        subagentExecutor: executor,
+        clarificationPort: port(),
+        stateStore: {
+          saveState: async () => {
+            throw Error("State save interrupted");
+          },
+        },
+      }).requestClarification({ state: started.state, prompt: "Scope?" }),
+    ).rejects.toThrow("State save interrupted");
+    const file = (await readdir(join(started.runDirectory, "context"))).find(
+      (name) => name.startsWith("clarification-"),
+    )!;
+    await writeFile(
+      join(started.runDirectory, "context", file),
+      "external corruption",
+    );
+    const store = new StateStore(started.runDirectory);
+    await expect(
+      new PlanningOrchestrator({
+        ...started,
+        stateStore: store,
+        subagentExecutor: executor,
+        clarificationPort: port(),
+      }).requestClarification({
+        state: await store.loadState(),
+        prompt: "Scope?",
+      }),
+    ).rejects.toThrow(/hash|immutable/iu);
+    expect(
+      (await store.loadState()).planning.context.clarificationRef,
+    ).toBeUndefined();
+    expect((await store.loadState()).phase).toBe("clarifying");
   });
 
   test("keeps a declined Human decision in clarifying without inventing a fact or plan", async () => {
