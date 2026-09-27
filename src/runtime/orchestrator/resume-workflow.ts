@@ -125,9 +125,14 @@ export function resumeWorkflow(
 ): Promise<ReconciliationResult>;
 export function resumeWorkflow(
   workflowIdOrInput: WorkflowId | string | ResumeWorkflowInput,
-  options: ResumeWorkflowOptions = {} as ResumeWorkflowOptions,
+  options?: ResumeWorkflowOptions,
 ): Promise<ReconciliationResult> {
   if (typeof workflowIdOrInput === "string") {
+    if (!options) {
+      throw new Error(
+        "Resume requires runDirectory, ArtifactStore.rootDirectory, or runsDirectory",
+      );
+    }
     return runResume(workflowIdOrInput, options);
   }
   const { workflowId, ...inputOptions } = workflowIdOrInput;

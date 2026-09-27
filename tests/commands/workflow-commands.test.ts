@@ -1,17 +1,18 @@
 import { describe, expect, test, vi } from "vitest";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { WorkflowState } from "../../src/core/workflow/state.ts";
 import {
   registerWorkflowCommands,
   type WorkflowCommandRuntime,
 } from "../../src/commands/index.ts";
-import type { StartedWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
-import type { WorkflowId } from "../../src/types.ts";
+import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
+import { workflowId } from "../../src/types.ts";
 import { StateNotFoundError } from "../../src/runtime/persistence/state-store.ts";
 import { phaseCWorkflow } from "../fakes/phase-c-workflow.ts";
+import {
+  makeExtensionApiFixture,
+  makeExtensionCommandContextFixture,
+} from "../fakes/typed-boundaries.ts";
 
 type TestContext = ExtensionCommandContext & {
   notify: ReturnType<typeof vi.fn>;
@@ -19,11 +20,11 @@ type TestContext = ExtensionCommandContext & {
 
 function context(): TestContext {
   const notify = vi.fn();
-  return {
+  return makeExtensionCommandContextFixture({
     cwd: "/tmp/project",
     ui: { notify },
     notify,
-  } as unknown as TestContext;
+  });
 }
 
 function registration(runtime: WorkflowCommandRuntime) {
@@ -31,7 +32,7 @@ function registration(runtime: WorkflowCommandRuntime) {
     string,
     { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
   >();
-  const api = {
+  const api = makeExtensionApiFixture({
     registerCommand(
       name: string,
       options: {
@@ -40,7 +41,7 @@ function registration(runtime: WorkflowCommandRuntime) {
     ) {
       commands.set(name, options);
     },
-  } as unknown as Pick<ExtensionAPI, "registerCommand">;
+  });
   registerWorkflowCommands(api, { runtime });
   return commands;
 }
@@ -48,7 +49,7 @@ function registration(runtime: WorkflowCommandRuntime) {
 function minimalState(): WorkflowState {
   return {
     schemaVersion: 1,
-    workflowId: "workflow-1" as WorkflowId,
+    workflowId: workflowId("workflow-1"),
     stateRevision: 0,
     playbook: "feature",
     phase: "planning",
@@ -75,18 +76,20 @@ function makeRuntime(
   overrides: Partial<WorkflowCommandRuntime> = {},
 ): WorkflowCommandRuntime {
   return {
-    start: vi.fn(
-      async () =>
-        ({
-          workflowId: "workflow-1" as WorkflowId,
-          runDirectory: "/tmp/project/.pi/orchestrator/runs/workflow-1",
-          taskRef: minimalState().taskRef,
-          state: minimalState(),
-          context: { state: minimalState() },
-          artifactStore: {},
-          stateStore: {},
-        }) as unknown as StartedWorkflow,
-    ),
+    start: vi.fn(async () => {
+      const state = minimalState();
+      return {
+        workflowId: workflowId("workflow-1"),
+        runDirectory: "/tmp/project/.pi/orchestrator/runs/workflow-1",
+        taskRef: state.taskRef,
+        state,
+        context: { state },
+        artifactStore: new ArtifactStore(
+          "/tmp/project/.pi/orchestrator/runs/workflow-1",
+        ),
+        stateStore: { saveState: async (next: WorkflowState) => next },
+      };
+    }),
     resume: vi.fn(async () => ({
       status: "pending" as const,
       state: minimalState(),
@@ -265,7 +268,9 @@ describe("ORCH-019 workflow commands", () => {
 
     await commands.get("wf-resume")!.handler("workflow-1", ctx);
 
-    const message = notifications(ctx).mock.calls[0]?.[0] as string;
+    const message: unknown = notifications(ctx).mock.calls[0]?.[0];
+    expect(typeof message).toBe("string");
+    if (typeof message !== "string") throw new Error("Missing notification");
     expect(message).toMatch(/error|failed/i);
     expect(message).not.toContain("super-secret-token");
   });

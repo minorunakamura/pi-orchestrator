@@ -9,7 +9,7 @@ import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { PlannotatorIntegration } from "../../../src/runtime/integrations/plannotator.ts";
 import type { PlanReviewStatus } from "../../../src/runtime/ports/index.ts";
-import type { PlannotatorReviewId, SubagentRunId } from "../../../src/types.ts";
+import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 import {
   FakePlannotatorGate,
   FakeSubagentExecutor,
@@ -17,7 +17,7 @@ import {
 } from "../../fakes/index.ts";
 
 const roots: string[] = [];
-const reviewId = "review-1" as PlannotatorReviewId;
+const reviewId = plannotatorReviewId("review-1");
 const plan = `# Plan
 ## Scope / Requirements
 Preserve authority boundaries.
@@ -35,7 +35,7 @@ function success(output: string) {
     type: "result" as const,
     value: {
       status: "succeeded" as const,
-      runId: "run-1" as SubagentRunId,
+      runId: subagentRunId("run-1"),
       output,
     },
   };
@@ -77,13 +77,18 @@ async function ready() {
 test("B1: a fresh real adapter cannot relabel stale approval without a persisted exact binding", async () => {
   const { dependencies, created, store } = await ready();
   let queries = 0;
-  const staleId = "old-plan-approval" as PlannotatorReviewId;
+  const staleId = plannotatorReviewId("old-plan-approval");
   const gate = new PlannotatorIntegration({
     planReader: { readText: async () => plan },
     events: {
       emit(_channel, payload) {
         queries++;
-        (payload as { respond(value: unknown): void }).respond({
+        const respond =
+          payload !== null && typeof payload === "object"
+            ? Reflect.get(payload, "respond")
+            : undefined;
+        if (typeof respond !== "function") throw Error("Invalid gate request");
+        respond({
           status: "handled",
           result: { status: "completed", reviewId: staleId, approved: true },
         });
@@ -134,7 +139,7 @@ test("B1: both entry points reject mismatched persisted id, version and artifact
   });
   const opened = await orchestrator.openPlanReview({ state: created.state });
   for (const binding of [
-    { ...handle, reviewId: "other" as PlannotatorReviewId },
+    { ...handle, reviewId: plannotatorReviewId("other") },
     { ...handle, planVersion: 2 },
     { ...handle, planRef: { ...handle.planRef, sha256: "b".repeat(64) } },
     { ...handle, planRef: { ...handle.planRef, path: "plans/other.md" } },
@@ -459,15 +464,22 @@ test("M1: review identity save failure rejects and cannot grant authority, even 
     planReader: { readText: async () => plan },
     events: {
       emit(_channel, payload) {
-        const request = payload as {
-          action: string;
-          respond(value: unknown): void;
-        };
-        if (request.action === "review-status") queries++;
-        request.respond({
+        const action =
+          payload !== null && typeof payload === "object"
+            ? Reflect.get(payload, "action")
+            : undefined;
+        const respond =
+          payload !== null && typeof payload === "object"
+            ? Reflect.get(payload, "respond")
+            : undefined;
+        if (typeof action !== "string" || typeof respond !== "function") {
+          throw Error("Invalid gate request");
+        }
+        if (action === "review-status") queries++;
+        respond({
           status: "handled",
           result:
-            request.action === "plan-review"
+            action === "plan-review"
               ? { status: "pending", reviewId }
               : { status: "completed", reviewId, approved: true },
         });

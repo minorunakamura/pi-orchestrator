@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import { isRecord } from "../../core/schema.ts";
-import type { SubagentRunId } from "../../types.ts";
+import { subagentRunId, type SubagentRunId } from "../../types.ts";
 import { RuntimePortError } from "../ports/errors.ts";
 import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
 import type {
@@ -100,8 +100,8 @@ export interface SubagentsIntegrationOptions {
 }
 
 function asRunId(value: string | undefined): SubagentRunId | undefined {
-  return typeof value === "string" && value.trim()
-    ? (value as SubagentRunId)
+  return typeof value === "string" && value.trim().length > 0
+    ? subagentRunId(value)
     : undefined;
 }
 

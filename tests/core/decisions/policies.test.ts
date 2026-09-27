@@ -34,6 +34,7 @@ import type {
   RoundDecisionRawDecision,
   ExecutionRoutingRawDecision,
 } from "../../../src/runtime/ports/jev-decision-client.ts";
+import { makeInvalidPayload } from "../../fakes/typed-boundaries.ts";
 
 const policy = {
   autoDecisionThreshold: 0.8,
@@ -307,7 +308,7 @@ describe("round decision", () => {
           rawDecision: roundRaw(),
           validation: validation(),
           findings: [
-            { ...accepted, blocking: undefined as unknown as boolean },
+            { ...accepted, blocking: makeInvalidPayload<boolean>(undefined) },
           ],
         },
         policy,
@@ -616,10 +617,10 @@ describe("decision freshness", () => {
     expect(() =>
       decideRound(
         {
-          rawDecision: {
+          rawDecision: makeInvalidPayload<RoundDecisionRawDecision>({
             decision: "ESCALATE",
             confidence: 0.95,
-          } as unknown as RoundDecisionRawDecision,
+          }),
           validation: validation(),
           findings: [],
         },

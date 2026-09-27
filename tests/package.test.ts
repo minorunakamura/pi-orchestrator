@@ -4,9 +4,9 @@ import { resolve, join } from "node:path";
 import {
   DefaultResourceLoader,
   SettingsManager,
-  type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { expect, test, vi } from "vitest";
+import { makeExtensionApiFixture } from "./fakes/typed-boundaries.ts";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -31,12 +31,12 @@ test("entry exports integrations and registers commands without activating runti
     expect(entry.JevIntegration).toBe(JevIntegration);
     expect(entry.PlannotatorIntegration).toBe(PlannotatorIntegration);
     const commands = new Map<string, unknown>();
-    const host = {
+    const host = makeExtensionApiFixture({
       events: { emit: vi.fn(), on: vi.fn(() => () => {}) },
       registerCommand: vi.fn((name: string, options: unknown) => {
         commands.set(name, options);
       }),
-    } as unknown as ExtensionAPI;
+    });
     entry.default(host);
     expect([...commands.keys()]).toEqual([
       "wf-new",

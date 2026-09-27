@@ -20,6 +20,7 @@ import {
   reviewRefs,
 } from "../../fakes/coding-scenario.ts";
 import { adapterAuthorization } from "../../fakes/jev-policy.ts";
+import { makeEvaluation } from "../../fakes/typed-boundaries.ts";
 class JevIntegration extends ProductJevIntegration {
   override routeExecution(
     input: Parameters<ProductJevIntegration["routeExecution"]>[0],
@@ -137,12 +138,12 @@ function choiceAnswer(
 }
 
 function evaluation(answers: Record<string, unknown>): Evaluation<Questions> {
-  return {
+  return makeEvaluation({
     answers,
     model: "jev-latest",
     usage: { input_tokens: 12, output_tokens: 0 },
     elapsedMs: 1,
-  } as Evaluation<Questions>;
+  });
 }
 
 class FakeJevClient implements JevClient {
@@ -163,7 +164,7 @@ class FakeJevClient implements JevClient {
     const outcome = this.outcomes[this.calls.length - 1];
     if (!outcome) throw new Error("No fake Jev outcome configured");
     if (outcome instanceof Error) throw outcome;
-    return outcome as Evaluation<Q>;
+    return makeEvaluation<Q>(outcome);
   }
 }
 

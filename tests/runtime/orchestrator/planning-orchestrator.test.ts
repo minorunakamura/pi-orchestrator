@@ -13,10 +13,10 @@ import {
 } from "../../../tests/fakes/index.ts";
 import type { PlaybookContext } from "../../../src/core/playbooks/policy.ts";
 import type { AgentRunResult } from "../../../src/runtime/ports/index.ts";
-import type { SubagentRunId } from "../../../src/types.ts";
+import { subagentRunId } from "../../../src/types.ts";
 
 const roots: string[] = [];
-const runId = "run-1" as unknown as SubagentRunId;
+const runId = subagentRunId("run-1");
 
 const validPlan = `# Plan
 

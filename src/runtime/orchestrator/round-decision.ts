@@ -366,19 +366,22 @@ function decisionArtifact(
       "Round Decision requires the current approved plan",
     );
   }
-  return {
-    schemaVersion: 1,
+  const base = {
+    schemaVersion: 1 as const,
     round: roundNumber(state),
     planVersion,
     implementationRevision: state.coding.implementationRevision,
     approvedPlanRef,
-    decision: decision.decision,
     confidence: decision.confidence,
     ...(decision.reason === undefined ? {} : { reason: decision.reason }),
-    ...(decision.decision === "ESCALATE"
-      ? { escalationReason: decision.escalationReason }
-      : {}),
-  } as RoundDecisionArtifact;
+  };
+  return decision.decision === "ESCALATE"
+    ? {
+        ...base,
+        decision: decision.decision,
+        escalationReason: decision.escalationReason,
+      }
+    : { ...base, decision: decision.decision };
 }
 
 function expectedRef(

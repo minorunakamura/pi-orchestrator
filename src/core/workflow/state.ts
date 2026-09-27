@@ -1,8 +1,10 @@
-import type {
-  PlaybookKind,
-  PlannotatorReviewId,
-  SubagentRunId,
-  WorkflowId,
+import {
+  isSubagentRunId,
+  isWorkflowId,
+  type PlaybookKind,
+  type PlannotatorReviewId,
+  type SubagentRunId,
+  type WorkflowId,
 } from "../../types.ts";
 import type { ArtifactRef } from "../artifacts/references.ts";
 import { isArtifactRef } from "../artifacts/references.ts";
@@ -460,7 +462,7 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
       "updatedAt",
     ]) &&
     isSchemaVersion(value.schemaVersion) &&
-    isNonEmptyString(value.workflowId) &&
+    isWorkflowId(value.workflowId) &&
     isNonNegativeInteger(value.stateRevision) &&
     optional(value, "projectRoot", isNonEmptyString) &&
     optional(value, "jevUsage", isJevUsage) &&
@@ -563,7 +565,7 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
       return (
         isEvent(value, ["type", "resultRef", "runId"]) &&
         isArtifactOfKind(value.resultRef, "implementation") &&
-        optional(value, "runId", isNonEmptyString)
+        optional(value, "runId", isSubagentRunId)
       );
     case "VALIDATION_PASSED":
       return (

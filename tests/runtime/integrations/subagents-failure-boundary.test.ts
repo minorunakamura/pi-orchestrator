@@ -5,6 +5,7 @@ import {
   type EventBus,
 } from "../../../src/runtime/integrations/subagents.ts";
 import type { AgentRunResult } from "../../../src/runtime/ports/subagent-executor.ts";
+import { requireRecord } from "../../fakes/typed-boundaries.ts";
 
 function bus(
   respond?: (
@@ -19,7 +20,7 @@ function bus(
   const events: EventBus = {
     emit: (event, payload) => {
       if (event === SUBAGENT_DELEGATION_REQUEST_EVENT)
-        respond?.(payload as Record<string, unknown>, deliver);
+        respond?.(requireRecord(payload), deliver);
     },
     on: (_event, listener) => {
       listeners.add(listener);

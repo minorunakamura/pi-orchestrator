@@ -14,6 +14,7 @@ import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { succeeded, decisionEvidence } from "../../fakes/coding-scenario.ts";
 import { jevPolicy } from "../../fakes/jev-policy.ts";
 import type { ExecutionRoutingInput } from "../../../src/runtime/ports/jev-decision-client.ts";
+import { makeEvaluation } from "../../fakes/typed-boundaries.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -81,12 +82,12 @@ function fakeClient(failFirst = false) {
           ];
         }),
       );
-      return {
+      return makeEvaluation({
         answers,
         model: "fake",
         usage: { input_tokens: 2, output_tokens: 1 },
         elapsedMs: 1,
-      } as never;
+      });
     },
   };
   return {

@@ -2,6 +2,7 @@ import {
   ask,
   choice,
   createTypeSafe,
+  type JsonValue,
   type Questions,
   type SystemOneRequest,
   type TypeSafe,
@@ -70,8 +71,38 @@ function normalizeFailure(
   );
 }
 
+function toJsonValue(value: unknown): JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(toJsonValue);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .map(([key, entry]) => [key, toJsonValue(entry)]),
+    );
+  }
+  throw new RuntimePortError(
+    "domain",
+    "Jev request state must be JSON-compatible",
+  );
+}
+
 function request(state: unknown, questions: Questions): JevRequest {
-  return { state: state as JevRequest["state"], questions };
+  const jsonState = toJsonValue(state);
+  if (typeof jsonState === "number" || typeof jsonState === "boolean") {
+    throw new RuntimePortError(
+      "domain",
+      "Jev request state must be text, an object, an array, or null",
+    );
+  }
+  return { state: jsonState, questions };
 }
 
 function findingState(finding: ReviewFinding): Record<string, unknown> {

@@ -21,10 +21,10 @@ import type {
   CodeReviewStatus,
   PlanReviewStatus,
 } from "../../../src/runtime/ports/index.ts";
-import type { SubagentRunId, PlannotatorReviewId } from "../../../src/types.ts";
+import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 
-const runId = "run-1" as unknown as SubagentRunId;
-const reviewId = "review-1" as unknown as PlannotatorReviewId;
+const runId = subagentRunId("run-1");
+const reviewId = plannotatorReviewId("review-1");
 const planRef: ArtifactRef<"plan"> = {
   kind: "plan",
   path: "plans/plan-v1.md",

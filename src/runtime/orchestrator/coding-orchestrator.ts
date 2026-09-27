@@ -41,7 +41,12 @@ import {
 } from "../../core/workflow/invariants.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import type { PlanSection } from "../../core/planning/policy.ts";
-import type { PlannotatorReviewId, SubagentRunId } from "../../types.ts";
+import {
+  isSubagentRunId,
+  plannotatorReviewId,
+  type PlannotatorReviewId,
+  type SubagentRunId,
+} from "../../types.ts";
 import {
   ArtifactImmutableError,
   calculateSha256,
@@ -189,7 +194,7 @@ export function isImplementationArtifact(
     ) ||
     !isResolvedExecutionProfile(value.executionProfile) ||
     !isRepositoryIdentity(value.repository) ||
-    !optionalString(value, "runId") ||
+    (value.runId !== undefined && !isSubagentRunId(value.runId)) ||
     !isNonEmptyString(value.output)
   ) {
     return false;
@@ -833,9 +838,10 @@ export class CodingOrchestrator {
     if (!gate) throw new Error("PlannotatorGate is required");
     const current = currentCodeReviewBinding(input.state);
     const identityKey = codeReviewIdentityKey(current.implementationRevision);
-    const existingId = input.state.external[identityKey] as
-      | PlannotatorReviewId
-      | undefined;
+    const persistedId = input.state.external[identityKey];
+    const existingId = persistedId
+      ? plannotatorReviewId(persistedId)
+      : undefined;
     if (existingId || input.state.coding.codeReview) {
       if (!existingId)
         throw new StaleCodeReviewError("Missing external Code Review binding");

@@ -50,7 +50,7 @@ interface JevRequestRecord {
   requestRef?: ArtifactRef<"jev-request">;
   usage?: { inputTokens: number; outputTokens: number };
 }
-function parseRecord(value: unknown): JevRequestRecord {
+function assertRecord(value: unknown): asserts value is JevRequestRecord {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, [
@@ -124,7 +124,11 @@ function parseRecord(value: unknown): JevRequestRecord {
       !isNonNegativeInteger(value.usage.outputTokens))
   )
     throw Error("Invalid Jev usage evidence");
-  return value as unknown as JevRequestRecord;
+}
+
+function parseRecord(value: unknown): JevRequestRecord {
+  assertRecord(value);
+  return value;
 }
 
 /** One runner call; all outbound attempts share the durable Workflow accounting. */

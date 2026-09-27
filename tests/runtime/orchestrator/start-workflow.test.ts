@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import type { WorkflowState } from "../../../src/core/workflow/state.ts";
+import { parseWorkflowState } from "../../../src/core/workflow/state.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import type { WorkflowStateWriter } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { failure, FakeSubagentExecutor } from "../../../tests/fakes/index.ts";
@@ -13,10 +13,10 @@ import type {
   SubagentExecutor,
 } from "../../../src/runtime/ports/index.ts";
 import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
-import type { SubagentRunId } from "../../../src/types.ts";
+import { subagentRunId, type SubagentRunId } from "../../../src/types.ts";
 
 const roots: string[] = [];
-const runId = "run-1" as unknown as SubagentRunId;
+const runId = subagentRunId("run-1");
 
 class RecordingExecutor implements SubagentExecutor {
   readonly calls: AgentRunRequest[] = [];
@@ -72,12 +72,14 @@ describe("startWorkflow", () => {
       "facts: the repository contains the requested task",
       async (request) => {
         expect(request.agent).toBe("workflow-scout");
-        const state = JSON.parse(
-          await readFile(
-            join(runsDirectory, "workflow-1", "state.json"),
-            "utf8",
+        const state = parseWorkflowState(
+          JSON.parse(
+            await readFile(
+              join(runsDirectory, "workflow-1", "state.json"),
+              "utf8",
+            ),
           ),
-        ) as WorkflowState;
+        );
         expect(state.phase).toBe("gathering-context");
         expect(state.planning.context.scoutRef).toBeUndefined();
       },
@@ -109,12 +111,14 @@ describe("startWorkflow", () => {
       if (request.agent === "pi-ketch.researcher") {
         expect(request.inputRefs).toHaveLength(2);
         expect(request.inputRefs?.[1]?.kind).toBe("scout");
-        const state = JSON.parse(
-          await readFile(
-            join(runsDirectory, "workflow-1", "state.json"),
-            "utf8",
+        const state = parseWorkflowState(
+          JSON.parse(
+            await readFile(
+              join(runsDirectory, "workflow-1", "state.json"),
+              "utf8",
+            ),
           ),
-        ) as WorkflowState;
+        );
         expect(state.planning.context.scoutRef?.kind).toBe("scout");
       }
     });
@@ -189,9 +193,11 @@ describe("startWorkflow", () => {
       ),
     ).rejects.toThrow(/simulated crash/);
 
-    const state = JSON.parse(
-      await readFile(join(runsDirectory, "workflow-1", "state.json"), "utf8"),
-    ) as WorkflowState;
+    const state = parseWorkflowState(
+      JSON.parse(
+        await readFile(join(runsDirectory, "workflow-1", "state.json"), "utf8"),
+      ),
+    );
     expect(state.planning.context.scoutRef).toBeUndefined();
     expect(
       await readFile(

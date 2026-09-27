@@ -5,7 +5,7 @@ import {
   projectWorkflowStatus,
   renderWorkflowStatus,
 } from "../../src/ui/workflow-status.ts";
-import type { WorkflowId } from "../../src/types.ts";
+import { plannotatorReviewId, workflowId } from "../../src/types.ts";
 
 function ref<K extends ArtifactRef["kind"]>(
   kind: K,
@@ -27,7 +27,7 @@ function state(phase: WorkflowState["phase"]): WorkflowState {
   );
   return {
     schemaVersion: 1,
-    workflowId: "workflow-1" as WorkflowId,
+    workflowId: workflowId("workflow-1"),
     stateRevision: 7,
     playbook: "feature",
     phase,
@@ -42,7 +42,7 @@ function state(phase: WorkflowState["phase"]): WorkflowState {
       ...(phase === "awaiting-plan-review"
         ? {
             planReview: {
-              reviewId: "plan-review-2" as never,
+              reviewId: plannotatorReviewId("plan-review-2"),
               planRef: plan,
               planVersion: 2,
             },
@@ -76,7 +76,7 @@ function state(phase: WorkflowState["phase"]): WorkflowState {
       ...(phase === "awaiting-code-review"
         ? {
             codeReview: {
-              reviewId: "code-review-3" as never,
+              reviewId: plannotatorReviewId("code-review-3"),
               implementationRef: implementation,
               implementationRevision: 3,
             },
@@ -157,7 +157,7 @@ describe("workflow status projection", () => {
     const source = state("blocked");
     source.block!.blockedFrom = "awaiting-code-review";
     source.coding.codeReview = {
-      reviewId: "code-review-3" as never,
+      reviewId: plannotatorReviewId("code-review-3"),
       implementationRef: source.coding.implementationRef!,
       implementationRevision: 3,
     };

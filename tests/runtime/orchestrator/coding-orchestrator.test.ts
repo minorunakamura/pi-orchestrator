@@ -28,13 +28,14 @@ import {
   FakeSubagentExecutor,
   failure,
 } from "../../fakes/index.ts";
-import type { SubagentRunId } from "../../../src/types.ts";
+import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 
 import { jevPolicy } from "../../fakes/jev-policy.ts";
+import { requireRecord } from "../../fakes/typed-boundaries.ts";
 function noopListener(_payload: unknown): void {}
 
 const roots: string[] = [];
-const runId = "worker-1" as unknown as SubagentRunId;
+const runId = subagentRunId("worker-1");
 const validPlan = `# Approved Plan
 
 ## Scope / Requirements
@@ -300,7 +301,7 @@ describe("CodingOrchestrator ORCH-012", () => {
           },
           emit: (_event, payload) => {
             emissions++;
-            sent = payload as Record<string, unknown>;
+            sent = requireRecord(payload);
             if (path === "malformed-result")
               listener({ ...sent, status: "completed", runId, result: null });
           },
@@ -955,7 +956,7 @@ describe("CodingOrchestrator ORCH-012", () => {
       { type: "REVIEW_COMPLETE", decisionRef },
       started.stateStore,
     );
-    const reviewId = "code-review-1" as never;
+    const reviewId = plannotatorReviewId("code-review-1");
     reviewing = await started.stateStore.saveState(
       {
         ...reviewing,

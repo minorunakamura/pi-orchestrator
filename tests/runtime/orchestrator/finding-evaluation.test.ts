@@ -14,7 +14,7 @@ import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.t
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { FakeJevDecisionClient, failure } from "../../fakes/index.ts";
 import type { WorkflowState } from "../../../src/core/workflow/state.ts";
-import type { WorkflowId } from "../../../src/types.ts";
+import { workflowId } from "../../../src/types.ts";
 
 import { plan, implementationEvidence } from "../../fakes/coding-scenario.ts";
 import { createArtifactRef } from "../../../src/runtime/persistence/artifact-store.ts";
@@ -126,7 +126,7 @@ async function fixture(findings: readonly ReviewFinding[] = []) {
   );
   const state: WorkflowState = {
     schemaVersion: 1,
-    workflowId: "workflow-finding-evaluation-1" as WorkflowId,
+    workflowId: workflowId("workflow-finding-evaluation-1"),
     projectRoot: process.cwd(),
     jevUsage: { attemptsReserved: 0 },
     stateRevision: 0,

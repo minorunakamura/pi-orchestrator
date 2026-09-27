@@ -16,7 +16,7 @@ import { ValidationRunner } from "../../../src/runtime/orchestrator/validation-r
 import { parseValidationResult } from "../../../src/core/decisions/types.ts";
 import { FakeValidationExecutor } from "../../fakes/index.ts";
 
-type TestWorkflowId = WorkflowState["workflowId"];
+import { workflowId } from "../../../src/types.ts";
 
 const roots: string[] = [];
 const contract: ValidationContract = {
@@ -44,7 +44,7 @@ function validatingState(implementationRevision: number): WorkflowState {
   const planRef = ref("plan", "plans/plan-v1.md", "plan");
   return {
     schemaVersion: 1,
-    workflowId: "workflow-1" as TestWorkflowId,
+    workflowId: workflowId("workflow-1"),
     stateRevision: 0,
     playbook: "feature",
     phase: "validating",

@@ -2037,8 +2037,13 @@ export class WorkflowReconciler {
       modelTier: routing.modelTier.value,
       reasoningTier: routing.reasoningTier.value,
     };
+    if (state.phase !== "validating" && state.phase !== "reviewing") {
+      throw new ReconciliationError(
+        "Round Decision can only be applied while validating or reviewing",
+      );
+    }
     const event = routeRoundDecision({
-      phase: state.phase as "validating" | "reviewing",
+      phase: state.phase,
       counters: state.counters,
       retries: this.deps.configuration!.retries,
       decision: artifact,

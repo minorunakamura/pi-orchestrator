@@ -10,7 +10,7 @@ import type {
   PlannotatorGate,
   JevDecisionClient,
 } from "../../src/runtime/ports/index.ts";
-import type { PlannotatorReviewId, SubagentRunId } from "../../src/types.ts";
+import { plannotatorReviewId, subagentRunId } from "../../src/types.ts";
 import { startWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
 import { PlanningOrchestrator } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { CodingOrchestrator } from "../../src/runtime/orchestrator/coding-orchestrator.ts";
@@ -126,14 +126,14 @@ export const succeeded = (output: string) => ({
   type: "result" as const,
   value: {
     status: "succeeded" as const,
-    runId: "fake-worker" as SubagentRunId,
+    runId: subagentRunId("fake-worker"),
     output,
   },
 });
 export const gate: PlannotatorGate = {
   openPlanReview: async (input) => ({
     ...input,
-    reviewId: `plan-${input.planVersion}` as PlannotatorReviewId,
+    reviewId: plannotatorReviewId(`plan-${input.planVersion}`),
   }),
   getPlanReview: async (_id, binding) => {
     if (!binding) throw Error("missing binding");
@@ -141,7 +141,7 @@ export const gate: PlannotatorGate = {
   },
   openCodeReview: async (input) => ({
     ...input,
-    reviewId: `code-${input.implementationRevision}` as PlannotatorReviewId,
+    reviewId: plannotatorReviewId(`code-${input.implementationRevision}`),
   }),
   getCodeReview: async (_id, binding) => {
     if (!binding) throw Error("missing binding");

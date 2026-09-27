@@ -6,7 +6,11 @@ import {
   type PlaybookContext,
 } from "../../core/playbooks/policy.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
-import type { PlaybookKind, WorkflowId } from "../../types.ts";
+import {
+  safeWorkflowId,
+  type PlaybookKind,
+  type WorkflowId,
+} from "../../types.ts";
 import { ArtifactStore } from "../persistence/artifact-store.ts";
 import { StateStore } from "../persistence/state-store.ts";
 import type { SubagentExecutor } from "../ports/index.ts";
@@ -50,15 +54,7 @@ function defaultNow(): string {
 function createWorkflowId(
   factory: StartWorkflowOptions["workflowIdFactory"],
 ): WorkflowId {
-  const value = factory ? factory() : randomUUID();
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
-  ) {
-    throw new Error("Workflow ID must be a safe non-empty path segment");
-  }
-  return value as WorkflowId;
+  return safeWorkflowId(factory ? factory() : randomUUID());
 }
 
 function assertStartInput(input: StartWorkflowInput): void {

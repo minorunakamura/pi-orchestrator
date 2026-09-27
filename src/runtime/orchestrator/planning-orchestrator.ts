@@ -29,7 +29,7 @@ import {
   type PlannotatorGate,
   type SubagentExecutor,
 } from "../ports/index.ts";
-import type { PlannotatorReviewId } from "../../types.ts";
+import { plannotatorReviewId, type PlannotatorReviewId } from "../../types.ts";
 import {
   advanceWorkflow,
   type WorkflowStateWriter,
@@ -537,9 +537,13 @@ export class PlanningOrchestrator {
         planReviewIdentityKey(input.state.planning.currentPlanVersion)
       ];
     if (existingId || input.state.planning.planReview) {
-      const reviewId =
-        input.state.planning.planReview?.reviewId ??
-        (existingId as PlannotatorReviewId);
+      let reviewId = input.state.planning.planReview?.reviewId;
+      if (!reviewId) {
+        if (!existingId) {
+          throw new Error("Missing external Plan Review binding");
+        }
+        reviewId = plannotatorReviewId(existingId);
+      }
       requirePlanReviewBinding(input.state, reviewId);
       const outcome = await this.reconcilePlanReview({
         state: input.state,

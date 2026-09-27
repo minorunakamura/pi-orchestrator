@@ -15,7 +15,10 @@ import type {
   ValidationCheckStatus,
 } from "../../src/core/decisions/types.ts";
 import type { WorkflowArtifactWriter } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
-import type { ArtifactRef } from "../../src/core/artifacts/references.ts";
+import {
+  isArtifactRef,
+  type ArtifactRef,
+} from "../../src/core/artifacts/references.ts";
 import type { WorkflowState } from "../../src/core/workflow/state.ts";
 import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../src/runtime/persistence/state-store.ts";
@@ -50,6 +53,7 @@ import type {
 } from "../../src/runtime/ports/index.ts";
 import { configuration as defaults, plan } from "./coding-scenario.ts";
 import { jevPolicy } from "./jev-policy.ts";
+import { makeEvaluation } from "./typed-boundaries.ts";
 
 export interface RoundReply {
   action: RoundAction;
@@ -94,6 +98,40 @@ interface GateRequest {
   action: string;
   payload: Record<string, unknown>;
   respond: (response: unknown) => void;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isChildRequest(value: unknown): value is ChildRequest {
+  return (
+    isRecord(value) &&
+    [
+      value.requestId,
+      value.ownerRunId,
+      value.nodeId,
+      value.agent,
+      value.task,
+      value.context,
+      value.cwd,
+    ].every((entry) => typeof entry === "string")
+  );
+}
+
+function isGateRequest(value: unknown): value is GateRequest {
+  return (
+    isRecord(value) &&
+    typeof value.action === "string" &&
+    isRecord(value.payload) &&
+    typeof value.respond === "function"
+  );
+}
+
+function isImplementationRef(
+  value: unknown,
+): value is ArtifactRef<"implementation"> {
+  return isArtifactRef(value) && value.kind === "implementation";
 }
 
 /** Explicit public stage calls only: no transition engine, recovery loop, or synthetic authority. */
@@ -246,7 +284,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     },
     emit: (event, payload) => {
       if (event !== SUBAGENT_DELEGATION_REQUEST_EVENT) return;
-      const request = payload as ChildRequest;
+      if (!isChildRequest(payload)) throw Error("Invalid child request");
+      const request = payload;
       children.push(request);
       childCounts.set(request.agent, (childCounts.get(request.agent) ?? 0) + 1);
       void handleChild(request).catch(() => deliver(request, "failed"));
@@ -271,7 +310,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     codeGates = 0;
   const gateEvents = {
     emit: async (_channel: string, payload: unknown) => {
-      const request = payload as GateRequest;
+      if (!isGateRequest(payload)) throw Error("Invalid gate request");
+      const request = payload;
       gates.push({ action: request.action, payload: request.payload });
       if (request.action === "review-status") {
         const result = externalReviews.get(String(request.payload.reviewId));
@@ -317,8 +357,11 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         ...(code && script.staleCodeStatus
           ? {
               implementationRef: {
-                ...(request.payload
-                  .implementationRef as ArtifactRef<"implementation">),
+                ...(() => {
+                  if (!isImplementationRef(request.payload.implementationRef))
+                    throw Error("Invalid implementation reference");
+                  return request.payload.implementationRef;
+                })(),
                 sha256: "f".repeat(64),
               },
               implementationRevision: Number(
@@ -356,7 +399,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       await artifactStore.readText(durable.jevUsage.latestRequestRef);
       if (jevRequests.length <= (script.jevFailures ?? 0))
         throw new TypeSafeIntegrationError("connection", "scripted Jev outage");
-      const state = request.state as Record<string, unknown>;
+      if (!isRecord(request.state)) throw Error("Invalid Jev request state");
+      const state = request.state;
       const kind =
         "modelTier" in request.questions
           ? "routing"
@@ -374,9 +418,14 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         kind === "round"
           ? (script.rounds?.[roundCalls++] ?? { action: "COMPLETE" })
           : undefined;
+      const findingState = state.finding;
+      const findingId =
+        isRecord(findingState) && typeof findingState.id === "string"
+          ? findingState.id
+          : undefined;
       const finding =
-        kind === "finding"
-          ? script.findings?.[String((state.finding as { id: string }).id)]
+        kind === "finding" && findingId
+          ? script.findings?.[findingId]
           : undefined;
       const values: Record<string, string> = {
         modelTier: route?.model ?? "STANDARD",
@@ -419,12 +468,12 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
           ];
         }),
       );
-      return {
+      return makeEvaluation<Q>({
         answers,
         model: "fake-jev",
         usage: { input_tokens: 10, output_tokens: 1 },
         elapsedMs: 1,
-      } as Evaluation<Q>;
+      });
     },
   };
   const jevDecisionClient = new JevIntegration({

@@ -21,11 +21,11 @@ import {
   FakeSubagentExecutor,
   failure,
 } from "../../fakes/index.ts";
-import type { PlannotatorReviewId, SubagentRunId } from "../../../src/types.ts";
+import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 
 const roots: string[] = [];
-const reviewId = "code-review-1" as PlannotatorReviewId;
-const runId = "worker-1" as SubagentRunId;
+const reviewId = plannotatorReviewId("code-review-1");
+const runId = subagentRunId("worker-1");
 const plan = `# Approved Plan
 
 ## Scope / Requirements

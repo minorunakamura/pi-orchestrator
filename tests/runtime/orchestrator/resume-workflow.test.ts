@@ -17,7 +17,12 @@ import type {
   AgentRunStatus,
   SubagentExecutor,
 } from "../../../src/runtime/ports/index.ts";
-import type { SubagentRunId } from "../../../src/types.ts";
+import {
+  plannotatorReviewId,
+  subagentRunId,
+  workflowId,
+  type SubagentRunId,
+} from "../../../src/types.ts";
 import {
   FakePlannotatorGate,
   FakeSubagentExecutor,
@@ -25,7 +30,7 @@ import {
 } from "../../fakes/index.ts";
 
 const roots: string[] = [];
-const runId = "worker-1" as SubagentRunId;
+const runId = subagentRunId("worker-1");
 const plan = `# Plan\n\n## Scope / Requirements\nKeep the change small.\n\n## Architecture / Design\nUse the existing runtime boundary.\n\n## Implementation Plan\n1. Test.\n\n## Validation Contract\n\`\`\`orchestrator-validation\n{"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}\n\`\`\``;
 
 function succeeded(output: string): AgentRunResult {
@@ -65,7 +70,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       openPlanReview: {
         type: "result",
         value: {
-          reviewId: "plan-1" as never,
+          reviewId: plannotatorReviewId("plan-1"),
           planRef: createArtifactRef("plan", "plans/plan-v1.md", plan),
           planVersion: 1,
         },
@@ -218,7 +223,7 @@ describe("ORCH-018 resumeWorkflow", () => {
     );
     const state: WorkflowState = {
       schemaVersion: 1,
-      workflowId: "workflow-1" as never,
+      workflowId: workflowId("workflow-1"),
       stateRevision: 0,
       playbook: "feature",
       phase: "implementing",
@@ -326,7 +331,7 @@ describe("ORCH-018 resumeWorkflow", () => {
     );
     const state: WorkflowState = {
       schemaVersion: 1,
-      workflowId: "workflow-1" as never,
+      workflowId: workflowId("workflow-1"),
       stateRevision: 0,
       playbook: "feature",
       phase: "implementing",

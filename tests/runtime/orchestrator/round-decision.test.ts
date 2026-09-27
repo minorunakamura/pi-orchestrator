@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { OrchestratorConfiguration } from "../../../src/core/configuration.ts";
 import type { ValidationResult } from "../../../src/core/decisions/types.ts";
+import { workflowId } from "../../../src/types.ts";
 import type { WorkflowState } from "../../../src/core/workflow/state.ts";
 import {
   assembleCodingEvidence,
@@ -86,7 +87,7 @@ async function fixture(phase: "validating" | "reviewing", complete = true) {
   );
   const state: WorkflowState = {
     schemaVersion: 1,
-    workflowId: "round-decision-workflow" as WorkflowState["workflowId"],
+    workflowId: workflowId("round-decision-workflow"),
     projectRoot: process.cwd(),
     jevUsage: { attemptsReserved: 0 },
     stateRevision: 0,

@@ -3,7 +3,7 @@ import {
   isArtifactRef,
   type ArtifactRef,
 } from "../../core/artifacts/references.ts";
-import type { PlannotatorReviewId } from "../../types.ts";
+import { plannotatorReviewId, type PlannotatorReviewId } from "../../types.ts";
 import { isPlanReviewBinding } from "../../core/workflow/state.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import {
@@ -69,10 +69,6 @@ function isNonEmptyString(value: unknown): value is string {
 
 function asErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function asReviewId(value: string): PlannotatorReviewId {
-  return value as PlannotatorReviewId;
 }
 
 function assertReviewStartResult(
@@ -282,7 +278,7 @@ export class PlannotatorIntegration implements PlannotatorGate {
       "plan-review",
     );
     const handle: PlanReviewHandle = {
-      reviewId: asReviewId(result.reviewId),
+      reviewId: plannotatorReviewId(result.reviewId),
       planRef: input.planRef,
       planVersion: input.planVersion,
     };
@@ -356,7 +352,7 @@ export class PlannotatorIntegration implements PlannotatorGate {
       "code-review",
     );
     const handle: CodeReviewHandle = {
-      reviewId: asReviewId(result.reviewId),
+      reviewId: plannotatorReviewId(result.reviewId),
       implementationRef: input.implementationRef,
       implementationRevision: input.implementationRevision,
     };

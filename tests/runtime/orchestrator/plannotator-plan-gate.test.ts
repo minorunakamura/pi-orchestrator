@@ -16,11 +16,11 @@ import {
   FakeSubagentExecutor,
   failure,
 } from "../../../tests/fakes/index.ts";
-import type { PlannotatorReviewId, SubagentRunId } from "../../../src/types.ts";
+import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 
 const roots: string[] = [];
-const runId = "run-1" as unknown as SubagentRunId;
-const reviewId = "plan-review-1" as unknown as PlannotatorReviewId;
+const runId = subagentRunId("run-1");
+const reviewId = plannotatorReviewId("plan-review-1");
 const validPlan = `# Plan
 
 ## Scope / Requirements
@@ -184,7 +184,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
         {
           type: "result",
           value: {
-            reviewId: "plan-review-2" as unknown as PlannotatorReviewId,
+            reviewId: plannotatorReviewId("plan-review-2"),
             planRef: secondRef,
             planVersion: 2,
           },

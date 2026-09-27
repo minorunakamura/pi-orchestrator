@@ -7,6 +7,7 @@ import {
   type EventBus,
 } from "../../../src/runtime/integrations/subagents.ts";
 import type { AgentRunRequest } from "../../../src/runtime/ports/index.ts";
+import { requireRecord } from "../../fakes/typed-boundaries.ts";
 
 const planRef: ArtifactRef<"plan"> = {
   kind: "plan",
@@ -31,11 +32,7 @@ class FakeEventBus implements EventBus {
   emit(event: string, payload: unknown): void {
     this.emitted.push({ event, payload });
     if (event !== SUBAGENT_DELEGATION_REQUEST_EVENT) return;
-    const request = payload as {
-      requestId: string;
-      ownerRunId: string;
-      nodeId: string;
-    };
+    const request = requireRecord(payload);
     for (const listener of this.listeners.get(
       SUBAGENT_DELEGATION_RESPONSE_EVENT,
     ) ?? []) {
@@ -77,7 +74,7 @@ describe("SubagentsIntegration", () => {
 
     const requests = events.emitted
       .filter(({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT)
-      .map(({ payload }) => payload as Record<string, unknown>);
+      .map(({ payload }) => requireRecord(payload));
     expect(requests.map((request) => request.agent)).toEqual([
       "reviewer",
       "ponytail-reviewer",
@@ -103,9 +100,11 @@ describe("SubagentsIntegration", () => {
       new SubagentsIntegration(events, { ownerRunId: "workflow-1" }).run(input),
     ).resolves.toMatchObject({ status: "succeeded", output: "implemented" });
 
-    const request = events.emitted.find(
-      ({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT,
-    )?.payload as Record<string, unknown>;
+    const request = requireRecord(
+      events.emitted.find(
+        ({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT,
+      )?.payload,
+    );
     expect(request).toMatchObject({
       agent: "worker",
       cwd: "/repo",

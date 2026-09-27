@@ -11,7 +11,7 @@ import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.t
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { FakeSubagentExecutor, failure } from "../../fakes/index.ts";
 import type { AgentRunResult } from "../../../src/runtime/ports/index.ts";
-import type { SubagentRunId, WorkflowId } from "../../../src/types.ts";
+import { subagentRunId, workflowId } from "../../../src/types.ts";
 import {
   ReviewRunner,
   parseReviewArtifact,
@@ -21,7 +21,7 @@ import {
 import { plan, contract } from "../../fakes/coding-scenario.ts";
 import { calculateSha256 } from "../../../src/runtime/persistence/artifact-store.ts";
 const roots: string[] = [];
-const runId = "review-run-1" as unknown as SubagentRunId;
+const runId = subagentRunId("review-run-1");
 
 const validation: ValidationResult = {
   schemaVersion: 1,
@@ -92,7 +92,7 @@ async function fixture() {
   );
   const state: WorkflowState = {
     schemaVersion: 1,
-    workflowId: "workflow-review-1" as WorkflowId,
+    workflowId: workflowId("workflow-review-1"),
     stateRevision: 0,
     playbook: "feature",
     phase: "reviewing",

@@ -6,7 +6,8 @@ import {
   type PlannotatorEventBus,
 } from "../../../src/runtime/integrations/plannotator.ts";
 import type { PlannotatorResponse } from "../../../src/runtime/integrations/plannotator.ts";
-import type { PlannotatorReviewId } from "../../../src/types.ts";
+import { plannotatorReviewId } from "../../../src/types.ts";
+import { makeInvalidPayload } from "../../fakes/typed-boundaries.ts";
 
 const planRef: ArtifactRef<"plan"> = {
   kind: "plan",
@@ -14,7 +15,7 @@ const planRef: ArtifactRef<"plan"> = {
   schemaVersion: 1,
   sha256: "a".repeat(64),
 };
-const reviewId = "review-1" as unknown as PlannotatorReviewId;
+const reviewId = plannotatorReviewId("review-1");
 const implementationRef: ArtifactRef<"implementation"> = {
   kind: "implementation",
   path: "implementation/implementation-1.json",
@@ -29,13 +30,26 @@ type Request = {
   respond(response: PlannotatorResponse): void;
 };
 
+function isRequest(value: unknown): value is Request {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  return (
+    typeof Reflect.get(value, "requestId") === "string" &&
+    typeof Reflect.get(value, "action") === "string" &&
+    typeof Reflect.get(value, "payload") === "object" &&
+    typeof Reflect.get(value, "respond") === "function"
+  );
+}
+
 class FakeEventBus implements PlannotatorEventBus {
   readonly calls: Array<{ channel: string; request: Request }> = [];
 
   constructor(private readonly responses: PlannotatorResponse[]) {}
 
   emit(channel: string, payload: unknown): void {
-    const request = payload as Request;
+    if (!isRequest(payload)) throw new Error("Invalid Plannotator request");
+    const request = payload;
     this.calls.push({ channel, request });
     request.respond(this.responses.shift() ?? { status: "unavailable" });
   }
@@ -140,11 +154,14 @@ describe("PlannotatorIntegration", () => {
     expect((await gate.getPlanReview(reviewId)).status).toBe("unknown");
     // Simulate the former current-plan-only runtime payload crossing the boundary.
     await expect(
-      gate.getPlanReview(reviewId, { planRef, planVersion: 2 } as never),
+      gate.getPlanReview(
+        reviewId,
+        makeInvalidPayload({ planRef, planVersion: 2 }),
+      ),
     ).rejects.toMatchObject({ kind: "reconciliation" });
     await expect(
       gate.getPlanReview(reviewId, {
-        reviewId: "different" as PlannotatorReviewId,
+        reviewId: plannotatorReviewId("different"),
         planRef,
         planVersion: 1,
       }),

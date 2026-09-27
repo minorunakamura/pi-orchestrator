@@ -10,7 +10,7 @@ import {
   isOneOf,
 } from "../../core/schema.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
-import type { SubagentRunId } from "../../types.ts";
+import { isSubagentRunId, type SubagentRunId } from "../../types.ts";
 import type { AgentDispatch } from "../ports/subagent-executor.ts";
 import type { RepositorySnapshot } from "./repository-evidence.ts";
 
@@ -75,7 +75,9 @@ function snapshot(value: unknown): value is RepositorySnapshot {
     )
   );
 }
-export function parseWorkerAttempt(value: unknown): WorkerAttemptEvidence {
+function assertWorkerAttempt(
+  value: unknown,
+): asserts value is WorkerAttemptEvidence {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, [
@@ -148,7 +150,7 @@ export function parseWorkerAttempt(value: unknown): WorkerAttemptEvidence {
       value.launchStatus,
     ) ||
     (value.launchStatus === "not-started" && value.runId !== undefined) ||
-    (value.runId !== undefined && !isNonEmptyString(value.runId)) ||
+    (value.runId !== undefined && !isSubagentRunId(value.runId)) ||
     (value.resultDigest !== undefined && !digest(value.resultDigest))
   )
     throw Error("Invalid Worker attempt evidence");
@@ -191,5 +193,9 @@ export function parseWorkerAttempt(value: unknown): WorkerAttemptEvidence {
       value.after.status !== "observed")
   )
     throw Error("Worker success requires exact result and repository evidence");
-  return value as unknown as WorkerAttemptEvidence;
+}
+
+export function parseWorkerAttempt(value: unknown): WorkerAttemptEvidence {
+  assertWorkerAttempt(value);
+  return value;
 }
