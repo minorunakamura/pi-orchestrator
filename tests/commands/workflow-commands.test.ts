@@ -1,7 +1,12 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { isRecord } from "../../src/core/schema.ts";
 import type { WorkflowState } from "../../src/core/workflow/state.ts";
 import {
+  createWorkflowCommandRuntime,
   registerWorkflowCommands,
   type WorkflowCommandRuntime,
 } from "../../src/commands/index.ts";
@@ -9,6 +14,13 @@ import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
 import { workflowId } from "../../src/types.ts";
 import { StateNotFoundError } from "../../src/runtime/persistence/state-store.ts";
 import { phaseCWorkflow } from "../fakes/phase-c-workflow.ts";
+import { plan } from "../fakes/coding-scenario.ts";
+import {
+  SUBAGENT_DELEGATION_REQUEST_EVENT,
+  SUBAGENT_DELEGATION_RESPONSE_EVENT,
+  type EventBus,
+} from "../../src/runtime/integrations/subagents.ts";
+import { PLANNOTATOR_REQUEST_CHANNEL } from "../../src/runtime/integrations/plannotator.ts";
 import {
   makeExtensionApiFixture,
   makeExtensionCommandContextFixture,
@@ -102,6 +114,11 @@ function makeRuntime(
 
 function notifications(ctx: TestContext): ReturnType<typeof vi.fn> {
   return ctx.notify;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw Error("Expected an event record");
+  return value;
 }
 
 describe("ORCH-019 workflow commands", () => {
@@ -254,6 +271,85 @@ describe("ORCH-019 workflow commands", () => {
       expect((await workflow.load()).phase).toBe("blocked");
     } finally {
       await workflow.cleanup();
+    }
+  });
+
+  test("default resume runtime reconciles a persisted Plan Gate instead of blocking for missing adapters", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "pi-orchestrator-command-runtime-"),
+    );
+    const listeners = new Set<(value: unknown) => void>();
+    const events: EventBus = {
+      on: (event, listener) => {
+        if (event !== SUBAGENT_DELEGATION_RESPONSE_EVENT)
+          throw Error("Unexpected event");
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      emit: (event, payload) => {
+        if (event === PLANNOTATOR_REQUEST_CHANNEL) {
+          const request = asRecord(payload);
+          if (
+            typeof request.action !== "string" ||
+            typeof request.respond !== "function"
+          ) {
+            throw Error("Invalid Plannotator request");
+          }
+          if (request.action === "plan-review") {
+            request.respond({
+              status: "handled",
+              result: { status: "pending", reviewId: "command-plan-1" },
+            });
+          } else if (request.action === "review-status") {
+            request.respond({
+              status: "handled",
+              result: { status: "pending", reviewId: "command-plan-1" },
+            });
+          }
+          return;
+        }
+        if (event !== SUBAGENT_DELEGATION_REQUEST_EVENT) return;
+        const request = asRecord(payload);
+        if (
+          typeof request.requestId !== "string" ||
+          typeof request.ownerRunId !== "string" ||
+          typeof request.nodeId !== "string" ||
+          typeof request.agent !== "string"
+        ) {
+          throw Error("Invalid Subagent request");
+        }
+        const requestId = request.requestId;
+        const ownerRunId = request.ownerRunId;
+        const nodeId = request.nodeId;
+        const agent = request.agent;
+        queueMicrotask(() => {
+          for (const listener of listeners) {
+            listener({
+              requestId,
+              ownerRunId,
+              nodeId,
+              status: "completed",
+              runId: `${agent}-1`,
+              result: {
+                kind: "text",
+                text: agent === "planner" ? plan : "facts",
+              },
+            });
+          }
+        });
+      },
+    };
+    try {
+      const runtime = createWorkflowCommandRuntime(events, root);
+      const started = await runtime.start({ task: "smoke", playbook: "chore" });
+      const planned = await runtime.resume(started.workflowId);
+      expect(planned.state.phase).toBe("awaiting-plan-review");
+
+      const reconciled = await runtime.resume(started.workflowId);
+      expect(reconciled.status).toBe("pending");
+      expect(reconciled.state.phase).toBe("awaiting-plan-review");
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

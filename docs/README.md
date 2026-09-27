@@ -63,7 +63,23 @@ Basic Design v1.0 を変更せず、実装可能な型・契約・runtime behavi
 
 実装計画は Basic Design と Detailed Design を参照する実行計画であり、設計上の正本を置き換えない。
 
-## 6. Change Rule
+## 6. Runtime Commands
+
+Pi package を読み込むと、workflow の開始・reconciliation・read-only status を次の commands で利用できる。
+
+```text
+/wf-new <task>
+/wf-feature <task>
+/wf-bugfix <task>
+/wf-hotfix <task>
+/wf-chore <task>
+/wf-resume <workflow-id>
+/wf-status <workflow-id>
+```
+
+`/wf-resume` は phase の直接変更ではなく ORCH-018 reconciliation を通り、`/wf-status` は State と authoritative refs の projection のみを表示する。
+
+## 7. Change Rule
 
 実装中に Basic Design と矛盾する変更が必要になった場合は、実装側だけで吸収しない。変更理由と影響範囲を明示し、Basic Design の変更として扱う。
 

@@ -744,6 +744,7 @@ export class WorkflowReconciler {
       artifactStore: store,
       stateStore: this.deps.stateStore,
       subagentExecutor: this.deps.subagentExecutor,
+      plannotatorGate: this.deps.plannotatorGate,
     });
     try {
       const result = await orchestrator.createPlan({

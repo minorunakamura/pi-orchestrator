@@ -93,6 +93,23 @@ describe("ArtifactStore", () => {
     expect(await exists(join(root, "decisions", "invalid.json"))).toBe(false);
   });
 
+  test("treats a predicate returning false as schema failure before commit", async () => {
+    const root = await makeRunDirectory();
+    const store = new ArtifactStore(root);
+
+    await expect(
+      store.writeJson(
+        "execution-routing",
+        "invalid-predicate.json",
+        { schemaVersion: 1 },
+        () => false,
+      ),
+    ).rejects.toThrow(/schema/i);
+    expect(
+      await exists(join(root, "decisions", "invalid-predicate.json")),
+    ).toBe(false);
+  });
+
   test("rejects a hash mismatch instead of returning corrupted content", async () => {
     const root = await makeRunDirectory();
     const store = new ArtifactStore(root);

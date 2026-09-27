@@ -3,7 +3,18 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
+import {
+  DEFAULT_RETRY_LIMITS,
+  type OrchestratorConfiguration,
+} from "../core/configuration.ts";
 import type { WorkflowState } from "../core/workflow/state.ts";
+import { CommandValidationExecutor } from "../runtime/validation/command-executor.ts";
+import { JevIntegration } from "../runtime/integrations/jev.ts";
+import { PlannotatorIntegration } from "../runtime/integrations/plannotator.ts";
+import type {
+  JevDecisionClient,
+  ValidationExecutor,
+} from "../runtime/ports/index.ts";
 import {
   projectWorkflowStatus,
   renderWorkflowStatus,
@@ -57,10 +68,17 @@ export interface WorkflowCommandRuntime {
   ) => Promise<WorkflowStatusEvidence>;
 }
 
+export interface WorkflowCommandRuntimeOptions {
+  configuration?: OrchestratorConfiguration;
+  jevDecisionClient?: JevDecisionClient;
+  validationExecutor?: ValidationExecutor;
+}
+
 export interface WorkflowCommandRegistrationOptions {
   runtime?: WorkflowCommandRuntime;
   createRuntime?: (context: ExtensionCommandContext) => WorkflowCommandRuntime;
   eventBus?: EventBus;
+  runtimeOptions?: WorkflowCommandRuntimeOptions;
 }
 
 const workflowIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
@@ -95,6 +113,22 @@ function runsDirectory(cwd: string): string {
   return join(cwd, ...runsDirectoryName);
 }
 
+function commandRecoveryConfiguration(): OrchestratorConfiguration {
+  // No Product Runtime consent is configured here; Jev remains fail-closed.
+  return {
+    decision: { autoDecisionThreshold: 0.8, escalationThreshold: 0.5 },
+    executionProfiles: {
+      ECONOMY: { provider: "unconfigured", model: "unconfigured" },
+      STANDARD: { provider: "unconfigured", model: "unconfigured" },
+      STRONG: { provider: "unconfigured", model: "unconfigured" },
+    },
+    reasoningMapping: { LOW: "low", MEDIUM: "medium", HIGH: "high" },
+    retries: { ...DEFAULT_RETRY_LIMITS },
+    validation: { stopOnInfrastructureFailure: true },
+    jev: {},
+  };
+}
+
 function isMissingWorkflowError(error: unknown): boolean {
   if (error instanceof StateNotFoundError) return true;
   const message = error instanceof Error ? error.message : String(error);
@@ -126,7 +160,11 @@ function commandRuntime(
   if (options.runtime) return options.runtime;
   if (options.createRuntime) return options.createRuntime(context);
   if (options.eventBus)
-    return createWorkflowCommandRuntime(options.eventBus, context.cwd);
+    return createWorkflowCommandRuntime(
+      options.eventBus,
+      context.cwd,
+      options.runtimeOptions,
+    );
   throw new Error("Workflow command runtime is not configured");
 }
 
@@ -218,22 +256,36 @@ export function registerWorkflowCommands(
 export function createWorkflowCommandRuntime(
   events: EventBus,
   cwd: string,
+  options: WorkflowCommandRuntimeOptions = {},
 ): WorkflowCommandRuntime {
   const root = runsDirectory(cwd);
   const subagentExecutor = new SubagentsIntegration(events, { cwd });
+  const configuration = options.configuration ?? commandRecoveryConfiguration();
   return {
     start: (input) =>
       startWorkflow(
         { ...input, cwd: input.cwd ?? cwd },
         { runsDirectory: root, subagentExecutor },
       ),
-    resume: (workflowId) =>
-      resumeWorkflow(workflowId, {
+    resume: (workflowId) => {
+      const artifactStore = new ArtifactStore(join(root, workflowId));
+      return resumeWorkflow(workflowId, {
         runsDirectory: root,
+        artifactStore,
         subagentExecutor,
         cwd,
         repositoryCwd: cwd,
-      }),
+        configuration,
+        jevDecisionClient:
+          options.jevDecisionClient ?? new JevIntegration(configuration.jev),
+        validationExecutor:
+          options.validationExecutor ?? new CommandValidationExecutor(),
+        plannotatorGate: new PlannotatorIntegration({
+          events,
+          planReader: artifactStore,
+        }),
+      });
+    },
     loadState: async (workflowId) => {
       const state = await new StateStore(join(root, workflowId)).loadState();
       if (state.workflowId !== workflowId) {

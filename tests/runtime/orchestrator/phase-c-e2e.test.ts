@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   phaseCWorkflow,
@@ -98,6 +98,27 @@ describe("Phase C full fake end-to-end contract", () => {
       ]),
     );
     expect(h.listenerCount()).toBe(0);
+  });
+
+  test("Plan feedback re-enters planning and the next approved Plan Gate enables coding", async () => {
+    const h = await setup({ planReviews: ["feedback", "approved"] });
+    const first = await h.createPlan();
+    expect(first.state.phase).toBe("awaiting-plan-review");
+    const feedback = await h.settlePlan();
+    expect(feedback.status).toBe("feedback");
+    expect(feedback.state.phase).toBe("planning");
+    expect(feedback.state.planning.approvedPlanRef).toBeUndefined();
+
+    const second = await h.createPlan();
+    expect(second.state.planning.currentPlanVersion).toBe(2);
+    const approved = await h.settlePlan();
+    expect(approved.status).toBe("approved");
+    expect(approved.state.phase).toBe("implementing");
+    await expect(h.implement()).resolves.toBeDefined();
+    expect(workers(h)).toHaveLength(1);
+    expect(
+      h.gates.filter((gate) => gate.action === "plan-review"),
+    ).toHaveLength(2);
   });
 
   test("validation failure routes through Round Decision before retry, then completes", async () => {
@@ -748,6 +769,69 @@ describe("Phase C full fake end-to-end contract", () => {
     expect(state.coding.latestCodeReviewRef).toBeUndefined();
     expect((await h.settleCode(true)).state.phase).toBe("completed");
     expect(codeGates(h)).toHaveLength(1);
+  });
+
+  test("repeated resume after completion does not duplicate Worker, review, or gate side effects", async () => {
+    const h = await setup();
+    await approvePlan(h);
+    await reviewedRound(h);
+    await approveCode(h);
+    const before = {
+      workers: workers(h).length,
+      reviewers: h.children.filter(
+        (child) =>
+          child.agent === "reviewer" || child.agent === "ponytail-reviewer",
+      ).length,
+      codeGates: codeGates(h).length,
+      planGates: h.gates.filter((gate) => gate.action === "plan-review").length,
+      jev: h.jevRequests.length,
+    };
+
+    const firstResume = await h.resume();
+    const afterFirstResume = await h.load();
+    const secondResume = await h.resume();
+    const afterSecondResume = await h.load();
+
+    expect(firstResume.state.phase).toBe("completed");
+    expect(secondResume.state.phase).toBe("completed");
+    expect(afterSecondResume.stateRevision).toBe(
+      afterFirstResume.stateRevision,
+    );
+    expect(workers(h)).toHaveLength(before.workers);
+    expect(
+      h.children.filter(
+        (child) =>
+          child.agent === "reviewer" || child.agent === "ponytail-reviewer",
+      ),
+    ).toHaveLength(before.reviewers);
+    expect(codeGates(h)).toHaveLength(before.codeGates);
+    expect(
+      h.gates.filter((gate) => gate.action === "plan-review"),
+    ).toHaveLength(before.planGates);
+    expect(h.jevRequests).toHaveLength(before.jev);
+  });
+
+  test("unrecoverable review authority corruption reaches failed, not blocked continuation", async () => {
+    const h = await setup();
+    await approvePlan(h);
+    await h.implement();
+    await h.validate();
+    await h.review();
+    const state = await h.load();
+    const reviewRef = state.coding.correctnessReviewRef;
+    expect(reviewRef).toBeDefined();
+    await writeFile(
+      join(h.artifactStore.rootDirectory, reviewRef!.path),
+      "{}",
+      "utf8",
+    );
+
+    const result = await h.resume();
+
+    expect(result.status).toBe("failed");
+    expect(result.state.phase).toBe("failed");
+    expect(result.state.failure?.reason).toBe("authoritative-artifact-corrupt");
+    expect(result.state.block).toBeUndefined();
   });
 
   test("Code Gate identity persistence failure cannot publish approval", async () => {

@@ -72,6 +72,7 @@ export interface WorkflowScript {
   validations?: (ValidationCheckStatus | "throw")[];
   workers?: ("success" | "timeout" | "ambiguous" | "failed")[];
   codeReviews?: ("approved" | "feedback")[];
+  planReviews?: ("approved" | "feedback")[];
   silentReviewer?: boolean;
   maxRequests?: number;
   consent?: boolean;
@@ -347,8 +348,9 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       )
         throw Error("Gate opened with stale implementation");
       const reviewId = code ? `code-${++codeGates}` : `plan-${++planGates}`;
-      const feedback =
-        code && script.codeReviews?.[codeGates - 1] === "feedback";
+      const feedback = code
+        ? script.codeReviews?.[codeGates - 1] === "feedback"
+        : script.planReviews?.[planGates - 1] === "feedback";
       externalReviews.set(reviewId, {
         approved: !feedback,
         ...(feedback

@@ -169,7 +169,11 @@ function parseJson<T>(content: Uint8Array, schema: ArtifactSchema<T>): T {
   }
 
   try {
-    return schema(value);
+    const parsed = schema(value);
+    if (parsed === false || parsed === undefined) {
+      throw new Error("Schema validator returned a rejected result");
+    }
+    return parsed;
   } catch (error) {
     throw new ArtifactSchemaValidationError(
       `Invalid JSON artifact schema: ${error instanceof Error ? error.message : String(error)}`,
