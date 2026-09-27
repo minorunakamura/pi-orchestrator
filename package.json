@@ -2,7 +2,16 @@
   "name": "pi-orchestrator",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "pi-subagents": {
+    "agents": [
+      "./agents"
+    ]
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
@@ -12,7 +21,9 @@
     "test:watch": "vitest",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
-  "keywords": [],
+  "keywords": [
+    "pi-package"
+  ],
   "author": "",
   "license": "ISC",
   "devEngines": {
