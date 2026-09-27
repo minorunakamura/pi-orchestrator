@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
 import { readFile, realpath } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
@@ -635,6 +636,150 @@ async function readAuthoritativeText(
   return content;
 }
 
+export class WorkerAttemptAuthorityError extends CodingOrchestrationError {
+  constructor(
+    readonly reason:
+      | "authority-inconsistent"
+      | "authoritative-artifact-corrupt",
+    readonly evidenceRef: ArtifactRef,
+  ) {
+    super(`Worker attempt authority rejected: ${reason}`);
+    this.name = "WorkerAttemptAuthorityError";
+  }
+}
+
+/** True only for the attempt that already published the current implementation. */
+export async function validateCompletedWorkerAttempt(
+  store: WorkflowArtifactWriter,
+  state: WorkflowState,
+  ref: ArtifactRef<"implementation">,
+  attempt: WorkerAttemptEvidence,
+): Promise<boolean> {
+  // An unpublished next attempt still belongs to reconciliation, not continuation.
+  if (
+    attempt.targetRevision !== state.coding.implementationRevision &&
+    !sameArtifactRef(attempt.implementationRef, state.coding.implementationRef)
+  )
+    return false;
+  if (
+    attempt.status !== "succeeded" ||
+    attempt.targetRevision !== state.coding.implementationRevision ||
+    attempt.inputRevision !== state.coding.implementationRevision - 1 ||
+    attempt.workflowId !== state.workflowId ||
+    attempt.dispatch.ownerRunId !== state.workflowId ||
+    attempt.launchStatus !== "observed" ||
+    !sameArtifactRef(attempt.implementationRef, state.coding.implementationRef)
+  )
+    throw new WorkerAttemptAuthorityError("authority-inconsistent", ref);
+  try {
+    const implementation = parseImplementationArtifact(
+      JSON.parse(
+        await readAuthoritativeText(
+          requireArtifactStore(store),
+          attempt.implementationRef!,
+          "completed implementation",
+        ),
+      ),
+    );
+    if (
+      implementation.implementationRevision !== attempt.targetRevision ||
+      implementation.runId !== attempt.runId ||
+      !sameArtifactRef(
+        implementation.approvedPlanRef,
+        attempt.approvedPlanRef,
+      ) ||
+      !sameArtifactRef(
+        implementation.executionRoutingRef,
+        attempt.executionRoutingRef,
+      ) ||
+      !implementation.workerAttemptRef ||
+      (!sameArtifactRef(implementation.workerAttemptRef, ref) &&
+        !sameArtifactRef(
+          implementation.workerAttemptRef,
+          attempt.previousRef,
+        )) ||
+      calculateSha256(implementation.output) !==
+        implementation.repository.outputSha256 ||
+      !isDeepStrictEqual(
+        implementation.executionProfile,
+        attempt.executionProfile,
+      ) ||
+      attempt.after?.status !== "observed" ||
+      attempt.before.root !== attempt.after.snapshot.root ||
+      attempt.before.cwd !== attempt.after.snapshot.cwd
+    )
+      throw new Error("Completed implementation binding mismatch");
+
+    // Compare historical authority, not the routing/findings for the next fix.
+    const readable = requireArtifactStore(store);
+    const observed = parseWorkerAttempt(
+      JSON.parse(
+        await readAuthoritativeText(
+          readable,
+          implementation.workerAttemptRef,
+          "Worker result observation",
+        ),
+      ),
+    );
+    const identityFields = [
+      "workflowId",
+      "attemptId",
+      "inputRevision",
+      "targetRevision",
+      "approvedPlanRef",
+      "planVersion",
+      "inputImplementationRef",
+      "executionRoutingRef",
+      "inputRefs",
+      "executionProfile",
+      "dispatch",
+      "runId",
+      "launchStatus",
+      "before",
+      "resultDigest",
+    ] as const;
+    if (
+      identityFields.some(
+        (key) => !isDeepStrictEqual(observed[key], attempt[key]),
+      ) ||
+      (observed.after?.status === "observed" &&
+        !isDeepStrictEqual(observed.after, attempt.after))
+    )
+      throw new Error("Completed Worker observation identity mismatch");
+    const routing = parseExecutionRoutingArtifact(
+      JSON.parse(
+        await readAuthoritativeText(
+          readable,
+          attempt.executionRoutingRef,
+          "completed execution routing",
+        ),
+      ),
+    );
+    if (
+      !sameArtifactRef(routing.approvedPlanRef, attempt.approvedPlanRef) ||
+      routing.planVersion !== attempt.planVersion ||
+      routing.attempt !== attempt.targetRevision
+    )
+      throw new Error("Completed Worker routing binding mismatch");
+    parsePlan(
+      await readAuthoritativeText(
+        readable,
+        attempt.approvedPlanRef,
+        "completed Plan",
+      ),
+      {
+        architectureRequired: state.planning.architectureRequired !== false,
+      },
+    );
+  } catch {
+    throw new WorkerAttemptAuthorityError(
+      "authoritative-artifact-corrupt",
+      attempt.implementationRef!,
+    );
+  }
+  return true;
+}
+
 function requireApprovedPlan(state: WorkflowState): ArtifactRef<"plan"> {
   if (state.phase !== "implementing" && state.phase !== "fixing") {
     throw new CodingOrchestrationError(
@@ -1172,25 +1317,42 @@ export class CodingOrchestrator {
     const previousAttemptRef = input.state.coding.workerAttemptRef;
     let previousAttempt: WorkerAttemptEvidence | undefined;
     if (previousAttemptRef) {
-      previousAttempt = parseWorkerAttempt(
-        JSON.parse(
-          await readAuthoritativeText(
-            store,
-            previousAttemptRef,
-            "Worker attempt",
+      let completed: boolean;
+      try {
+        previousAttempt = parseWorkerAttempt(
+          JSON.parse(
+            await readAuthoritativeText(
+              store,
+              previousAttemptRef,
+              "Worker attempt",
+            ),
           ),
-        ),
-      );
-      if (
-        previousAttempt.workflowId !== input.state.workflowId ||
-        previousAttempt.status !== "succeeded" ||
-        previousAttempt.targetRevision !==
-          input.state.coding.implementationRevision ||
-        !sameArtifactRef(
-          previousAttempt.implementationRef,
-          input.state.coding.implementationRef,
-        )
-      ) {
+        );
+        completed = await validateCompletedWorkerAttempt(
+          store,
+          input.state,
+          previousAttemptRef,
+          previousAttempt,
+        );
+      } catch (error) {
+        await advanceWorkflow(
+          input.state,
+          {
+            type: "FAIL",
+            reason:
+              error instanceof WorkerAttemptAuthorityError
+                ? error.reason
+                : "authoritative-artifact-corrupt",
+            evidenceRef:
+              error instanceof WorkerAttemptAuthorityError
+                ? error.evidenceRef
+                : previousAttemptRef,
+          },
+          this.dependencies.stateStore,
+        );
+        throw error;
+      }
+      if (!completed) {
         return blockAndThrow(
           input.state,
           "agent-execution-ambiguous",
