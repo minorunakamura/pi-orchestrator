@@ -1,5 +1,10 @@
 import { readFile, rm, writeFile, mkdir, rename } from "node:fs/promises";
-import { SubagentsIntegration } from "../../../src/runtime/integrations/subagents.ts";
+import {
+  SubagentsIntegration,
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+} from "../../../src/runtime/integrations/subagents.ts";
+import { FakeSubagentRpc } from "../../fakes/subagent-rpc.ts";
+import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp } from "node:fs/promises";
@@ -31,7 +36,6 @@ import {
 import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 
 import { jevPolicy } from "../../fakes/jev-policy.ts";
-import { requireRecord } from "../../fakes/typed-boundaries.ts";
 function noopListener(_payload: unknown): void {}
 
 const roots: string[] = [];
@@ -290,23 +294,36 @@ describe("CodingOrchestrator ORCH-012", () => {
       let emissions = 0;
       let cleanups = 0;
       let sent: Record<string, unknown> = {};
+      const bus = new FakeSubagentRpc((request, rpc) => {
+        emissions++;
+        sent = request;
+        if (path === "malformed-result") {
+          rpc.receipt(request, runId);
+          rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+            runId,
+            mode: "single",
+            state: "complete",
+            success: true,
+            results: [],
+          });
+        }
+      });
       const adapter = new SubagentsIntegration(
         {
-          on: (_event, receive) => {
-            listener = receive;
+          on: (event, receive) => {
+            if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) listener = receive;
+            bus.on(event, receive);
             return () => {
               cleanups++;
               throw Error("unsubscribe failed");
             };
           },
-          emit: (_event, payload) => {
-            emissions++;
-            sent = requireRecord(payload);
-            if (path === "malformed-result")
-              listener({ ...sent, status: "completed", runId, result: null });
-          },
+          emit: (event, payload) => bus.emit(event, payload),
         },
-        { timeoutMs: 20 },
+        {
+          timeoutMs: 20,
+          artifactReader: new ArtifactStore(started.runDirectory),
+        },
       );
       const orchestrator = new CodingOrchestrator(
         dependencies(started, { subagentExecutor: adapter }),
@@ -345,7 +362,7 @@ describe("CodingOrchestrator ORCH-012", () => {
       });
       await expect(orchestrator.execute({ state })).rejects.toThrow();
       expect(emissions).toBe(1);
-      expect(cleanups).toBe(1);
+      expect(cleanups).toBe(2);
       expect((await persistedState(started.runDirectory)).phase).toBe(
         "blocked",
       );
@@ -364,7 +381,10 @@ describe("CodingOrchestrator ORCH-012", () => {
           emissions++;
         },
       },
-      { timeoutMs: 50 },
+      {
+        timeoutMs: 50,
+        artifactReader: new ArtifactStore(started.runDirectory),
+      },
     );
     await expect(
       new CodingOrchestrator(

@@ -13,7 +13,6 @@ import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
 import {
   FakePlannotatorGate,
   FakeSubagentExecutor,
-  failure,
 } from "../../fakes/index.ts";
 
 const roots: string[] = [];
@@ -306,13 +305,19 @@ test("explicit REPLAN_REQUIRED invalidation rejects old approval without restori
 });
 
 test.each(["scout", "research"])(
-  "I2: restart after %s failure retains required stages and reuses saved evidence",
+  "I2: restart after proven pre-dispatch %s failure retains required stages and reuses saved evidence",
   async (stage) => {
+    const notDispatched = {
+      type: "result" as const,
+      value: {
+        status: "failed" as const,
+        notDispatched: true,
+        error: "Launch was not attempted",
+      },
+    };
     const executor = new FakeSubagentExecutor({
       run:
-        stage === "scout"
-          ? failure("infrastructure")
-          : [success("facts"), failure("infrastructure")],
+        stage === "scout" ? notDispatched : [success("facts"), notDispatched],
     });
     const started = await startWorkflow(
       {
@@ -440,8 +445,10 @@ test("M1: Plan artifact persists but State save failure prevents Human Gate open
     subagentExecutor: executor,
     plannotatorGate: gate,
     stateStore: {
-      saveState: async () => {
-        throw new Error("State disk failure");
+      saveState: async (state, revision) => {
+        if (state.planning.currentPlanRef)
+          throw new Error("State disk failure");
+        return new StateStore(started.runDirectory).saveState(state, revision);
       },
     },
   });
@@ -451,9 +458,11 @@ test("M1: Plan artifact persists but State save failure prevents Human Gate open
   expect(await readdir(join(started.runDirectory, "plans"))).toEqual([
     "plan-v1.md",
   ]);
-  expect(await new StateStore(started.runDirectory).loadState()).toEqual(
-    started.state,
-  );
+  const durable = await new StateStore(started.runDirectory).loadState();
+  expect(durable.phase).toBe("planning");
+  expect(durable.planning.agentAttempts?.["plan-v1"]).toBeDefined();
+  expect(durable.planning.currentPlanRef).toBeUndefined();
+  expect(durable.planning.planReview).toBeUndefined();
   expect(gate.calls.openPlanReview).toHaveLength(0);
 });
 

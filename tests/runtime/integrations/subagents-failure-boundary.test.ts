@@ -1,243 +1,247 @@
 import { afterEach, expect, test, vi } from "vitest";
 import {
   SubagentsIntegration,
-  SUBAGENT_DELEGATION_REQUEST_EVENT,
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_RPC_REPLY_PREFIX,
   type EventBus,
 } from "../../../src/runtime/integrations/subagents.ts";
 import type { AgentRunResult } from "../../../src/runtime/ports/subagent-executor.ts";
-import { requireRecord } from "../../fakes/typed-boundaries.ts";
+import { FakeSubagentRpc } from "../../fakes/subagent-rpc.ts";
 
-function bus(
-  respond?: (
-    request: Record<string, unknown>,
-    deliver: (value: unknown) => void,
-  ) => void,
-) {
-  const listeners = new Set<(value: unknown) => void>();
-  const deliver = (value: unknown) => {
-    for (const listener of listeners) listener(value);
-  };
-  const events: EventBus = {
-    emit: (event, payload) => {
-      if (event === SUBAGENT_DELEGATION_REQUEST_EVENT)
-        respond?.(requireRecord(payload), deliver);
-    },
-    on: (_event, listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
-  return { events, listeners, deliver };
-}
+const input = { agent: "worker", task: "fake" };
+const completed = {
+  runId: "child-1",
+  mode: "single",
+  state: "complete",
+  success: true,
+  summary: "not authoritative",
+  results: [{ agent: "worker", success: true, output: "full final output" }],
+};
 afterEach(() => vi.useRealTimers());
-
-test.each([
-  "timeout",
-  "sync-response",
-  "async-response",
-  "malformed-result",
-  "malformed-identity",
-  "child-timeout",
-  "emit-throw",
-])("unsubscribe throw cannot prevent settlement: %s", async (path) => {
-  vi.useFakeTimers();
-  let sent: Record<string, unknown> = {};
-  const b = bus((request, deliver) => {
-    sent = request;
-    if (path === "timeout") return;
-    if (path === "emit-throw") throw Error("dispatch outcome unknown");
-    const response = {
-      ...request,
-      status: path === "child-timeout" ? "timed_out" : "completed",
-      runId: path === "malformed-identity" ? 123 : "exact-child",
-      result:
-        path === "malformed-result" ? null : { kind: "text", text: "done" },
-    };
-    if (path === "async-response") setTimeout(() => deliver(response), 1);
-    else deliver(response);
-  });
-  const subscribe = b.events.on.bind(b.events);
-  const cleanup = vi.fn(() => {
-    throw Error("unsubscribe failed before removing listener");
-  });
-  b.events.on = (event, listener) => {
-    subscribe(event, listener);
-    return cleanup;
-  };
-  const results: AgentRunResult[] = [];
-  void new SubagentsIntegration(b.events, { timeoutMs: 10 })
-    .run({ agent: "worker", task: "fake" })
-    .then((result) => results.push(result));
-  await vi.advanceTimersByTimeAsync(11);
-  expect(results).toHaveLength(1);
-  const successful = path === "sync-response" || path === "async-response";
-  expect(results[0]?.status).toBe(successful ? "succeeded" : "ambiguous");
-  expect(results[0]?.dispatch).toMatchObject({
-    requestId: sent.requestId,
-    ownerRunId: sent.ownerRunId,
-    nodeId: sent.nodeId,
-  });
-  const hasIdentity = !["timeout", "malformed-identity", "emit-throw"].includes(
-    path,
-  );
-  expect(results[0]?.runId).toBe(hasIdentity ? "exact-child" : undefined);
-  if (["timeout", "malformed-identity", "child-timeout"].includes(path))
-    expect(results[0]).toMatchObject({ timedOut: true });
-  expect(cleanup).toHaveBeenCalledTimes(1);
+function released(bus: FakeSubagentRpc) {
+  expect(
+    [...bus.listeners.values()].every((listeners) => listeners.size === 0),
+  ).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
-  b.deliver({
-    ...sent,
-    status: "completed",
-    runId: "late",
-    result: { kind: "text", text: "late" },
-  });
-  await vi.advanceTimersByTimeAsync(20);
-  expect(results).toHaveLength(1);
-  expect(cleanup).toHaveBeenCalledTimes(1);
-});
+}
 
-test("absent responder settles as ambiguous timeout and releases the listener", async () => {
+test("Supervisor attention does not settle an async run; the same child's completion does", async () => {
   vi.useFakeTimers();
-  const b = bus();
+  const bus = new FakeSubagentRpc((request, rpc) =>
+    rpc.receipt(request, "child-1"),
+  );
   let result: AgentRunResult | undefined;
-  void new SubagentsIntegration(b.events, { timeoutMs: 20 })
-    .run({ agent: "worker", task: "fake only" })
+  const run = new SubagentsIntegration(bus, { timeoutMs: 100 })
+    .run(input)
     .then((value) => {
       result = value;
     });
-  await vi.advanceTimersByTimeAsync(21);
-  expect(result).toMatchObject({ status: "ambiguous", timedOut: true });
-  expect(result?.runId).toBeUndefined();
-  expect(b.listeners.size).toBe(0);
-  expect(vi.getTimerCount()).toBe(0);
+  await vi.advanceTimersByTimeAsync(10);
+  bus.deliver("subagent:control-intercom", {
+    runId: "child-1",
+    reason: "need_decision",
+  });
+  await vi.advanceTimersByTimeAsync(10);
+  expect(result).toBeUndefined();
+  expect(bus.emitted).toHaveLength(1);
+  bus.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, completed);
+  await run;
+  expect(result).toMatchObject({
+    status: "succeeded",
+    runId: "child-1",
+    output: "full final output",
+  });
+  released(bus);
 });
-test("wrong identity cannot settle and late result cannot revive timed-out work", async () => {
+
+test.each([false, true])(
+  "timeout is ambiguous, retaining the launch receipt if observed: %s",
+  async (hasReceipt) => {
+    vi.useFakeTimers();
+    const bus = new FakeSubagentRpc((request, rpc) => {
+      if (hasReceipt) rpc.receipt(request, "child-1");
+    });
+    const run = new SubagentsIntegration(bus, { timeoutMs: 20 }).run(input);
+    await vi.advanceTimersByTimeAsync(21);
+    const result = await run;
+    expect(result).toMatchObject({ status: "ambiguous", timedOut: true });
+    expect(result.runId).toBe(hasReceipt ? "child-1" : undefined);
+    bus.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, completed);
+    expect(result.status).toBe("ambiguous");
+    expect(bus.emitted).toHaveLength(1);
+    released(bus);
+  },
+);
+
+test("correlates an early completion only after the matching spawn receipt", async () => {
   vi.useFakeTimers();
-  let sent: Record<string, unknown> = {};
-  const b = bus((req, deliver) => {
-    sent = req;
-    deliver({
-      ...req,
+  const bus = new FakeSubagentRpc((request, rpc) => {
+    rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      ...completed,
+      runId: "other-child",
+    });
+    rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, completed);
+    rpc.deliver(`${SUBAGENT_RPC_REPLY_PREFIX}${String(request.requestId)}`, {
+      version: 1,
       requestId: "wrong",
-      status: "completed",
+      success: true,
+      data: {
+        details: {
+          mode: "single",
+          runId: "other-child",
+          asyncId: "other-child",
+        },
+      },
+    });
+    rpc.receipt(request, "child-1");
+  });
+  await expect(new SubagentsIntegration(bus).run(input)).resolves.toMatchObject(
+    { status: "succeeded", runId: "child-1" },
+  );
+  released(bus);
+});
+
+test("wrong run completion cannot settle an acknowledged child", async () => {
+  vi.useFakeTimers();
+  const bus = new FakeSubagentRpc((request, rpc) => {
+    rpc.receipt(request, "child-1");
+    rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      ...completed,
       runId: "wrong",
-      result: { kind: "text", text: "unsafe" },
     });
   });
-  let result: AgentRunResult | undefined;
-  void new SubagentsIntegration(b.events, { timeoutMs: 10 })
-    .run({ agent: "worker", task: "fake" })
-    .then((value) => {
-      result = value;
-    });
+  const run = new SubagentsIntegration(bus, { timeoutMs: 10 }).run(input);
   await vi.advanceTimersByTimeAsync(11);
-  expect(result).toMatchObject({ status: "ambiguous", timedOut: true });
-  b.deliver({
-    ...sent,
-    status: "completed",
-    runId: "late",
-    result: { kind: "text", text: "late" },
-  });
-  expect(result?.runId).toBeUndefined();
-  expect(b.listeners.size).toBe(0);
-});
-test("malformed run identity never becomes a successful response", async () => {
-  vi.useFakeTimers();
-  const b = bus((request, deliver) =>
-    deliver({
-      ...request,
-      status: "completed",
-      runId: 123,
-      result: { kind: "text", text: "must not become authority" },
-    }),
-  );
-  let result: AgentRunResult | undefined;
-  void new SubagentsIntegration(b.events, { timeoutMs: 10 })
-    .run({ agent: "worker", task: "fake" })
-    .then((value) => {
-      result = value;
-    });
-  await vi.advanceTimersByTimeAsync(11);
-  expect(result?.status).toBe("ambiguous");
-  expect(result?.runId).toBeUndefined();
-  expect(b.listeners.size).toBe(0);
-});
-
-test("deadline and response race settles once and cleans up", async () => {
-  vi.useFakeTimers();
-  const b = bus((request, deliver) => {
-    setTimeout(
-      () =>
-        deliver({
-          ...request,
-          status: "completed",
-          runId: "late",
-          result: { kind: "text", text: "done" },
-        }),
-      10,
-    );
-  });
-  let settlements = 0;
-  void new SubagentsIntegration(b.events, { timeoutMs: 10 })
-    .run({ agent: "worker", task: "fake" })
-    .then(() => {
-      settlements++;
-    });
-  await vi.advanceTimersByTimeAsync(11);
-  expect(settlements).toBe(1);
-  expect(b.listeners.size).toBe(0);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-test("parallel review finishes boundedly when one reviewer never replies", async () => {
-  vi.useFakeTimers();
-  const b = bus((request, deliver) => {
-    if (request.agent === "reviewer")
-      deliver({
-        ...request,
-        status: "completed",
-        runId: "review-1",
-        result: { kind: "text", text: "clean" },
-      });
-  });
-  let results: AgentRunResult[] | undefined;
-  void new SubagentsIntegration(b.events, { timeoutMs: 10 })
-    .runParallel([
-      { agent: "reviewer", task: "fake" },
-      { agent: "ponytail-reviewer", task: "fake" },
-    ])
-    .then((value) => {
-      results = value;
-    });
-  await vi.advanceTimersByTimeAsync(11);
-  expect(results?.map((result) => result.status)).toEqual([
-    "succeeded",
-    "ambiguous",
-  ]);
-  expect(b.listeners.size).toBe(0);
-});
-
-test("child timeout retains actual run identity without calling it a proven failure", async () => {
-  const b = bus((req, deliver) =>
-    deliver({ ...req, status: "timed_out", runId: "exact-child" }),
-  );
-  await expect(
-    new SubagentsIntegration(b.events, { timeoutMs: 20 }).run({
-      agent: "worker",
-      task: "fake",
-    }),
-  ).resolves.toMatchObject({
+  await expect(run).resolves.toMatchObject({
     status: "ambiguous",
     timedOut: true,
-    runId: "exact-child",
+    runId: "child-1",
   });
+  released(bus);
 });
-test("unsupported profile is explicitly not dispatched", async () => {
-  const b = bus();
+
+test.each([
+  "failed",
+  "malformed-identity",
+  "malformed-result",
+  "child-timeout",
+  "paused",
+  "truncated",
+  "wrong-agent",
+])("does not publish invalid or unsuccessful completions: %s", async (path) => {
+  vi.useFakeTimers();
+  const bus = new FakeSubagentRpc((request, rpc) => {
+    if (path === "malformed-identity") {
+      rpc.deliver(`${SUBAGENT_RPC_REPLY_PREFIX}${String(request.requestId)}`, {
+        version: 1,
+        requestId: request.requestId,
+        success: true,
+        data: { details: { mode: "single", runId: 123, asyncId: 123 } },
+      });
+      return;
+    }
+    rpc.receipt(request, "child-1");
+    rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      ...completed,
+      ...(path === "failed" ? { state: "failed", success: false } : {}),
+      ...(path === "paused" ? { state: "paused", success: false } : {}),
+      ...(path === "child-timeout" ? { timedOut: true } : {}),
+      results:
+        path === "malformed-result"
+          ? []
+          : [
+              {
+                ...completed.results[0],
+                ...(path === "truncated" ? { truncated: true } : {}),
+                ...(path === "wrong-agent" ? { agent: "another-agent" } : {}),
+              },
+            ],
+    });
+  });
+  const result = await new SubagentsIntegration(bus).run(input);
+  expect(result.status).toBe(path === "failed" ? "failed" : "ambiguous");
+  expect(result.runId).toBe(
+    path === "malformed-identity" ? undefined : "child-1",
+  );
+  released(bus);
+});
+
+test("RPC rejection is not proof that no child was launched", async () => {
+  vi.useFakeTimers();
+  const bus = new FakeSubagentRpc((request, rpc) =>
+    rpc.deliver(`${SUBAGENT_RPC_REPLY_PREFIX}${String(request.requestId)}`, {
+      version: 1,
+      requestId: request.requestId,
+      success: false,
+      error: { code: "execution_failed", message: "failed after spawn" },
+    }),
+  );
+  await expect(new SubagentsIntegration(bus).run(input)).resolves.toMatchObject(
+    { status: "ambiguous" },
+  );
+  released(bus);
+});
+
+test.each(["completion", "timeout", "emit-throw"])(
+  "unsubscribe throw cannot prevent single settlement: %s",
+  async (path) => {
+    vi.useFakeTimers();
+    const bus = new FakeSubagentRpc((request, rpc) => {
+      rpc.receipt(request, "child-1");
+      if (path === "emit-throw") throw Error("launch status unknown");
+      if (path === "completion")
+        rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, completed);
+    });
+    const cleanup = vi.fn(() => {
+      throw Error("cleanup failed");
+    });
+    const events: EventBus = {
+      emit: (event, payload) => bus.emit(event, payload),
+      on: (event, listener) => {
+        bus.on(event, listener);
+        return cleanup;
+      },
+    };
+    const results: AgentRunResult[] = [];
+    void new SubagentsIntegration(events, { timeoutMs: 10 })
+      .run(input)
+      .then((r) => results.push(r));
+    await vi.advanceTimersByTimeAsync(11);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.status).toBe(
+      path === "completion" ? "succeeded" : "ambiguous",
+    );
+    bus.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, completed);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(results).toHaveLength(1);
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("second subscription failure cleans up the first without emitting a request", async () => {
+  vi.useFakeTimers();
+  const bus = new FakeSubagentRpc();
+  const events: EventBus = {
+    emit: (event, payload) => bus.emit(event, payload),
+    on: (event, listener) => {
+      if (event !== SUBAGENT_ASYNC_COMPLETE_EVENT)
+        throw Error("subscription unavailable");
+      return bus.on(event, listener);
+    },
+  };
   await expect(
-    new SubagentsIntegration(b.events, { timeoutMs: 10 }).run({
-      agent: "worker",
-      task: "fake",
+    new SubagentsIntegration(events).run(input),
+  ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
+  expect(bus.emitted).toHaveLength(0);
+  released(bus);
+});
+
+test("unsupported thinking is rejected before dispatch", async () => {
+  const bus = new FakeSubagentRpc();
+  await expect(
+    new SubagentsIntegration(bus).run({
+      ...input,
       executionProfile: {
         provider: "fake",
         model: "fake",
@@ -245,18 +249,22 @@ test("unsupported profile is explicitly not dispatched", async () => {
       },
     }),
   ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
-  expect(b.listeners.size).toBe(0);
+  expect(bus.emitted).toHaveLength(0);
 });
 
-test("emit throw may follow dispatch and is normalized as ambiguous", async () => {
-  const b = bus(() => {
-    throw Error("handler threw after launching");
+test("parallel review remains bounded if only one child completes", async () => {
+  vi.useFakeTimers();
+  const bus = new FakeSubagentRpc((request, rpc) => {
+    const id = String(request.agent);
+    rpc.receipt(request, id);
+    if (request.agent === "reviewer")
+      rpc.complete(request, id, "complete", "clean");
   });
-  await expect(
-    new SubagentsIntegration(b.events, { timeoutMs: 20 }).run({
-      agent: "worker",
-      task: "fake",
-    }),
-  ).resolves.toMatchObject({ status: "ambiguous" });
-  expect(b.listeners.size).toBe(0);
+  const run = new SubagentsIntegration(bus, { timeoutMs: 10 }).runParallel([
+    { agent: "reviewer", task: "review" },
+    { agent: "ponytail-reviewer", task: "review" },
+  ]);
+  await vi.advanceTimersByTimeAsync(11);
+  expect((await run).map((r) => r.status)).toEqual(["succeeded", "ambiguous"]);
+  released(bus);
 });

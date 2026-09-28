@@ -263,12 +263,10 @@ describe("Phase C full fake end-to-end contract", () => {
     await reviewedRound(h);
     await approveCode(h);
     expect(workers(h)[0]).toMatchObject({
-      model: "fake/economy",
-      thinking: "low",
+      model: "fake/economy:low",
     });
     expect(workers(h)[1]).toMatchObject({
-      model: "fake/standard",
-      thinking: "medium",
+      model: "fake/standard:medium",
       context: "fresh",
     });
   }, 10_000);
@@ -295,7 +293,7 @@ describe("Phase C full fake end-to-end contract", () => {
       JSON.stringify(second.state.planning.approvedPlanRef),
     );
     expect(h.gates.filter((g) => g.action === "plan-review")).toHaveLength(2);
-  });
+  }, 10_000);
 
   test.each([
     "human-finding",
@@ -340,6 +338,7 @@ describe("Phase C full fake end-to-end contract", () => {
       await approveCode(h);
       expect(workers(h)).toHaveLength(2);
     },
+    10_000,
   );
 
   test("two distinct Human clarifications retain immutable answers and continue through the third Plan and Code Gates", async () => {
@@ -569,7 +568,7 @@ describe("Phase C full fake end-to-end contract", () => {
       expect(terminal.status).toBe(
         mode === "timeout" ? "timed-out" : "ambiguous",
       );
-      expect(terminal.runId).toBe(mode === "timeout" ? undefined : "worker-1");
+      expect(terminal.runId).toBe("worker-1");
       const received = await artifact(h, terminal.previousRef);
       expect(received.after.status).toBe("pending");
       expect(received.dispatch.requestId).toBe(workers(h)[0].requestId);

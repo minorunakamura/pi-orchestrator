@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { PlanningAgentPendingError } from "./planning-agent-run.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -44,7 +45,7 @@ import type {
   ValidationExecutor,
 } from "../ports/index.ts";
 import { RuntimePortError } from "../ports/errors.ts";
-import type { SubagentRunId } from "../../types.ts";
+import { subagentRunId, type SubagentRunId } from "../../types.ts";
 import {
   captureRepository,
   type RepositorySnapshot,
@@ -626,7 +627,23 @@ export class WorkflowReconciler {
   ): Promise<ReconciliationResult> {
     let current = state;
     const store = this.deps.artifactStore;
-    if (!current.planning.context.scoutRef) {
+    const stage = state.planning.context.scoutRef ? "research" : "scout";
+    const attempt =
+      stage === "research" &&
+      (!state.planning.researchRequired || state.planning.context.researchRef)
+        ? undefined
+        : state.planning.agentAttempts?.[stage];
+    if (attempt && !attempt.receipt && !attempt.notDispatched) {
+      // Observation must not race the original dispatch's receipt save.
+      return {
+        status: "blocked",
+        state,
+        phase: state.phase,
+        reason:
+          "Planning launch identity is not yet durable; do not redispatch",
+      };
+    }
+    if (!current.planning.agentAttempts && !current.planning.context.scoutRef) {
       const ref = await discoverArtifact(store, "scout", "scout.md");
       if (ref) {
         current = await advanceWorkflow(
@@ -637,6 +654,7 @@ export class WorkflowReconciler {
       }
     }
     if (
+      !current.planning.agentAttempts &&
       current.planning.researchRequired &&
       !current.planning.context.researchRef
     ) {
@@ -679,7 +697,12 @@ export class WorkflowReconciler {
         cwd: this.deps.cwd ?? this.deps.repositoryCwd,
       });
       return {
-        status: result.state.phase === "blocked" ? "blocked" : "advanced",
+        status:
+          result.state.phase === "blocked"
+            ? "blocked"
+            : result.state.phase === "gathering-context"
+              ? "pending"
+              : "advanced",
         state: result.state,
         phase: result.state.phase,
       };
@@ -742,11 +765,19 @@ export class WorkflowReconciler {
   ): Promise<ReconciliationResult> {
     const store = this.deps.artifactStore;
     const version = state.planning.currentPlanVersion + 1;
-    const existing = await discoverArtifact(
-      store,
-      "plan",
-      planFileName(version),
-    );
+    const attempt = state.planning.agentAttempts?.[`plan-v${version}`];
+    if (attempt && !attempt.receipt && !attempt.notDispatched) {
+      return {
+        status: "blocked",
+        state,
+        phase: state.phase,
+        reason:
+          "Planning launch identity is not yet durable; do not redispatch",
+      };
+    }
+    const existing = state.planning.agentAttempts
+      ? undefined
+      : await discoverArtifact(store, "plan", planFileName(version));
     if (existing) {
       try {
         const content = await readAuthoritativeText(store, existing, "plan");
@@ -786,6 +817,12 @@ export class WorkflowReconciler {
         phase: result.state.phase,
       };
     } catch (error) {
+      if (error instanceof PlanningAgentPendingError)
+        return {
+          status: "pending",
+          state: error.state,
+          phase: error.state.phase,
+        };
       if (error instanceof Error && /planning policy/iu.test(error.message))
         return this.block(
           state,
@@ -2256,6 +2293,59 @@ export class WorkflowReconciler {
         phase: state.phase,
         reason: "authority-inconsistent",
       };
+    if (blockedFrom === "gathering-context" || blockedFrom === "planning") {
+      const stage =
+        blockedFrom === "planning"
+          ? `plan-v${state.planning.currentPlanVersion + 1}`
+          : state.planning.context.scoutRef
+            ? "research"
+            : "scout";
+      const attempt = state.planning.agentAttempts?.[stage];
+      if (
+        !state.planning.agentAttempts ||
+        (attempt && !attempt.notDispatched && !attempt.receipt)
+      ) {
+        return {
+          status: "blocked",
+          state,
+          phase: state.phase,
+          reason: "No recoverable planning launch identity; do not redispatch",
+        };
+      }
+      if (attempt?.receipt) {
+        try {
+          const status = await this.deps.subagentExecutor.status(
+            subagentRunId(attempt.receipt.runId),
+            attempt.receipt,
+          );
+          if (
+            status.runId !== attempt.receipt.runId ||
+            !["succeeded", "running", "queued"].includes(status.status)
+          ) {
+            return {
+              status: "blocked",
+              state,
+              phase: state.phase,
+              reason: status.reason ?? "Planning result is unknown",
+            };
+          }
+          if (status.status !== "succeeded")
+            return {
+              status: "pending",
+              state,
+              phase: state.phase,
+              reason: "Existing planning run is still active",
+            };
+        } catch {
+          return {
+            status: "blocked",
+            state,
+            phase: state.phase,
+            reason: "Planning status unavailable",
+          };
+        }
+      }
+    }
     if (
       blockedFrom === "awaiting-code-review" &&
       state.block?.reason === "operator-attention-required"

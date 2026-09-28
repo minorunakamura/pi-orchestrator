@@ -9,6 +9,10 @@ import {
 import type { ArtifactRef } from "../artifacts/references.ts";
 import { isArtifactRef } from "../artifacts/references.ts";
 import {
+  isPlanningAgentAttempts,
+  type PlanningAgentAttempt,
+} from "../planning/agent-attempt.ts";
+import {
   hasOnlyKeys,
   isNonEmptyString,
   isNonNegativeInteger,
@@ -74,6 +78,8 @@ export interface PlanReviewBinding {
 }
 
 export interface PlanningState {
+  /** Absence marks legacy state whose in-flight planning work cannot be inferred. */
+  agentAttempts?: Record<string, PlanningAgentAttempt>;
   context: {
     scoutRef?: ArtifactRef<"scout">;
     researchRef?: ArtifactRef<"research">;
@@ -309,6 +315,7 @@ function isPlanningState(value: unknown): value is PlanningState {
     !isRecord(value) ||
     !hasOnlyKeys(value, [
       "context",
+      "agentAttempts",
       "architectureRequired",
       "researchRequired",
       "clarificationRequired",
@@ -326,6 +333,7 @@ function isPlanningState(value: unknown): value is PlanningState {
     ].every((key) =>
       optional(value, key, (candidate) => typeof candidate === "boolean"),
     ) ||
+    !optional(value, "agentAttempts", isPlanningAgentAttempts) ||
     !optional(value, "planReview", isPlanReviewBinding) ||
     !isNonNegativeInteger(value.currentPlanVersion) ||
     !optional(value, "currentPlanRef", (candidate) =>

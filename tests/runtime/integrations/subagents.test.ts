@@ -1,59 +1,35 @@
-import { describe, expect, test } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { createWorkflowCommandRuntime } from "../../../src/commands/index.ts";
+import {
+  ArtifactStore,
+  createArtifactRef,
+} from "../../../src/runtime/persistence/artifact-store.ts";
 import type { ArtifactRef } from "../../../src/core/artifacts/references.ts";
 import {
   SubagentsIntegration,
-  SUBAGENT_DELEGATION_REQUEST_EVENT,
-  SUBAGENT_DELEGATION_RESPONSE_EVENT,
-  type EventBus,
+  SUBAGENT_RPC_REQUEST_EVENT,
 } from "../../../src/runtime/integrations/subagents.ts";
 import type { AgentRunRequest } from "../../../src/runtime/ports/index.ts";
-import { requireRecord } from "../../fakes/typed-boundaries.ts";
+import {
+  childRequest,
+  FakeSubagentRpc as FakeEventBus,
+} from "../../fakes/subagent-rpc.ts";
 
-const planRef: ArtifactRef<"plan"> = {
-  kind: "plan",
-  path: "plans/plan-v1.md",
-  schemaVersion: 1,
-  sha256: "a".repeat(64),
-};
-const contextRef: ArtifactRef<"scout"> = {
-  kind: "scout",
-  path: "context/scout.md",
-  schemaVersion: 1,
-  sha256: "b".repeat(64),
-};
-
-class FakeEventBus implements EventBus {
-  readonly emitted: { event: string; payload: unknown }[] = [];
-  private readonly listeners = new Map<
-    string,
-    Set<(payload: unknown) => void>
-  >();
-
-  emit(event: string, payload: unknown): void {
-    this.emitted.push({ event, payload });
-    if (event !== SUBAGENT_DELEGATION_REQUEST_EVENT) return;
-    const request = requireRecord(payload);
-    for (const listener of this.listeners.get(
-      SUBAGENT_DELEGATION_RESPONSE_EVENT,
-    ) ?? []) {
-      listener({
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status: "completed",
-        runId: "run-1",
-        result: { kind: "text", text: "implemented" },
-      });
-    }
-  }
-
-  on(event: string, listener: (payload: unknown) => void): () => void {
-    const listeners = this.listeners.get(event) ?? new Set();
-    listeners.add(listener);
-    this.listeners.set(event, listeners);
-    return () => listeners.delete(listener);
-  }
+const roots: string[] = [];
+async function temporaryRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "orchestrator-agent-input-"));
+  roots.push(root);
+  return root;
 }
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
 
 describe("SubagentsIntegration", () => {
   test("runs reviewer requests in parallel with a fresh context", async () => {
@@ -73,8 +49,8 @@ describe("SubagentsIntegration", () => {
     ).resolves.toHaveLength(2);
 
     const requests = events.emitted
-      .filter(({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT)
-      .map(({ payload }) => requireRecord(payload));
+      .filter(({ event }) => event === SUBAGENT_RPC_REQUEST_EVENT)
+      .map(({ payload }) => childRequest(payload));
     expect(requests.map((request) => request.agent)).toEqual([
       "reviewer",
       "ponytail-reviewer",
@@ -82,7 +58,12 @@ describe("SubagentsIntegration", () => {
     expect(requests.every((request) => request.context === "fresh")).toBe(true);
   });
 
-  test("uses only the public delegation contract and carries refs/profile", async () => {
+  test("carries verified contents, refs and profile through the public delegation contract", async () => {
+    const store = new ArtifactStore(await temporaryRoot());
+    const planContent = "# Approved plan\nImplement only this scope.";
+    const scoutContent = "# Scout\n既存の実装はありません。";
+    const planRef = await store.writeText("plan", "plan-v1.md", planContent);
+    const contextRef = await store.writeText("scout", "scout.md", scoutContent);
     const events = new FakeEventBus();
     const input: AgentRunRequest = {
       agent: "worker",
@@ -97,23 +78,205 @@ describe("SubagentsIntegration", () => {
     };
 
     await expect(
-      new SubagentsIntegration(events, { ownerRunId: "workflow-1" }).run(input),
+      new SubagentsIntegration(events, {
+        ownerRunId: "workflow-1",
+        artifactReader: store,
+      }).run(input),
     ).resolves.toMatchObject({ status: "succeeded", output: "implemented" });
 
-    const request = requireRecord(
-      events.emitted.find(
-        ({ event }) => event === SUBAGENT_DELEGATION_REQUEST_EVENT,
-      )?.payload,
+    const request = childRequest(
+      events.emitted.find(({ event }) => event === SUBAGENT_RPC_REQUEST_EVENT)
+        ?.payload,
     );
     expect(request).toMatchObject({
       agent: "worker",
       cwd: "/repo",
-      model: "provider-a/model-a",
-      thinking: "high",
-      result: { kind: "text" },
+      model: "provider-a/model-a:high",
+      async: true,
+      output: false,
+      outputMode: "inline",
+      outputSchema: false,
     });
-    expect(request.task).toContain(JSON.stringify([planRef, contextRef]));
+    expect(request.context).toBe("fresh");
+    expect(request.task).toContain(
+      JSON.stringify([
+        { ref: planRef, content: planContent },
+        { ref: contextRef, content: scoutContent },
+      ]),
+    );
+    expect(request.task).not.toContain(
+      "read through the orchestrator ArtifactStore",
+    );
     expect(request).not.toHaveProperty("provider");
     expect(request).not.toHaveProperty("inputRefs");
+  });
+
+  test.each(["missing-reader", "missing-file", "hash-mismatch", "unsafe-path"])(
+    "does not dispatch unreadable artifact inputs: %s",
+    async (failure) => {
+      const store = new ArtifactStore(await temporaryRoot());
+      let ref: ArtifactRef = await store.writeText(
+        "task",
+        "task.md",
+        "original",
+      );
+      if (failure === "missing-file")
+        await rm(join(store.rootDirectory, ref.path));
+      if (failure === "hash-mismatch")
+        await writeFile(join(store.rootDirectory, ref.path), "changed");
+      if (failure === "unsafe-path") ref = { ...ref, path: "../task.md" };
+      const events = new FakeEventBus();
+      await expect(
+        new SubagentsIntegration(
+          events,
+          failure === "missing-reader" ? {} : { artifactReader: store },
+        ).run({
+          agent: "pi-ketch.researcher",
+          task: "Research",
+          inputRefs: [ref],
+        }),
+      ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
+      expect(events.emitted).toHaveLength(0);
+    },
+  );
+
+  test("bounds the full UTF-8 task including artifact contents without truncation", async () => {
+    const store = new ArtifactStore(await temporaryRoot());
+    const refs = await Promise.all([
+      store.writeText("task", "task.md", "あ".repeat(180_000)),
+      store.writeText("scout", "scout.md", "い".repeat(180_000)),
+    ]);
+    const events = new FakeEventBus();
+    const integration = new SubagentsIntegration(events, {
+      artifactReader: store,
+    });
+    await expect(
+      integration.run({ agent: "reviewer", task: "Review", inputRefs: refs }),
+    ).rejects.toThrow("exceeds 1 MiB");
+    await expect(
+      integration.run({ agent: "reviewer", task: "x".repeat(1024 * 1024 + 1) }),
+    ).rejects.toThrow("exceeds 1 MiB");
+    expect(events.emitted).toHaveLength(0);
+    await expect(
+      integration.run({ agent: "reviewer", task: "x".repeat(1024 * 1024) }),
+    ).resolves.toMatchObject({ status: "succeeded" });
+  });
+
+  test("does not dispatch when the persisted deadline expires during artifact reads", async () => {
+    const events = new FakeEventBus();
+    const ref = createArtifactRef("task", "context/task.md", "task");
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const dispatch = {
+      requestId: "request-1",
+      ownerRunId: "workflow-1",
+      nodeId: "scout",
+      deadline: new Date(now + 60_000).toISOString(),
+    };
+    const integration = new SubagentsIntegration(events, {
+      artifactReader: {
+        readText: async () => {
+          clock.mockReturnValue(now + 60_001);
+          return "task";
+        },
+      },
+    });
+    await expect(
+      integration.run({
+        agent: "workflow-scout",
+        task: "Scout",
+        inputRefs: [ref],
+        dispatch,
+      }),
+    ).rejects.toThrow("expired subagent dispatch identity");
+    expect(events.emitted).toHaveLength(0);
+  });
+
+  test("context gathering waits for the researcher's reply and publishes its final result only once", async () => {
+    const root = await temporaryRoot();
+    let signalResearch:
+      | ((request: Record<string, unknown>) => void)
+      | undefined;
+    const researchStarted = new Promise<Record<string, unknown>>((resolve) => {
+      signalResearch = resolve;
+    });
+    const events = new FakeEventBus((request, rpc) => {
+      const id = `${String(request.agent)}-1`;
+      rpc.receipt(request, id);
+      if (request.agent === "pi-ketch.researcher") signalResearch?.(request);
+      else rpc.complete(request, id, "complete", "local facts");
+    });
+    const runtime = createWorkflowCommandRuntime(events, root);
+    let settled = false;
+    const start = runtime
+      .start({ task: "Reversi", playbook: "new-project" })
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    const research = await researchStarted;
+    const id = String(research.ownerRunId);
+    events.deliver("subagent:control-intercom", {
+      runId: "pi-ketch.researcher-1",
+      reason: "need_decision",
+    });
+    const waiting = await runtime.loadState(id);
+    expect(waiting.phase).toBe("gathering-context");
+    expect(waiting.block).toBeUndefined();
+    expect(waiting.planning.context.researchRef).toBeUndefined();
+    expect(settled).toBe(false);
+    expect(events.emitted).toHaveLength(2);
+    events.complete(
+      research,
+      "pi-ketch.researcher-1",
+      "complete",
+      "research after supervisor reply",
+    );
+    const result = await start;
+    expect(result.state.phase).toBe("planning");
+    const store = new ArtifactStore(result.runDirectory);
+    expect(
+      await store.readText(result.state.planning.context.researchRef!),
+    ).toBe("research after supervisor reply");
+    events.complete(research, "pi-ketch.researcher-1", "complete", "duplicate");
+    expect((await runtime.loadState(id)).stateRevision).toBe(
+      result.state.stateRevision,
+    );
+    expect(events.emitted).toHaveLength(2);
+  });
+
+  test("new-project commands supply task and scout contents and isolate concurrent workflows", async () => {
+    const root = await temporaryRoot();
+    const events = new FakeEventBus();
+    const runtime = createWorkflowCommandRuntime(events, root);
+    const tasks = ["ブラウザで遊べるリバーシゲーム", "別のプロジェクトの時計"];
+    const started = await Promise.all(
+      tasks.map((task) => runtime.start({ task, playbook: "new-project" })),
+    );
+    const requests = events.emitted.map(({ payload }) => childRequest(payload));
+    expect(requests).toHaveLength(4);
+    for (const [index, workflow] of started.entries()) {
+      expect(workflow.state.phase).toBe("planning");
+      const children = requests.filter(
+        (request) => request.ownerRunId === workflow.workflowId,
+      );
+      expect(children.map((request) => request.agent)).toEqual([
+        "workflow-scout",
+        "pi-ketch.researcher",
+      ]);
+      for (const child of children) {
+        expect(child.cwd).toBe(root);
+        expect(child.context).toBe("fresh");
+        expect(child.task).toContain(JSON.stringify(tasks[index]));
+        expect(child.task).not.toContain(tasks[1 - index]);
+        expect(child.task).toContain(JSON.stringify(workflow.taskRef));
+      }
+      expect(children[1]?.task).toContain(
+        JSON.stringify({
+          ref: workflow.state.planning.context.scoutRef,
+          content: "implemented",
+        }),
+      );
+    }
   });
 });

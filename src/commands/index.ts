@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
   ExtensionAPI,
@@ -240,20 +241,35 @@ export function createWorkflowCommandRuntime(
   options: WorkflowCommandRuntimeOptions = {},
 ): WorkflowCommandRuntime {
   const root = runsDirectory(cwd);
-  const subagentExecutor = new SubagentsIntegration(events, { cwd });
   const configuration = options.configuration;
   return {
-    start: (input) =>
-      startWorkflow(
+    start: (input) => {
+      const workflowId = randomUUID();
+      const artifactStore = new ArtifactStore(join(root, workflowId));
+      return startWorkflow(
         { ...input, cwd: input.cwd ?? cwd },
-        { runsDirectory: root, subagentExecutor },
-      ),
+        {
+          runsDirectory: root,
+          workflowIdFactory: () => workflowId,
+          artifactStore,
+          subagentExecutor: new SubagentsIntegration(events, {
+            cwd,
+            ownerRunId: workflowId,
+            artifactReader: artifactStore,
+          }),
+        },
+      );
+    },
     resume: (workflowId) => {
       const artifactStore = new ArtifactStore(join(root, workflowId));
       return resumeWorkflow(workflowId, {
         runsDirectory: root,
         artifactStore,
-        subagentExecutor,
+        subagentExecutor: new SubagentsIntegration(events, {
+          cwd,
+          ownerRunId: workflowId,
+          artifactReader: artifactStore,
+        }),
         cwd,
         repositoryCwd: cwd,
         configuration,
