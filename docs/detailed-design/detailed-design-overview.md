@@ -4,7 +4,7 @@ Version: 1.0
 
 ## 1. Purpose
 
-This document defines the detailed design boundary for pi-orchestrator v1.0.
+This document defines the detailed design boundary for pi-orchestrator's Initial Scope.
 
 The following Basic Design documents are authoritative and are not changed by this detailed design:
 
@@ -16,7 +16,7 @@ The following Basic Design documents are authoritative and are not changed by th
 6. [configuration.md](../basic-design/configuration.md)
 7. [directory-structure.md](../basic-design/directory-structure.md)
 
-## 2. v1 Design Boundary
+## 2. Initial Scope Design Boundary
 
 The following rules are mandatory:
 
@@ -31,9 +31,9 @@ The following rules are mandatory:
 - State persistence must succeed before the next stage side effect begins.
 - Retry loops are bounded and transition to `blocked` when exhausted.
 
-## 3. v1 Scope Out
+## 3. Initial Scope Out
 
-The following Basic Design v1.1+ items are intentionally excluded:
+The following Future Scope items from Basic Design are intentionally excluded:
 
 - Multiple Coding Orchestrations
 - Work Package DAG
@@ -58,16 +58,16 @@ The following Basic Design v1.1+ items are intentionally excluded:
 
 ## 5. Resolved Detailed-Design Interpretations
 
-These interpretations do not change Basic Design v1.0.
+These interpretations do not change Basic Design (document revision 1.0).
 
 ### 5.1 `architecture/`
 
-[directory-structure.md](../basic-design/directory-structure.md) shows an `architecture/` runtime directory, while [artifacts.md](../basic-design/artifacts.md) states that a standalone architecture artifact is not required in v1.
+[directory-structure.md](../basic-design/directory-structure.md) shows an `architecture/` runtime directory, while [artifacts.md](../basic-design/artifacts.md) states that a standalone architecture artifact is not required in the Initial Scope.
 
 Resolution:
 
 - Do not create `architecture/` eagerly.
-- Architecture / Design remains part of `plan-vN.md` in v1.
+- Architecture / Design remains part of `plan-vN.md` in the Initial Scope.
 - Create the directory only if a real artifact is introduced later.
 
 ### 5.2 Clarification routing evidence
@@ -86,7 +86,7 @@ Human Code Feedback does not consume the automated retry budget.
 
 Stronger retry uses a deterministic monotonic escalation rule defined in `coding-orchestration.md`.
 
-This is not Jev Escalation Target selection and therefore remains within v1.
+This is not Jev Escalation Target selection and therefore remains within the Initial Scope.
 
 ## 6. Remaining Configuration Values
 

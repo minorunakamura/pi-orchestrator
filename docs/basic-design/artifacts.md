@@ -271,7 +271,7 @@ Jev は `status` 自体を決めない。
 
 ## 11. Plan Artifact / Validation Contract
 
-v1 では Architecture / Design と Validation Contract は Planner が Plan 内に持つ。
+Initial Scope では Architecture / Design と Validation Contract は Planner が Plan 内に持つ。
 
 Plan の推奨構造:
 
@@ -295,7 +295,7 @@ Validation Contract は Implementation 後の deterministic validation の正本
 - task-specific regression / focused verification
 ```
 
-独立した `architecture.md` は v1 の必須 Artifact としない。
+独立した `architecture.md` は Initial Scope の必須 Artifact としない。
 
 ---
 
@@ -416,7 +416,7 @@ Valid decision artifact が current input と一致する場合は再利用可�
 
 ---
 
-## 18. v1.1+
+## 18. Future Scope
 
 追加 candidate artifact:
 

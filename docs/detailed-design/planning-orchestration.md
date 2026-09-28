@@ -4,7 +4,7 @@ Version: 1.1
 
 ## 1. Purpose
 
-This document defines Planning Orchestration for pi-orchestrator v1.0.
+This document defines Planning Orchestration for pi-orchestrator's Initial Scope.
 
 ## 2. Pipeline
 
@@ -32,7 +32,7 @@ Local repository facts are produced by `workflow-scout`.
 
 External facts are produced by `pi-ketch.researcher` when Playbook policy requires research.
 
-v1 does not use Jev Context Routing.
+The Initial Scope does not use Jev Context Routing.
 
 ```ts
 export interface ContextGatheringResult {
@@ -47,7 +47,7 @@ Playbook Stage Policy remains:
 export type StagePolicy = "required" | "conditional" | "skip";
 ```
 
-For v1, `conditional` is resolved by explicit Playbook / Orchestrator policy only.
+For the Initial Scope, `conditional` is resolved by explicit Playbook / Orchestrator policy only.
 
 `startWorkflow` resolves research, clarification, and architecture once and persists `researchRequired`, `clarificationRequired`, and `architectureRequired` in the initial State before launching the first child. Context gathering and plan creation consume only these persisted values, including after `BLOCK_RESOLVED`; they do not accept replacement policy hints on resume. Saved scout/research refs are reused rather than rerunning completed children. Missing legacy policy fails closed before child execution; no implicit skip or guessed migration is allowed.
 
@@ -121,7 +121,7 @@ Implementation Plan
 Validation Contract
 ```
 
-Architecture / Design remains embedded in the Plan in v1.
+Architecture / Design remains embedded in the Plan in the Initial Scope.
 
 ## 7. Validation Contract
 
@@ -167,7 +167,7 @@ export interface ValidationCheck {
 }
 ```
 
-v1 Validation Contract contains deterministic executable checks only.
+The Initial Scope Validation Contract contains deterministic executable checks only.
 
 If the block cannot be parsed or validated, `PLAN_CREATED` must not be emitted.
 

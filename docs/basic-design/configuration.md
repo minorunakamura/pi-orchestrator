@@ -4,7 +4,7 @@ Version: 1.0
 
 ## 1. 目的
 
-本書は pi-orchestrator v1 の configurable policy と、その ownership / default / persistence boundary を定義する。
+本書は pi-orchestrator Initial Scope の configurable policy と、その ownership / default / persistence boundary を定義する。
 
 Configuration は Workflow State ではない。
 
@@ -44,7 +44,7 @@ Automated retry は必ず上限を持つ。
 
 ---
 
-## 3. v1 Configuration
+## 3. Initial Scope Configuration
 
 概念例:
 
@@ -96,7 +96,7 @@ user settings を deep override）に従う。Project が untrusted の場合は
 
 ---
 
-## 4. Recommended v1 Defaults
+## 4. Recommended Initial Scope Defaults
 
 ```text
 maxAutomatedFixRounds = 3
@@ -188,7 +188,7 @@ Configuration が task-specific test requirement を勝手に追加・削除し�
 
 ## 8. Jev Configuration
 
-v1 Jev use:
+Initial Scope Jev use:
 
 - Coding Entry Routing
 - Finding Evaluation
@@ -220,9 +220,9 @@ Decision artifact には policy version / configuration digest を持たせ、re
 
 ---
 
-## 10. Future
+## 10. Future Scope
 
-v1.1+:
+Future Scope:
 
 - Context Routing policy
 - Conditional Stage policy

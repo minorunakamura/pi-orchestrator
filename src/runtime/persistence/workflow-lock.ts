@@ -122,7 +122,7 @@ export class WorkflowLock {
     } catch (error) {
       if (errorCode(error) === "EEXIST") {
         // Fail closed even for stale locks: unlinking by path could delete a
-        // replacement owner's lock. Recovery is outside acquisition in v1.
+        // replacement owner's lock. Recovery is outside acquisition in the Initial Scope.
         throw new WorkflowLockUnavailableError(this.lockPath);
       }
       throw asLockError(

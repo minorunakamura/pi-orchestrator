@@ -1,6 +1,19 @@
 # Pi Orchestrator Documentation
 
-Pi Orchestrator v1 の設計・実装ドキュメントを、役割ごとに3階層へ分けて管理する。
+Pi Orchestrator の Initial Scope に関する設計・実装ドキュメントを、設計・実装の3階層と release evidence に分けて管理する。
+
+## Release entrypoints
+
+- [利用者向け README](../README.md) — installation、commands、lifecycle、configuration、known constraints
+- [Initial Scope release notes](../CHANGELOG.md) — 実装・検証済みの利用者向け変更点
+- [v0.1.0 release evidence](./release/v0.1.0.md) — ORCH-020 completion、validation、package inspection、release boundary
+
+## Terminology
+
+- **Initial Scope**: 現在実装・検証済みの product scope。
+- **Future Scope**: Initial Scope では意図的に除外し、将来検討する機能。
+- Package release version (`0.1.0`) は、上記の design-scope names とは独立している。
+- `Basic Design (document revision 1.0)` などの表記は document revision を示し、package release version ではない。
 
 ## 1. Reading Order
 
@@ -28,14 +41,15 @@ docs/
 ├── README.md
 ├── basic-design/
 ├── detailed-design/
-└── implementation/
+├── implementation/
+└── release/
 ```
 
 ## 3. Basic Design
 
-Basic Design v1.0 は v1 の前提・制約・権限境界の正本。Detailed Design や Implementation Plan は、Basic Design と矛盾する変更を行わない。
+Basic Design (document revision 1.0) は Initial Scope の前提・制約・権限境界の正本。Detailed Design や Implementation Plan は、Basic Design と矛盾する変更を行わない。
 
-- [basic-design.md](./basic-design/basic-design.md) — 全体目的、責務境界、v1 scope
+- [basic-design.md](./basic-design/basic-design.md) — 全体目的、責務境界、Initial Scope
 - [state-machine.md](./basic-design/state-machine.md) — Workflow State / Event / Transition の正本
 - [decision-engine.md](./basic-design/decision-engine.md) — Jev Decision Contract の正本
 - [artifacts.md](./basic-design/artifacts.md) — Artifact / Authority / Persistence ordering
@@ -45,7 +59,7 @@ Basic Design v1.0 は v1 の前提・制約・権限境界の正本。Detailed D
 
 ## 4. Detailed Design
 
-Basic Design v1.0 を変更せず、実装可能な型・契約・runtime behavior へ具体化する。
+Basic Design (document revision 1.0) を変更せず、Initial Scope の実装可能な型・契約・runtime behavior へ具体化する。
 
 - [detailed-design-overview.md](./detailed-design/detailed-design-overview.md) — 詳細設計の境界と解釈
 - [domain-model.md](./detailed-design/domain-model.md) — TypeScript domain model / State / Event
@@ -83,4 +97,4 @@ Pi package を読み込むと、workflow の開始・reconciliation・read-only 
 
 実装中に Basic Design と矛盾する変更が必要になった場合は、実装側だけで吸収しない。変更理由と影響範囲を明示し、Basic Design の変更として扱う。
 
-v1.1+ と定義された機能は、v1 の Detailed Design / Implementation に先行実装しない。
+Future Scope と定義された機能は、Initial Scope の Detailed Design / Implementation に先行実装しない。

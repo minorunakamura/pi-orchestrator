@@ -4,7 +4,7 @@ Version: 1.2
 
 ## 1. Purpose
 
-This document defines the TypeScript domain model used by pi-orchestrator v1.0.
+This document defines the TypeScript domain model used by pi-orchestrator's Initial Scope.
 
 `core/` must remain independent of Pi, pi-subagents, Plannotator, TypeSafe/Jev SDKs, filesystem APIs, and transport-specific types.
 
@@ -56,7 +56,7 @@ export interface ArtifactRef<K extends ArtifactKind = ArtifactKind> {
 
 ## 4. Workflow Phase
 
-The phase type remains identical to Basic Design v1.0.
+The phase type remains identical to Basic Design (document revision 1.0).
 
 ```ts
 export type WorkflowPhase =

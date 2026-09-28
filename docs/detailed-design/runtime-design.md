@@ -4,7 +4,7 @@ Version: 1.7
 
 ## 1. Purpose
 
-This document defines runtime responsibility boundaries and external integration ports for pi-orchestrator v1.0.
+This document defines runtime responsibility boundaries and external integration ports for pi-orchestrator's Initial Scope.
 
 ## 2. Dependency Direction
 
@@ -222,7 +222,7 @@ For Code Review, `coding.codeReview` durably binds `reviewId + exact implementat
 
 ### Selected client package
 
-v1 uses [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) as the Jev client package.
+The Initial Scope uses [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) as the Jev client package.
 
 The product runtime uses the package's **public library API** from `runtime/integrations/jev.ts`; it does not route decisions through the `typesafe_evaluate` Pi agent tool. Consequently, `/typesafe enable` is not a prerequisite for pi-orchestrator's runtime decision calls.
 
@@ -240,7 +240,7 @@ TypeSafe / Jev
 
 - `pi-typesafe` client creation / public-API calls
 - authentication / availability normalization
-- backend / transport options permitted by v1 configuration
+- backend / transport options permitted by Initial Scope configuration
 - Choice / Score / Noul external schema handling
 - confidence normalization
 - response validation
@@ -255,7 +255,7 @@ The adapter converts `pi-typesafe` success/failure results into the existing `Je
 
 pi-orchestrator owns and enforces the permission to send evidence and incur Jev requests. The package's agent-tool opt-in state is not Workflow authority. Neither `/typesafe enable`, an available API key, a Plan approval, nor model confidence constitutes Product Runtime consent.
 
-Minimum v1 contract:
+Minimum Initial Scope contract:
 
 - Before any network request, runtime requires explicit operator-authorized Product Runtime consent scoped to the project/workflow, destination/backend, and permitted evidence categories. Record a non-secret consent identity/scope and policy version; missing, revoked, or mismatched consent denies dispatch. No new Human Gate bypass or consent UI is implied.
 - Product configuration supplies a finite per-workflow outbound-request allowance. Runtime durably reserves an attempt before each dispatch, including per-finding requests and transport retries. The persisted counter survives client recreation/restart; library defaults or an in-memory counter are not the budget authority.
@@ -263,7 +263,7 @@ Minimum v1 contract:
 - The adapter's transport retry loop must obtain permission/reservation for every attempt through the orchestrator-owned boundary; public library budget checks can add restrictions but cannot replace that boundary. Provider/auth/transport failures still normalize to the integration failure path, with no LLM fallback.
 - Retain consent/policy identity, allowance/attempt count, and available usage metadata as bounded durable runtime evidence. Never persist API keys, auth headers, or secret-bearing URLs. Full accounting recovery belongs to ORCH-018; conservative denial on ambiguity is required now.
 
-These are orchestrator-side policy and persistence contracts. They require no change to `pi-typesafe`, no dependency on `/typesafe enable`, and no v1.1 decision family.
+These are orchestrator-side policy and persistence contracts. They require no change to `pi-typesafe`, no dependency on `/typesafe enable`, and no Future Scope decision family.
 
 ### Runtime Policy Configuration and Accounting
 
@@ -316,14 +316,14 @@ ValidationRunner persists infrastructure evidence separately from ordinary check
 
 ## 10. Concurrency
 
-v1 allows concurrency only where it does not violate the single Coding Orchestration model.
+The Initial Scope allows concurrency only where it does not violate the single Coding Orchestration model.
 
 Allowed:
 
 - Scout and Researcher in parallel when Playbook policy requires both.
 - Correctness Reviewer and Ponytail Reviewer in parallel.
 
-Not allowed in v1:
+Not allowed in the Initial Scope:
 
 - multiple Worker branches
 - Work Package parallel execution
@@ -331,7 +331,7 @@ Not allowed in v1:
 
 ## 11. Third-Party Dependency Boundary
 
-Third-party libraries and packages are read-only dependencies of pi-orchestrator v1.
+Third-party libraries and packages are read-only dependencies of the pi-orchestrator Initial Scope.
 
 This includes, but is not limited to:
 
@@ -345,7 +345,7 @@ This includes, but is not limited to:
 
 Forbidden approaches include direct source edits, `node_modules` edits, required package patches, and forks that add orchestrator-specific behavior.
 
-This rule has no exception in v1. A temporary local patch, development-only fork, or modified installed package must not become part of the implementation or test prerequisite.
+This rule has no exception in the Initial Scope. A temporary local patch, development-only fork, or modified installed package must not become part of the implementation or test prerequisite.
 
 All adaptation must remain on the pi-orchestrator side of the integration boundary. If a public contract is insufficient and no safe wrapper is possible, the runtime must use a safe blocked/unsupported path rather than mutate the dependency.
 
@@ -376,7 +376,7 @@ Pi
 
 The test harness must create a new Herdr tab in `HERDR_WORKSPACE_ID`, use the repository as the tab working directory, obtain the root pane ID, and start Pi in that pane with Herdr's agent lifecycle command.
 
-The runtime source tree must not add `runtime/integrations/herdr.ts` for v1. Herdr-specific automation belongs to the test/development harness only.
+The runtime source tree must not add `runtime/integrations/herdr.ts` for the Initial Scope. Herdr-specific automation belongs to the test/development harness only.
 
 `tmux` is not part of the supported development/test process topology.
 

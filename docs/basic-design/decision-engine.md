@@ -4,7 +4,7 @@ Version: 1.0
 
 ## 1. 目的
 
-本書は pi-orchestrator における Jev の責務、Decision Contract、v1 利用箇所、Policy Boundary、Failure Handling、v1.1+ の拡張方針を定義する。
+本書は pi-orchestrator における Jev の責務、Decision Contract、Initial Scope の利用箇所、Policy Boundary、Failure Handling、Future Scope の拡張方針を定義する。
 
 Jev は Workflow の生成主体ではない。
 
@@ -96,7 +96,7 @@ Jev response normalization は `runtime/integrations/jev.ts` が担当する。
 
 ---
 
-## 4. v1 Decision Point A: Coding Entry Routing
+## 4. Initial Scope Decision Point A: Coding Entry Routing
 
 ### Goal
 
@@ -154,7 +154,7 @@ Model catalog の変更で Decision Contract を変更しない。
 
 ### Low Confidence
 
-v1 の default policy:
+Initial Scope の default policy:
 
 ```text
 low confidence
@@ -165,7 +165,7 @@ low confidence
 
 ---
 
-## 5. v1 Decision Point B: Finding Evaluation
+## 5. Initial Scope Decision Point B: Finding Evaluation
 
 ### Goal
 
@@ -245,7 +245,7 @@ insufficient confidence
 
 ---
 
-## 6. v1 Decision Point C: Post-Implementation Round Decision
+## 6. Initial Scope Decision Point C: Post-Implementation Round Decision
 
 ### Goal
 
@@ -307,11 +307,11 @@ fixing
 
 現在の execution loop だけでは安全に解決できない。
 
-v1 は reason classification + deterministic target mapping を使用する。
+Initial Scope は reason classification + deterministic target mapping を使用する。
 
 ---
 
-## 7. v1 Escalation Reason
+## 7. Initial Scope Escalation Reason
 
 例:
 
@@ -323,7 +323,7 @@ type EscalationReason =
   | "uncertain";
 ```
 
-v1 mapping:
+Initial Scope mapping:
 
 | Reason | Target |
 |---|---|
@@ -386,7 +386,7 @@ interface ConfidencePolicy {
 
 Threshold は configuration で管理可能とする。
 
-v1 では conservative default を採用する。
+Initial Scope では conservative default を採用する。
 
 Low-confidence decision を silent accept しない。
 
@@ -394,7 +394,7 @@ Low-confidence decision を silent accept しない。
 
 ## 10. Jev Failure Handling
 
-v1 では Jev は required integration。
+Initial Scope では Jev は required integration。
 
 以下を silent fallback しない。
 
@@ -418,7 +418,7 @@ terminal `failed` にはしない。
 
 Workflow は Jev 復旧後 `/wf-resume` により reconciliation し、元の Phase から再開可能とする。
 
-LLM evaluator への自動 fallback は v1 では行わない。
+LLM evaluator への自動 fallback は Initial Scope では行わない。
 
 将来 configuration により explicit fallback policy を追加可能とする。
 
@@ -443,7 +443,7 @@ Decision reuse 条件:
 
 Decision Engine が自動 loop を無制限に継続させてはならない。
 
-v1 recommended defaults:
+Initial Scope recommended defaults:
 
 ```text
 maxAutomatedFixRounds = 3
@@ -466,7 +466,7 @@ Jev confidence threshold、modelTier mapping、reasoningTier mapping も Configu
 
 ---
 
-## 13. v1.1: Context Routing
+## 13. Future Scope: Context Routing
 
 Candidate:
 
@@ -489,7 +489,7 @@ Jev は Research 内容を生成しない。
 
 ---
 
-## 14. v1.1: Conditional Stage Decision
+## 14. Future Scope: Conditional Stage Decision
 
 Playbook:
 
@@ -523,11 +523,11 @@ Human Gate の「Approve」は Jev に代替させない。
 
 ---
 
-## 15. v1.1: Escalation Target
+## 15. Future Scope: Escalation Target
 
-v1 は reason → target を code で mapping する。
+Initial Scope は reason → target を code で mapping する。
 
-v1.1 Candidate:
+Future Scope candidate:
 
 ```text
 STRONGER_WORKER
@@ -541,7 +541,7 @@ Orchestrator policy が allowed target を制限する。
 
 ---
 
-## 16. v1.1: Validation Failure Classification
+## 16. Future Scope: Validation Failure Classification
 
 deterministic result:
 
@@ -565,7 +565,7 @@ failure log の意味分類のみ Jev。
 
 ---
 
-## 17. v1.2+ Candidate
+## 17. Future Scope Candidate
 
 ### Agent Trace Observability
 

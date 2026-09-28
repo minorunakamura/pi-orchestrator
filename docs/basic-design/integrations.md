@@ -92,7 +92,7 @@ TypeSafe System One は typed decision を返す external decision service と�
 
 ### Selected Integration Package
 
-v1 では Jev client integration として [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) を採用する。
+Initial Scope では Jev client integration として [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) を採用する。
 
 `pi-orchestrator` は `pi-typesafe` の公開 library API を `runtime/integrations/jev.ts` から利用する。
 
@@ -110,7 +110,7 @@ TypeSafe / Jev
 
 `pi-typesafe` は read-only third-party dependency とし、source modification / fork / patch を前提にしない。
 
-v1 use:
+Initial Scope use:
 
 ```text
 Coding Entry Routing
@@ -141,7 +141,7 @@ User consent / budget policy は pi-orchestrator 自身が所有する。`pi-typ
 
 ### Failure
 
-v1 は required integration。
+Initial Scope は required integration。
 
 Default:
 
@@ -200,7 +200,7 @@ pi-ketch.researcher
     → external facts
 ```
 
-v1.1 Context Routing で `RESEARCH` が選ばれた場合の executor 候補。
+Future Scope の Context Routing で `RESEARCH` が選ばれた場合の executor 候補。
 
 ---
 
@@ -224,7 +224,7 @@ ask_user_question
 
 Jev は Human-facing question text を生成しない。
 
-v1.1 Context Routing で `CLARIFY` が選ばれた場合も、実際の clarification は grilling が担当する。
+Future Scope の Context Routing で `CLARIFY` が選ばれた場合も、実際の clarification は grilling が担当する。
 
 ---
 
@@ -379,7 +379,7 @@ Jev call を resume のたびに再実行しない。
 
 ---
 
-## 15. v1.1+
+## 15. Future Scope
 
 ### Jev
 

@@ -102,7 +102,7 @@ export function resolveStagePolicy(
   policy: StagePolicy,
   context: PlaybookContext = {},
 ): ResolvedStagePolicy {
-  // Human Gates are hard v1 rules, not configurable stage choices.
+  // Human Gates are hard Initial Scope rules, not configurable stage choices.
   if (stage === "plan-review" || stage === "code-review") return "required";
   if (policy === "required") return "required";
   if (policy === "skip") return "skip";

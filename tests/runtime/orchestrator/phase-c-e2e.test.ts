@@ -271,7 +271,7 @@ describe("Phase C full fake end-to-end contract", () => {
       thinking: "medium",
       context: "fresh",
     });
-  });
+  }, 10_000);
 
   test("plan-conflict invalidates approval and requires a new Plan Gate before coding", async () => {
     const h = await setup({

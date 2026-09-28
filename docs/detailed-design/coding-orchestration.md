@@ -4,9 +4,9 @@ Version: 1.2
 
 ## 1. Purpose
 
-This document defines Coding Orchestration for pi-orchestrator v1.0.
+This document defines Coding Orchestration for pi-orchestrator's Initial Scope.
 
-v1 contains exactly one Coding Orchestration.
+The Initial Scope contains exactly one Coding Orchestration.
 
 ## 2. Pipeline
 
@@ -99,7 +99,7 @@ A changed implementation revision, context, retry count, or relevant configurati
 
 If confidence is at or above `autoDecisionThreshold`, use the selected logical profile.
 
-If below threshold, v1 default is a safe stronger profile rather than silently accepting the uncertain choice.
+If below threshold, the Initial Scope default is a safe stronger profile rather than silently accepting the uncertain choice.
 
 ## 5. Worker Input
 
@@ -232,7 +232,7 @@ Runtime applies `stopOnInfrastructureFailure` to an `infrastructure-error` resul
 - `true` (default): persist `BLOCK` with reason `validation-infrastructure-error` and the validation evidence ref before any Jev, reviewer, or Worker call.
 - `false`: the evidence may reach Round Decision for Human attention, but deterministic policy forces `uncertain` (or an already-required Human decision); no COMPLETE, automated RETRY, or stronger retry is allowed while infrastructure is unresolved.
 
-Neither setting converts infrastructure failure to an ordinary failed check or to passed. A thrown executor infrastructure error follows the same safe boundary, retaining diagnostic evidence. This is deterministic runtime policy, not the v1.1 semantic validation-failure classifier.
+Neither setting converts infrastructure failure to an ordinary failed check or to passed. A thrown executor infrastructure error follows the same safe boundary, retaining diagnostic evidence. This is deterministic runtime policy, not the Future Scope semantic validation-failure classifier.
 
 ## 8. Automated Review
 
@@ -350,7 +350,7 @@ Human Code Approval is outside Round Decision and remains mandatory.
 
 ## 12. Escalation Mapping
 
-v1 uses deterministic mapping:
+The Initial Scope uses deterministic mapping:
 
 ```text
 implementation-capability
@@ -366,10 +366,10 @@ human-decision
     → Human Plan Gate
 
 uncertain
-    → clarification / Human attention according to v1 policy
+    → clarification / Human attention according to Initial Scope policy
 ```
 
-Jev does not select an arbitrary target in v1.
+Jev does not select an arbitrary target in the Initial Scope.
 
 ## 13. Stronger Retry
 
@@ -398,7 +398,7 @@ reason = stronger-profile-unavailable
 
 ## 14. Retry Budget
 
-Recommended v1 defaults:
+Recommended Initial Scope defaults:
 
 ```text
 maxAutomatedFixRounds = 3

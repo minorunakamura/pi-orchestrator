@@ -1,10 +1,10 @@
-# Pi Orchestrator v1 Implementation Plan
+# Pi Orchestrator Initial Scope Implementation Plan
 
 Version: 1.7
 
 ## 1. Goal
 
-Implement Basic Design v1.0 and the v1 Detailed Design without introducing v1.1+ runtime functionality.
+Implement Basic Design (document revision 1.0) and the Initial Scope Detailed Design without introducing Future Scope runtime functionality.
 
 This plan is organized as dependency-ordered Stories. The default rule is:
 
@@ -22,14 +22,14 @@ Each PR must leave the repository compileable and testable. A later PR must not 
 - External integrations are introduced behind runtime ports.
 - Fake adapters are available before real adapters.
 - Third-party libraries/packages are consumed through published contracts and are treated as read-only dependencies.
-- Pi, pi-subagents, Plannotator, pi-ketch, pi-ask-user-question, Jev/TypeSafe clients, and other external dependencies must not be patched, forked, or modified for pi-orchestrator v1.
+- Pi, pi-subagents, Plannotator, pi-ketch, pi-ask-user-question, Jev/TypeSafe clients, and other external dependencies must not be patched, forked, or modified for the pi-orchestrator Initial Scope.
 - Real Pi processes used by Integration / Smoke Tests are launched in a new Herdr tab; tmux is not used.
 - Herdr is a development/test harness dependency only and must not become a pi-orchestrator runtime dependency.
 - Human Plan Gate and Human Code Gate are never temporarily bypassed.
 - Validation failure never directly transitions to `fixing`.
 - Raw findings never become Fix Authority.
 - Retry loops are bounded from the first PR that introduces a loop.
-- v1.1+ placeholders are not added unless required by a v1 abstraction already defined in Basic Design.
+- Future Scope placeholders are not added unless required by an Initial Scope abstraction already defined in Basic Design.
 
 ## 2.1 Third-Party Modification Policy
 
@@ -40,7 +40,7 @@ Forbidden:
 ```text
 node_modules edits
 pnpm patch / patch-package for required behavior
-forked Pi / pi-subagents / Plannotator as a v1 prerequisite
+forked Pi / pi-subagents / Plannotator as an Initial Scope prerequisite
 changes to third-party source repositories for orchestrator-specific behavior
 private/internal API modifications assumed by pi-orchestrator
 ```
@@ -54,9 +54,9 @@ If a required capability is missing, use this order:
 4. upstream issue / upstream PR / wait for upstream release
 ```
 
-A local third-party patch must never be required for a v1 release candidate.
+A local third-party patch must never be required for an Initial Scope release candidate.
 
-This policy has no exception in v1. It applies to every Story / PR, including Integration Tests, Smoke Tests, temporary debugging, and recovery work.
+This policy has no exception in the Initial Scope. It applies to every Story / PR, including Integration Tests, Smoke Tests, temporary debugging, and recovery work.
 
 A Story is not complete if its acceptance criteria can only be satisfied by changing Pi, pi-subagents, Plannotator, pi-ketch, or another third-party dependency. In that case the Story must use an orchestrator-side adaptation, be marked blocked/unsupported, or wait for an upstream release.
 
@@ -219,7 +219,7 @@ src/types.ts                     # shared public aliases only
 
 ### Tests
 
-- schema accepts valid v1 state/artifacts.
+- schema accepts valid Initial Scope state/artifacts.
 - schema rejects unknown/invalid required enum values.
 - branded/ref helper tests where applicable.
 
@@ -228,7 +228,7 @@ src/types.ts                     # shared public aliases only
 - transitions
 - filesystem persistence
 - actual configuration loading
-- v1.1 decision types
+- Future Scope decision types
 
 ### Depends on
 
@@ -253,7 +253,7 @@ transition guards
 transition errors
 ```
 
-Encode all Basic Design v1 transitions and invariants.
+Encode all Basic Design Initial Scope transitions and invariants.
 
 ### Main files
 
@@ -392,11 +392,11 @@ ORCH-001, ORCH-002, ORCH-003.
 
 ---
 
-## ORCH-005 — v1 Configuration and Playbook Policy
+## ORCH-005 — Initial Scope Configuration and Playbook Policy
 
 ### Goal
 
-Implement validated v1 configuration and deterministic Playbook stage policy.
+Implement validated Initial Scope configuration and deterministic Playbook stage policy.
 
 ### Scope
 
@@ -412,7 +412,7 @@ validation infrastructure policy
 Jev non-secret transport settings
 PlaybookKind
 StagePolicy
-v1 required/conditional/skip rules
+Initial Scope required/conditional/skip rules
 ```
 
 ### Main files
@@ -433,14 +433,14 @@ src/runtime/configuration/load-configuration.ts
 - default retry limits are 3 automated fix rounds / 1 stronger retry unless explicitly configured.
 - secrets are not part of durable configuration snapshots.
 - concrete provider/model mapping is separated from Jev logical tiers.
-- `conditional` is resolved by explicit v1 Playbook/Orchestrator rules, not Jev.
-- no v1.1 routing settings are added.
+- `conditional` is resolved by explicit Initial Scope Playbook/Orchestrator rules, not Jev.
+- no Future Scope routing settings are added.
 
 ### Tests
 
 - invalid retry values rejected.
 - missing required execution profile mapping rejected.
-- stage policy matrix tests for all v1 playbooks.
+- stage policy matrix tests for all Initial Scope playbooks.
 
 ### Depends on
 
@@ -541,7 +541,7 @@ src/runtime/orchestrator/advance-workflow.ts
 - initial state is persisted before child-agent side effects, including the resolved `researchRequired`, `clarificationRequired`, and `architectureRequired` planning policy.
 - resolved planning policy is durable workflow data: restart / `BLOCK_RESOLVED` preserves both required and skipped stages without recomputing from missing transient hints. Missing legacy policy fails closed before child execution.
 - scout/research output becomes artifacts before state references are updated; State persistence must succeed before the next child starts. Previously persisted context evidence is reused on restart.
-- v1 Context Routing does not call Jev.
+- Initial Scope Context Routing does not call Jev.
 - temporary child infrastructure failure causes `BLOCK`, not `failed`.
 - no Planning/Coding authority is inferred from agent output.
 
@@ -712,7 +712,7 @@ The Phase C read-only review found gaps B1–B5 / I1–I5 despite passing indivi
 | I4 pi-subagents timeout | [Runtime §6](../detailed-design/runtime-design.md#durable-dispatch-and-bounded-wait-i2--i4) | ORCH-012, ORCH-014 |
 | I5 Jev consent / budget | [Runtime §8](../detailed-design/runtime-design.md#product-runtime-consent-and-budget-i5) | ORCH-010 and all Jev call sites |
 
-Phase C owns current-path guards, durable evidence production, and regression tests. ORCH-018 still owns the full resume controller, phase-specific reconciliation, and orphan recovery. No third-party contract change, v1.1+ feature, Integration Readiness approval, or real Pi smoke is implied by this documentation update.
+Phase C owns current-path guards, durable evidence production, and regression tests. ORCH-018 still owns the full resume controller, phase-specific reconciliation, and orphan recovery. No third-party contract change, Future Scope feature, Integration Readiness approval, or real Pi smoke is implied by this documentation update.
 
 ## ORCH-010 — Jev Transport and Response Normalization
 
@@ -743,7 +743,7 @@ confidence normalization
 budget/auth/schema/transport error normalization
 ```
 
-Support the three v1 decision request families:
+Support the three Initial Scope decision request families:
 
 ```text
 Coding Entry Routing
@@ -808,7 +808,7 @@ ORCH-006.
 
 ### Goal
 
-Convert normalized probabilistic decisions into v1 domain policy outcomes.
+Convert normalized probabilistic decisions into Initial Scope domain policy outcomes.
 
 ### Scope
 
@@ -830,7 +830,7 @@ decision freshness helpers
 - low-confidence finding decisions cannot silently ACCEPT.
 - validation failure overrides Jev COMPLETE.
 - accepted blocking finding overrides Jev COMPLETE.
-- `implementation-capability`, `plan-conflict`, `human-decision`, `uncertain` map deterministically to v1 routing.
+- `implementation-capability`, `plan-conflict`, `human-decision`, `uncertain` map deterministically to Initial Scope routing.
 - decision freshness checks schema, plan version, implementation revision, input refs/digest, policy/config digest.
 - B4: [Round policy precedence](../detailed-design/coding-orchestration.md#policy-precedence-b4) applies to every action, not only COMPLETE. No automated RETRY/stronger retry bypasses low-confidence action/reason, Human-decision evidence, or uncertainty.
 - I1: all three decision families produce the mandatory freshness header; missing fields cannot be defaulted into reuse eligibility.
@@ -975,7 +975,7 @@ ORCH-012.
 
 ### Goal
 
-Run the fixed v1 reviewer set and persist structured review evidence.
+Run the fixed Initial Scope reviewer set and persist structured review evidence.
 
 ### Scope
 
@@ -1006,7 +1006,7 @@ src/runtime/integrations/subagents.ts
 - Ponytail Reviewer produces structured findings only and has no Fix/State authority.
 - review runs only after validation pass.
 - both reviewers receive fresh review context.
-- reviewer set is fixed in v1; no dynamic selection.
+- reviewer set is fixed in the Initial Scope; no dynamic selection.
 - each result is schema validated and persisted separately.
 - reviewer `blocking` flag is evidence only, not Fix Authority.
 - partial reviewer infrastructure failure does not fabricate a clean round.
@@ -1220,7 +1220,7 @@ Planning
 
 All retry/escalation branches are bounded.
 
-`ponytail-reviewer` product Agent definition exists and participates in the fixed v1 reviewer set.
+`ponytail-reviewer` product Agent definition exists and participates in the fixed Initial Scope reviewer set.
 
 Phase C cannot exit on isolated Story test success alone. B1–B5 / I1–I5 remediation and regression evidence are required before Phase D:
 
@@ -1394,11 +1394,11 @@ ORCH-018.
 
 ---
 
-## ORCH-020 — End-to-End Hardening and v1 Release Candidate
+## ORCH-020 — End-to-End Hardening and Initial Scope Release Candidate
 
 ### Goal
 
-Demonstrate the complete v1 contract and prevent accidental v1.1 scope creep.
+Demonstrate the complete Initial Scope contract and prevent accidental Future Scope creep.
 
 ### Scope
 
@@ -1424,7 +1424,7 @@ unrecoverable authority corruption → failed
 real Pi process smoke test in a dedicated Herdr tab
 ```
 
-### v1 completion assertions
+### Initial Scope completion assertions
 
 - Human Plan Gate cannot be bypassed.
 - Human Code Gate cannot be bypassed.
@@ -1439,17 +1439,24 @@ real Pi process smoke test in a dedicated Herdr tab
 - no third-party library/package modification is required.
 - real Pi Integration / Smoke Tests launch Pi in a new Herdr tab and do not use tmux.
 - Herdr remains outside the product runtime dependency graph.
-- v1.1+ runtime features are absent.
+- Future Scope runtime features are absent.
 
 ### Deliverables
 
 ```text
 all tests green
 Herdr-managed real-Pi smoke harness
-v1 release evidence / checklist
+Initial Scope release evidence / checklist
 updated README usage
-final architecture consistency check against Basic Design v1.0
+final architecture consistency check against Basic Design (document revision 1.0)
 ```
+
+### Completion state
+
+- Status: **complete**
+- ORCH-020 Release Candidate: **PASS**
+- Release evidence: [v0.1.0 release evidence](../release/v0.1.0.md)
+- Release preparation does not add Future Scope runtime behavior.
 
 ### Depends on
 
@@ -1495,7 +1502,7 @@ Exit condition:
 
 Fake-adapter end-to-end workflow reaches `completed` only through all required gates.
 
-## Milestone M4 — v1 Release Candidate
+## Milestone M4 — Initial Scope Release Candidate
 
 Stories:
 

@@ -232,14 +232,14 @@ ESCALATE
 
 ### `escalation-policy.ts`
 
-v1:
+Initial Scope:
 
 ```text
 reason
 → deterministic target
 ```
 
-v1.1 では Jev-selected target へ拡張可能。
+Future Scope では Jev-selected target へ拡張可能。
 
 ---
 
@@ -269,7 +269,7 @@ Secret は domain configuration object に永続化しない。
 
 ## 7. Agent Definitions
 
-v1 custom Agent:
+Initial Scope custom Agent:
 
 ```text
 workflow-scout
@@ -322,7 +322,7 @@ Finding Evaluation は Jev + core policy が担当する。
 
 ## 9. Tests
 
-`tests/core/decisions/` を v1 の重点 area とする。
+`tests/core/decisions/` を Initial Scope の重点 area とする。
 
 Test 対象:
 
@@ -365,7 +365,7 @@ integrations.md
 
 ---
 
-## 11. v1.1+ Directory Extension
+## 11. Future Scope Directory Extension
 
 必要性が明確になった時点で追加候補:
 
@@ -377,4 +377,4 @@ core/decisions/
 └── validation-failure.ts
 ```
 
-v1 では空 file / future placeholder を作成しない。
+Initial Scope では空 file / Future Scope placeholder を作成しない。

@@ -1,7 +1,15 @@
 {
   "name": "pi-orchestrator",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Evidence-driven workflow orchestration for Pi with Human Gates, durable artifacts, bounded retries, and Jev decisions.",
+  "files": [
+    "src",
+    "agents",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "pi": {
     "extensions": [
       "./src/index.ts"
@@ -25,13 +33,16 @@
     "pi-package"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
       "version": "^11.22.0",
       "onFail": "download"
     }
+  },
+  "engines": {
+    "node": ">=22.19.0"
   },
   "type": "module",
   "peerDependencies": {

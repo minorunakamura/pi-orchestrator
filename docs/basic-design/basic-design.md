@@ -16,9 +16,9 @@ Version: 1.0
 
 作業種別ごとに工程の有無や厳格さは異なるが、共通の Orchestrator、State、Artifact、Human Gate、Decision Engine を利用する。
 
-v1 では Coding Orchestration は1本のみとする。
+Initial Scope では Coding Orchestration は1本のみとする。
 
-Planning による Work Package 分割、および複数 Coding Orchestration の並列実行は将来拡張として考慮するが、v1 の対象外とする。
+Planning による Work Package 分割、および複数 Coding Orchestration の並列実行は将来拡張として考慮するが、Initial Scope の対象外とする。
 
 ---
 
@@ -123,7 +123,7 @@ Jev、Agent、Skill、Plannotator は State を直接変更しない。
 
 ### 3.3 Third-Party Dependency Immutability
 
-pi-orchestrator v1 が利用する third-party library / package は read-only dependency として扱い、pi-orchestrator の実装のために変更してはならない。v1 ではこの制約に例外を設けない。
+pi-orchestrator Initial Scope が利用する third-party library / package は read-only dependency として扱い、pi-orchestrator の実装のために変更してはならない。Initial Scope ではこの制約に例外を設けない。
 
 対象には以下を含む。
 
@@ -141,13 +141,13 @@ pi-orchestrator v1 が利用する third-party library / package は read-only d
 third-party source の直接変更
 node_modules の編集
 pnpm patch / patch-package を必須とする実装
-fork した dependency を v1 の前提とする実装
+fork した dependency を Initial Scope の前提とする実装
 private / internal API の変更を前提とする実装
 ```
 
 外部 component との不整合は pi-orchestrator 側の Integration Adapter / Wrapper で吸収する。公開 contract の範囲で安全に実現できない場合は dependency を変更せず、`blocked` / unsupported として扱う。
 
-必要な capability が upstream に存在しない場合も、pi-orchestrator v1 が third-party の改変版に依存してはならない。
+必要な capability が upstream に存在しない場合も、pi-orchestrator Initial Scope が third-party の改変版に依存してはならない。
 
 ---
 
@@ -180,9 +180,9 @@ Stage policy:
 type StagePolicy = "required" | "conditional" | "skip";
 ```
 
-v1 では `conditional` Stage の判定は Playbook の明示 rule / Orchestrator policy を使用する。
+Initial Scope では `conditional` Stage の判定は Playbook の明示 rule / Orchestrator policy を使用する。
 
-v1.1 では conditional Stage 判定を Jev Decision Engine に拡張可能とする。
+Future Scope では conditional Stage 判定を Jev Decision Engine に拡張可能とする。
 
 ---
 
@@ -266,9 +266,9 @@ Decision
 
 ### 6.3 Architecture / Planning
 
-v1 では Architecture / Design と Implementation Planning を `planner` が所有する。
+Initial Scope では Architecture / Design と Implementation Planning を `planner` が所有する。
 
-独立した `architect` Agent は v1 では作成しない。
+独立した `architect` Agent は Initial Scope では作成しない。
 
 Architecture 判断が必要な場合、Planner は Approved Plan の中に Architecture / Design section を含める。
 
@@ -300,7 +300,7 @@ Validation Contract は、その Plan を実装・検証するときに実行す
 
 Planner は Implementation を開始しない。
 
-将来、Architecture の複雑性が増した場合は `architect` Agent の分離を検討できるが、v1 の責務境界は変更しない。
+将来、Architecture の複雑性が増した場合は `architect` Agent の分離を検討できるが、Initial Scope の責務境界は変更しない。
 
 ---
 
@@ -336,7 +336,7 @@ Implementation Authority は `approvedPlanRef` のみとする。
 
 ## 8. Coding Orchestration
 
-v1:
+Initial Scope:
 
 ```text
 Approved Plan
@@ -369,9 +369,9 @@ Jev: Round Decision
 
 ---
 
-## 9. Jev Decision Engine - v1
+## 9. Jev Decision Engine - Initial Scope
 
-v1 では Jev を以下3箇所で必須利用する。
+Initial Scope では Jev を以下3箇所で必須利用する。
 
 ### 9.1 Coding Entry Routing
 
@@ -439,9 +439,9 @@ Hard rule:
 
 ---
 
-## 10. Escalation - v1
+## 10. Escalation - Initial Scope
 
-v1 では Jev が `ESCALATE` と理由分類を返し、対象先は code policy が決定する。
+Initial Scope では Jev が `ESCALATE` と理由分類を返し、対象先は code policy が決定する。
 
 例:
 
@@ -465,7 +465,7 @@ uncertain
 
 Jev 自身が任意の routing target を生成しない。
 
-v1.1 では bounded Choice として Escalation Target を Jev に選択させることを検討する。
+Future Scope では bounded Choice として Escalation Target を Jev に選択させることを検討する。
 
 ---
 
@@ -714,7 +714,7 @@ Configuration / Retry policy は [configuration.md](./configuration.md) を正�
 
 ## 21. Configuration / Retry Policy
 
-v1 では以下を Orchestrator Configuration が所有する。
+Initial Scope では以下を Orchestrator Configuration が所有する。
 
 - Jev confidence thresholds
 - logical execution tier → concrete provider/model mapping
@@ -724,7 +724,7 @@ v1 では以下を Orchestrator Configuration が所有する。
 - Jev integration settings
 - Validation execution policy
 
-推奨 v1 default:
+推奨 Initial Scope default:
 
 ```text
 maxAutomatedFixRounds = 3
@@ -747,7 +747,7 @@ API key 等の secret は Workflow State / Artifact に保存しない。
 
 ---
 
-## 22. v1 Scope
+## 22. Initial Scope
 
 - Single top-level Workflow
 - Single Planning Orchestration
@@ -763,7 +763,7 @@ API key 等の secret は Workflow State / Artifact に保存しない。
 - Ponytail Review
 - Jev Finding Evaluation
 - Jev Round Decision
-- Deterministic v1 Escalation Policy
+- Deterministic Initial Scope Escalation Policy
 - Fix Loop
 - Plannotator Code Gate
 - State / Artifact / Decision Persistence
@@ -774,7 +774,7 @@ API key 等の secret は Workflow State / Artifact に保存しない。
 
 ---
 
-## 23. v1 Scope Out
+## 23. Initial Scope Out
 
 - Multiple Coding Orchestration
 - Work Package DAG
@@ -787,11 +787,11 @@ API key 等の secret は Workflow State / Artifact に保存しない。
 
 ---
 
-## 24. v1.1+ Jev Extension
+## 24. Future Scope Jev Extension
 
 優先候補:
 
-### v1.1
+### Future Scope
 
 ```text
 Context Routing
@@ -813,7 +813,7 @@ Escalation Target
 Validation Failure Semantic Classification
 ```
 
-### v1.2+
+### Future Scope: Later Candidates
 
 ```text
 Agent Trace Observability

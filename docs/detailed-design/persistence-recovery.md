@@ -4,7 +4,7 @@ Version: 1.2
 
 ## 1. Purpose
 
-This document defines State / Artifact persistence, resume, reconciliation, blocked handling, and failed handling for pi-orchestrator v1.0.
+This document defines State / Artifact persistence, resume, reconciliation, blocked handling, and failed handling for pi-orchestrator's Initial Scope.
 
 ## 2. Runtime Directory
 
@@ -26,7 +26,7 @@ This document defines State / Artifact persistence, resume, reconciliation, bloc
 
 Do not create empty future directories eagerly.
 
-`architecture/` is not required in v1 because Architecture / Design remains inside the Plan artifact.
+`architecture/` is not required in the Initial Scope because Architecture / Design remains inside the Plan artifact.
 
 ## 3. State vs Artifact
 
@@ -159,7 +159,7 @@ Resume and normal advance both acquire the same workflow lock before reading aut
 
 If exclusive locking cannot be guaranteed, stateRevision compare-and-swap behavior must be used to reject stale writers.
 
-In v1, lock acquisition fails closed whenever a lock already exists, including a stale/dead-owner lock. Acquisition never automatically removes a lock based on PID liveness or age: competing reclaimers could delete a replacement owner's lock. A lock left after a crash prevents further mutation until safely resolved outside acquisition; no automatic recovery mechanism is introduced here.
+In the Initial Scope, lock acquisition fails closed whenever a lock already exists, including a stale/dead-owner lock. Acquisition never automatically removes a lock based on PID liveness or age: competing reclaimers could delete a replacement owner's lock. A lock left after a crash prevents further mutation until safely resolved outside acquisition; no automatic recovery mechanism is introduced here.
 
 The current StateStore revision check runs inside this exclusive lock. It is not an independent atomic filesystem compare-and-swap and must not be used to bypass locking.
 

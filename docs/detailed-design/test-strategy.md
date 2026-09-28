@@ -4,7 +4,7 @@ Version: 1.4
 
 ## 1. Purpose
 
-This document defines the v1 test strategy for pi-orchestrator.
+This document defines the Initial Scope test strategy for pi-orchestrator.
 
 ## 2. Test Layers
 

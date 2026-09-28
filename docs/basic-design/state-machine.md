@@ -508,9 +508,9 @@ Jev unavailable の場合は fail-closed だが terminal `failed` にはせず `
 
 ---
 
-## 14. v1.1+
+## 14. Future Scope
 
-v1.1 で State Machine に追加可能な Decision Event:
+Future Scope で State Machine に追加可能な Decision Event:
 
 ```text
 CONTEXT_RESEARCH_REQUIRED
