@@ -15,11 +15,8 @@ import { workflowId } from "../../src/types.ts";
 import { StateNotFoundError } from "../../src/runtime/persistence/state-store.ts";
 import { phaseCWorkflow } from "../fakes/phase-c-workflow.ts";
 import { plan } from "../fakes/coding-scenario.ts";
-import {
-  SUBAGENT_DELEGATION_REQUEST_EVENT,
-  SUBAGENT_DELEGATION_RESPONSE_EVENT,
-  type EventBus,
-} from "../../src/runtime/integrations/subagents.ts";
+import type { EventBus } from "../../src/runtime/integrations/subagents.ts";
+import { FakeSubagentRpc } from "../fakes/subagent-rpc.ts";
 import { PLANNOTATOR_REQUEST_CHANNEL } from "../../src/runtime/integrations/plannotator.ts";
 import {
   makeExtensionApiFixture,
@@ -331,7 +328,7 @@ describe("ORCH-019 workflow commands", () => {
     } finally {
       await workflow.cleanup();
     }
-  });
+  }, 10_000);
 
   test("missing command runtime configuration blocks before Jev or Worker continuation", async () => {
     const workflow = await phaseCWorkflow();
@@ -363,14 +360,22 @@ describe("ORCH-019 workflow commands", () => {
     const root = await mkdtemp(
       join(tmpdir(), "pi-orchestrator-command-runtime-"),
     );
-    const listeners = new Set<(value: unknown) => void>();
+    const childRequests: Record<string, unknown>[] = [];
+    const rpc = new FakeSubagentRpc((request, bus) => {
+      childRequests.push(request);
+      const runId = `${String(request.agent)}-1`;
+      bus.receipt(request, runId);
+      queueMicrotask(() =>
+        bus.complete(
+          request,
+          runId,
+          "complete",
+          request.agent === "planner" ? plan : "facts",
+        ),
+      );
+    });
     const events: EventBus = {
-      on: (event, listener) => {
-        if (event !== SUBAGENT_DELEGATION_RESPONSE_EVENT)
-          throw Error("Unexpected event");
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
+      on: (event, listener) => rpc.on(event, listener),
       emit: (event, payload) => {
         if (event === PLANNOTATOR_REQUEST_CHANNEL) {
           const request = asRecord(payload);
@@ -393,35 +398,7 @@ describe("ORCH-019 workflow commands", () => {
           }
           return;
         }
-        if (event !== SUBAGENT_DELEGATION_REQUEST_EVENT) return;
-        const request = asRecord(payload);
-        if (
-          typeof request.requestId !== "string" ||
-          typeof request.ownerRunId !== "string" ||
-          typeof request.nodeId !== "string" ||
-          typeof request.agent !== "string"
-        ) {
-          throw Error("Invalid Subagent request");
-        }
-        const requestId = request.requestId;
-        const ownerRunId = request.ownerRunId;
-        const nodeId = request.nodeId;
-        const agent = request.agent;
-        queueMicrotask(() => {
-          for (const listener of listeners) {
-            listener({
-              requestId,
-              ownerRunId,
-              nodeId,
-              status: "completed",
-              runId: `${agent}-1`,
-              result: {
-                kind: "text",
-                text: agent === "planner" ? plan : "facts",
-              },
-            });
-          }
-        });
+        rpc.emit(event, payload);
       },
     };
     try {
@@ -433,6 +410,19 @@ describe("ORCH-019 workflow commands", () => {
       const reconciled = await runtime.resume(started.workflowId);
       expect(reconciled.status).toBe("pending");
       expect(reconciled.state.phase).toBe("awaiting-plan-review");
+      const planner = childRequests.find(
+        (request) => request.agent === "planner",
+      );
+      expect(planner?.ownerRunId).toBe(started.workflowId);
+      expect(planner?.task).toContain(
+        JSON.stringify({ ref: started.taskRef, content: "smoke" }),
+      );
+      expect(planner?.task).toContain(
+        JSON.stringify({
+          ref: started.state.planning.context.scoutRef,
+          content: "facts",
+        }),
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

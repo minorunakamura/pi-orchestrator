@@ -1,3 +1,7 @@
+import {
+  runPlanningAgent,
+  PlanningAgentPendingError,
+} from "./planning-agent-run.ts";
 import type {
   ArtifactKind,
   ArtifactRef,
@@ -20,7 +24,6 @@ import type {
 } from "../../core/workflow/state.ts";
 import { parsePlan, type ParsedPlan } from "../planning/plan-parser.ts";
 import {
-  RuntimePortError,
   type AgentRunRequest,
   type AgentRunResult,
   type ClarificationPort,
@@ -192,15 +195,6 @@ function clarificationArtifact(answer: string, prompt: string): string {
   return `# Clarification\n\n## Question\n${prompt.trim()}\n\n## Answer\n${answer.trim()}\n`;
 }
 
-function blockedReason(
-  error: unknown,
-): "agent-infrastructure-unavailable" | "agent-execution-ambiguous" {
-  if (error instanceof RuntimePortError && error.kind === "reconciliation") {
-    return "agent-execution-ambiguous";
-  }
-  return "agent-infrastructure-unavailable";
-}
-
 function resultBlockedReason(
   result: AgentRunResult,
 ): "agent-infrastructure-unavailable" | "agent-execution-ambiguous" {
@@ -321,7 +315,8 @@ export class PlanningOrchestrator {
           input.cwd,
         ),
       );
-      if ("state" in scoutResult) return { state: scoutResult.state };
+      if (!("result" in scoutResult)) return { state: scoutResult.state };
+      state = scoutResult.state;
       scoutRef = await this.writeOutput(
         "scout",
         "scout.md",
@@ -345,13 +340,14 @@ export class PlanningOrchestrator {
           input.cwd,
         ),
       );
-      if ("state" in researchResult) {
+      if (!("result" in researchResult)) {
         return {
           state: researchResult.state,
           scoutRef,
         };
       }
 
+      state = researchResult.state;
       researchRef = await this.writeOutput(
         "research",
         "research.md",
@@ -487,7 +483,7 @@ export class PlanningOrchestrator {
         : {}),
       targetVersion,
     };
-    const plannerResult = await this.runPlanner(
+    const planned = await this.runPlanner(
       input.state,
       request(
         "planner",
@@ -496,16 +492,17 @@ export class PlanningOrchestrator {
         input.cwd,
       ),
     );
+    const plannerResult = planned.result;
     const parsedPlan = parsePlan(plannerResult.output, {
       architectureRequired,
     });
-    const planRef = await this.dependencies.artifactStore.writeText(
+    const planRef = await this.writeOutput(
       "plan",
       `plan-v${targetVersion}.md`,
       plannerResult.output,
     );
     let state = await advanceWorkflow(
-      input.state,
+      planned.state,
       { type: "PLAN_CREATED", planRef, version: targetVersion },
       this.dependencies.stateStore,
     );
@@ -739,57 +736,46 @@ export class PlanningOrchestrator {
     }
   }
 
-  private async runPlanner(
-    state: WorkflowState,
-    input: AgentRunRequest,
-  ): Promise<Extract<AgentRunResult, { status: "succeeded" }>> {
-    let result: AgentRunResult;
-    try {
-      result = await this.dependencies.subagentExecutor.run(input);
-    } catch (error) {
-      await advanceWorkflow(
-        state,
-        { type: "BLOCK", reason: blockedReason(error) },
-        this.dependencies.stateStore,
-      );
-      throw error;
+  private async runPlanner(state: WorkflowState, input: AgentRunRequest) {
+    const outcome = await this.run(state, input);
+    if (!("result" in outcome)) {
+      if (outcome.state.phase === "planning")
+        throw new PlanningAgentPendingError(outcome.state);
+      throw new Error("Planner did not succeed");
     }
-    if (result.status !== "succeeded") {
-      await advanceWorkflow(
-        state,
-        { type: "BLOCK", reason: resultBlockedReason(result) },
-        this.dependencies.stateStore,
-      );
-      throw new Error(`Planner did not succeed: ${result.status}`);
-    }
-    if (result.output.trim().length === 0) {
-      await advanceWorkflow(
-        state,
-        { type: "BLOCK", reason: "agent-execution-ambiguous" },
-        this.dependencies.stateStore,
-      );
-      throw new Error("Planner returned empty output");
-    }
-    return result;
+    return outcome;
   }
 
   private async run(
     state: WorkflowState,
     input: AgentRunRequest,
   ): Promise<
-    | { result: Extract<AgentRunResult, { status: "succeeded" }> }
+    | {
+        state: WorkflowState;
+        result: Extract<AgentRunResult, { status: "succeeded" }>;
+      }
     | { state: WorkflowState }
   > {
     let result: AgentRunResult;
+    const stage =
+      input.agent === "workflow-scout"
+        ? "scout"
+        : input.agent === "pi-ketch.researcher"
+          ? "research"
+          : `plan-v${state.planning.currentPlanVersion + 1}`;
     try {
-      result = await this.dependencies.subagentExecutor.run(input);
-    } catch (error) {
-      const blocked = await advanceWorkflow(
+      const outcome = await runPlanningAgent(
         state,
-        { type: "BLOCK", reason: blockedReason(error) },
-        this.dependencies.stateStore,
+        stage,
+        input,
+        this.dependencies,
       );
-      return { state: blocked };
+      state = outcome.state;
+      result = outcome.result;
+    } catch (error) {
+      if (error instanceof PlanningAgentPendingError)
+        return { state: error.state };
+      throw error;
     }
 
     if (result.status !== "succeeded") {
@@ -810,15 +796,28 @@ export class PlanningOrchestrator {
       return { state: blocked };
     }
 
-    return { result };
+    return { state, result };
   }
 
-  private writeOutput<K extends "scout" | "research">(
+  private async writeOutput<K extends "scout" | "research" | "plan">(
     kind: K,
     fileName: string,
     output: string,
   ): Promise<ArtifactRef<K>> {
-    return this.dependencies.artifactStore.writeText(kind, fileName, output);
+    const store = this.dependencies.artifactStore;
+    try {
+      return await store.writeText(kind, fileName, output);
+    } catch (error) {
+      if (!(error instanceof ArtifactImmutableError) || !store.readText)
+        throw error;
+      const ref = createArtifactRef(
+        kind,
+        `${kind === "plan" ? "plans" : "context"}/${fileName}`,
+        output,
+      );
+      if ((await store.readText(ref)) !== output) throw error;
+      return ref;
+    }
   }
 }
 

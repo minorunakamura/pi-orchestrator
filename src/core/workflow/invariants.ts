@@ -35,6 +35,16 @@ export function assertStateInvariants(state: WorkflowState): void {
   }
 
   const { phase, planning, coding } = state;
+  for (const [stage, attempt] of Object.entries(planning.agentAttempts ?? {})) {
+    if (
+      attempt.dispatch.ownerRunId !== state.workflowId ||
+      attempt.dispatch.nodeId !== stage ||
+      (attempt.receipt &&
+        attempt.receipt.requestId !== attempt.dispatch.requestId)
+    ) {
+      fail("Planning attempt must belong to its Workflow and stage");
+    }
+  }
 
   if (planning.currentPlanVersion === 0 && planning.currentPlanRef) {
     fail("currentPlanRef requires a positive currentPlanVersion");

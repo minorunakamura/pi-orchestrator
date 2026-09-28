@@ -183,7 +183,11 @@ Initial Scope は次を含みません。
 - Validation Failure の semantic classifier
 - 外部 package の patch / fork / private API modification
 
-`pi-subagents` の current public compatibility boundary では、status / resume の host reconciliation adapter が提供されない場合があります。その場合は retained child や orphan Worker を推測して再利用せず、safe blocked / unsupported path を使います。Human Plan Gate と Human Code Gate は常に Human interaction が必要で、Jev や Agent が代替することはありません。
+Agent は `pi-subagents` の公開 async RPC (`subagents:rpc:v1:request` の `spawn`) で起動し、返された exact run ID に対応する `subagent:async-complete` で完了を確認します。永続化対象の planning Agent は指定した出力ファイルを通常完了・復旧の共通の正本として読みます（通知の `results[].output` に付く保存先案内を成果物へ取り込まない）。それ以外は `results[].output` を使用します。ArtifactStore で検証した入力本文を渡し、Supervisor 質問中は同じ run の完了を待ちます。表示用 summary は成果物に使用せず、timeout は終了・取消の証拠として扱いません。待機は既定で5分の deadline に含まれます。
+
+scout / researcher / planner は、起動前に `planning.agentAttempts` へ stage・dispatch identity・入力 refs/hash を保存し、起動後に exact run ID・session identity・launch digest・公開 async directory・出力先を保存します。`/wf-resume` は公開 `status.json`（lifecycle artifact version 3）を照合し、実行中は `pending`、成功完了なら同じ run の出力を回収します。最終出力先は公開 `output` パラメータで指定した Workflow directory 内の `agent-runs/<requestId>.md` です。このファイル自体は Workflow の承認・authority ではなく、検証後の immutable artifact と State transition が authority を持ちます。
+
+identity 保存前の中断、旧 State の未記録 run、artifact 欠落・改変・対応外の lifecycle version は推測で再起動せず `blocked` にします。公開ファイルが保持されていることが復旧条件です。Supervisor 返信の宛先は元の Pi session のままで、別 session への引き継ぎは行いません。Worker / reviewer の中断復旧は今回の planning receipt 対応に含めず、retained child や orphan Worker を推測して再利用しません。State 書き込み中のクラッシュで残る Workflow lock や、孤児の Human Gate も自動解除・再作成しません。Human Plan Gate と Human Code Gate は常に Human interaction が必要で、Jev や Agent が代替することはありません。
 
 Herdr は real Pi smoke 用の開発・検証 harness であり、pi-orchestrator の runtime dependency ではありません。real Pi smoke は Herdr の新しい tab で実行し、`tmux` はサポート topology ではありません。
 

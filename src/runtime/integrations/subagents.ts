@@ -3,20 +3,31 @@ import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import { isRecord } from "../../core/schema.ts";
 import { subagentRunId, type SubagentRunId } from "../../types.ts";
+import type { ArtifactStore } from "../persistence/artifact-store.ts";
+import {
+  captureRunReceipt,
+  prepareAgentOutput,
+  readAgentOutput,
+  recoverAgentRun,
+} from "./subagent-recovery.ts";
+import type { AgentRunReceipt } from "../../core/planning/agent-attempt.ts";
+type ArtifactReader = Pick<ArtifactStore, "readText"> & {
+  readonly rootDirectory?: string;
+};
 import { RuntimePortError } from "../ports/errors.ts";
 import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
 import type {
+  AgentDispatch,
   AgentRunRequest,
   AgentRunResult,
   AgentRunStatus,
   SubagentExecutor,
 } from "../ports/subagent-executor.ts";
 
-/** Public pi-subagents delegation event names; no private package API is used. */
-export const SUBAGENT_DELEGATION_REQUEST_EVENT =
-  "prompt-template:subagent:request" as const;
-export const SUBAGENT_DELEGATION_RESPONSE_EVENT =
-  "prompt-template:subagent:response" as const;
+/** Public pi-subagents RPC and completion contracts; no private imports. */
+export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
+export const SUBAGENT_RPC_REPLY_PREFIX = "subagents:rpc:v1:reply:";
+export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
 export interface WorkerInput {
   approvedPlanRef: ArtifactRef<"plan">;
@@ -58,70 +69,30 @@ export interface EventBus {
   on(event: string, listener: (payload: unknown) => void): () => void;
 }
 
-type DelegationThinking =
-  | "off"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max";
-
-interface DelegationRequest {
-  requestId: string;
-  ownerRunId: string;
-  nodeId: string;
-  agent: string;
-  task: string;
-  context: "fresh" | "fork";
-  cwd: string;
-  model?: string;
-  thinking?: DelegationThinking;
-  timeoutMs?: number;
-  result: { kind: "text" };
-}
-
-interface DelegationResponse {
-  requestId: string;
-  ownerRunId?: string;
-  nodeId?: string;
-  status: string;
-  error?: string;
-  runId?: string;
-  result?:
-    | { kind: "text"; text: string }
-    | { kind: "structured"; value: unknown };
-}
-
 export interface SubagentsIntegrationOptions {
+  artifactReader?: ArtifactReader;
   ownerRunId?: string;
   cwd?: string;
   timeoutMs?: number;
 }
 
-function asRunId(value: string | undefined): SubagentRunId | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? subagentRunId(value)
-    : undefined;
-}
-
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 300_000;
 
-function noop(): void {}
-
 /**
- * Adapter for the versioned pi-subagents event contract. The host supplies its
- * public event bus; pi-subagents remains an unmodified third-party extension.
+ * Async leaves keep contact_supervisor pending without a foreground detach
+ * receipt. Only their correlated terminal completion can publish an output.
  */
 export class SubagentsIntegration implements SubagentExecutor {
   private readonly ownerRunId: string;
   private readonly cwd: string;
   private readonly timeoutMs: number;
+  private readonly artifactReader: ArtifactReader | undefined;
 
   constructor(
     private readonly events: EventBus,
     options: SubagentsIntegrationOptions = {},
   ) {
+    this.artifactReader = options.artifactReader;
     this.ownerRunId = options.ownerRunId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
     this.timeoutMs = options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
@@ -141,6 +112,23 @@ export class SubagentsIntegration implements SubagentExecutor {
       nodeId: `worker-${requestId}`,
       deadline: new Date(Date.now() + this.timeoutMs).toISOString(),
     };
+    const task = await taskWithArtifacts(input, this.artifactReader);
+    let outputPath: string | undefined;
+    if (input.onStarted) {
+      try {
+        if (!this.artifactReader?.rootDirectory)
+          throw Error("Recovery requires a rooted ArtifactStore");
+        outputPath = await prepareAgentOutput(
+          this.artifactReader.rootDirectory,
+          requestId,
+        );
+      } catch (cause) {
+        throw new SubagentNotDispatchedError(
+          "Unable to prepare durable agent output",
+          { cause },
+        );
+      }
+    }
     const remaining = Date.parse(dispatch.deadline) - Date.now();
     if (
       !requestId ||
@@ -148,80 +136,68 @@ export class SubagentsIntegration implements SubagentExecutor {
       !dispatch.nodeId ||
       !Number.isFinite(remaining) ||
       remaining <= 0
-    )
+    ) {
       throw new SubagentNotDispatchedError(
         "Invalid or expired subagent dispatch identity",
       );
-    const response = await this.delegate({
-      requestId,
-      ownerRunId: dispatch.ownerRunId,
-      nodeId: dispatch.nodeId,
+    }
+    const timeoutMs = Math.min(this.timeoutMs, remaining);
+    const profile = input.executionProfile;
+    if (
+      profile &&
+      !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
+        profile.thinking,
+      )
+    ) {
+      throw new SubagentNotDispatchedError(
+        `Unsupported pi-subagents thinking level: ${profile.thinking}`,
+      );
+    }
+    const params = {
       agent: input.agent,
-      task: taskWithArtifactRefs(input),
+      task,
       context: "fresh",
       cwd: input.cwd ?? this.cwd,
-      ...(input.executionProfile
-        ? {
-            // The public contract has no separate provider field. A
-            // provider-qualified model pins both configuration dimensions.
-            model: `${input.executionProfile.provider}/${input.executionProfile.model}`,
-            thinking: toDelegationThinking(input.executionProfile.thinking),
-          }
+      async: true,
+      // Keep a literal full text result, regardless of agent output defaults.
+      output: outputPath ?? false,
+      outputMode: "inline",
+      outputSchema: false,
+      acceptance: false,
+      ...(profile
+        ? { model: `${profile.provider}/${profile.model}:${profile.thinking}` }
         : {}),
-      timeoutMs: Math.min(this.timeoutMs, remaining),
-      result: { kind: "text" },
-    });
-
-    const runId = asRunId(response.runId);
-    if (response.status === "completed") {
-      if (
-        !runId ||
-        response.result?.kind !== "text" ||
-        typeof response.result.text !== "string"
-      ) {
-        return {
-          status: "ambiguous",
-          ...(runId ? { runId } : {}),
-          dispatch,
-          reason:
-            "pi-subagents completed without a text result and run identity",
-        };
-      }
-      return {
-        status: "succeeded",
-        runId,
-        output: response.result.text,
-        dispatch,
-      };
-    }
-    if (response.status === "failed") {
-      return {
-        status: "failed",
-        ...(runId ? { runId } : {}),
-        dispatch,
-        error: response.error ?? "Worker failed",
-      };
-    }
-    return {
-      status: "ambiguous",
-      ...(runId ? { runId } : {}),
-      dispatch,
-      timedOut: response.status === "timed_out",
-      reason: response.error ?? "Subagent outcome is unknown",
+      timeoutMs,
     };
+    return this.spawnAndWait(
+      dispatch,
+      params,
+      input.agent,
+      timeoutMs,
+      input.onStarted,
+    );
   }
 
   runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
     return Promise.all(inputs.map((input) => this.run(input)));
   }
 
-  status(_runId: SubagentRunId): Promise<AgentRunStatus> {
-    return Promise.reject(
-      new RuntimePortError(
-        "reconciliation",
-        "pi-subagents status requires a host reconciliation adapter",
-      ),
-    );
+  status(
+    runId: SubagentRunId,
+    receipt?: AgentRunReceipt,
+  ): Promise<AgentRunStatus> {
+    if (
+      !receipt ||
+      receipt.runId !== runId ||
+      !this.artifactReader?.rootDirectory
+    ) {
+      return Promise.resolve({
+        runId,
+        status: "unknown",
+        reason: "Persisted launch receipt and rooted ArtifactStore required",
+      });
+    }
+    return recoverAgentRun(receipt, this.artifactReader.rootDirectory);
   }
 
   resume(_runId: SubagentRunId, _task: string): Promise<AgentRunResult> {
@@ -233,51 +209,185 @@ export class SubagentsIntegration implements SubagentExecutor {
     );
   }
 
-  private delegate(request: DelegationRequest): Promise<DelegationResponse> {
+  private spawnAndWait(
+    dispatch: AgentDispatch,
+    params: Record<string, unknown>,
+    agent: string,
+    timeoutMs: number,
+    onStarted?: (receipt: AgentRunReceipt) => Promise<void>,
+  ): Promise<AgentRunResult> {
     return new Promise((resolve, reject) => {
       let settled = false;
       let dispatched = false;
-      let unsubscribe: () => void = noop;
-      const finish = (response: DelegationResponse): void => {
+      let runId: SubagentRunId | undefined;
+      let receiptSaved: Promise<void> | undefined;
+      let savedReceipt: AgentRunReceipt | undefined;
+      const subscriptions: (() => void)[] = [];
+      const earlyCompletions = new Map<string, Record<string, unknown>>();
+      const cleanup = () => {
+        clearTimeout(timer);
+        earlyCompletions.clear();
+        for (const unsubscribe of subscriptions) {
+          try {
+            unsubscribe();
+          } catch {
+            /* Cleanup cannot override settlement. */
+          }
+        }
+      };
+      const finish = (result: AgentRunResult) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
-        try {
-          unsubscribe();
-        } catch {
-          // Host cleanup is best-effort; preserve settlement and launch evidence.
-        }
-        resolve(response);
+        cleanup();
+        void Promise.resolve(receiptSaved).then(
+          async () => {
+            if (result.status === "succeeded" && savedReceipt) {
+              try {
+                if (!this.artifactReader?.rootDirectory)
+                  throw Error("Missing output root");
+                result = {
+                  ...result,
+                  output: await readAgentOutput(
+                    savedReceipt,
+                    this.artifactReader.rootDirectory,
+                  ),
+                };
+              } catch {
+                result = {
+                  status: "ambiguous",
+                  reason:
+                    "Canonical child output is unavailable; do not publish the display text",
+                };
+              }
+            }
+            resolve({ ...result, ...(runId ? { runId } : {}), dispatch });
+          },
+          () =>
+            resolve({
+              status: "ambiguous",
+              ...(runId ? { runId } : {}),
+              dispatch,
+              reason:
+                "Unable to persist the launched child identity; do not relaunch",
+            }),
+        );
       };
       const timer = setTimeout(
         () =>
           finish({
-            requestId: request.requestId,
-            status: "timed_out",
-            error: "Subagent response deadline exceeded",
+            status: "ambiguous",
+            timedOut: true,
+            reason:
+              "Subagent completion deadline exceeded; child termination is not proven",
           }),
-        request.timeoutMs ?? this.timeoutMs,
+        timeoutMs,
       );
-      const listener = (payload: unknown): void => {
-        if (!dispatched || !isDelegationResponse(payload)) return;
-        if (
-          payload.requestId !== request.requestId ||
-          (payload.ownerRunId !== undefined &&
-            payload.ownerRunId !== request.ownerRunId) ||
-          (payload.nodeId !== undefined && payload.nodeId !== request.nodeId)
-        ) {
-          return;
-        }
-        finish(payload);
+      const complete = (payload: Record<string, unknown>) => {
+        if (!runId || payload.runId !== runId || settled) return;
+        finish(completionResult(payload, agent, runId));
       };
       try {
-        unsubscribe = this.events.on(
-          SUBAGENT_DELEGATION_RESPONSE_EVENT,
-          listener,
+        subscriptions.push(
+          this.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (payload) => {
+            if (
+              settled ||
+              !dispatched ||
+              !isRecord(payload) ||
+              !nonEmptyString(payload.runId)
+            )
+              return;
+            if (runId) {
+              complete(payload);
+            } else {
+              // ponytail: bound pre-receipt races to 64 runs; reconcile on overflow rather than retain unbounded events.
+              if (earlyCompletions.size >= 64) {
+                finish({
+                  status: "ambiguous",
+                  reason: "Too many completions before the spawn receipt",
+                });
+                return;
+              }
+              earlyCompletions.set(payload.runId, payload);
+            }
+          }),
+        );
+        subscriptions.push(
+          this.events.on(
+            `${SUBAGENT_RPC_REPLY_PREFIX}${dispatch.requestId}`,
+            (payload) => {
+              if (
+                settled ||
+                !dispatched ||
+                runId ||
+                !isRecord(payload) ||
+                payload.version !== 1 ||
+                payload.requestId !== dispatch.requestId ||
+                (payload.method !== undefined && payload.method !== "spawn")
+              )
+                return;
+              if (payload.success !== true) {
+                finish({
+                  status: "ambiguous",
+                  reason:
+                    "Subagent RPC spawn did not succeed; launch status is unknown",
+                });
+                return;
+              }
+              const details =
+                isRecord(payload.data) && isRecord(payload.data.details)
+                  ? payload.data.details
+                  : undefined;
+              if (
+                !details ||
+                !nonEmptyString(details.runId) ||
+                details.asyncId !== details.runId ||
+                details.mode !== "single"
+              ) {
+                finish({
+                  status: "ambiguous",
+                  reason: "Subagent RPC returned no valid async run identity",
+                });
+                return;
+              }
+              runId = subagentRunId(details.runId);
+              if (onStarted) {
+                const identity = runId;
+                receiptSaved = (async () => {
+                  if (
+                    !nonEmptyString(details.asyncDir) ||
+                    !nonEmptyString(details.launchContractDigest) ||
+                    !nonEmptyString(params.output) ||
+                    !nonEmptyString(params.cwd)
+                  )
+                    throw Error("Incomplete async recovery receipt");
+                  const receipt = await captureRunReceipt({
+                    requestId: dispatch.requestId,
+                    runId: identity,
+                    asyncDir: details.asyncDir,
+                    launchContractDigest: details.launchContractDigest,
+                    outputPath: params.output,
+                    cwd: params.cwd,
+                    agent,
+                  });
+                  await onStarted(receipt);
+                  savedReceipt = receipt;
+                })();
+                void receiptSaved.catch(() =>
+                  finish({
+                    status: "ambiguous",
+                    reason: "Unable to persist child launch receipt",
+                  }),
+                );
+              }
+              const early = earlyCompletions.get(runId);
+              earlyCompletions.clear();
+              if (early) complete(early);
+            },
+          ),
         );
       } catch (cause) {
-        clearTimeout(timer);
         settled = true;
+        cleanup();
         reject(
           new SubagentNotDispatchedError(
             "Unable to subscribe before dispatch",
@@ -288,52 +398,124 @@ export class SubagentsIntegration implements SubagentExecutor {
       }
       try {
         dispatched = true;
-        this.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+        this.events.emit(SUBAGENT_RPC_REQUEST_EVENT, {
+          version: 1,
+          requestId: dispatch.requestId,
+          method: "spawn",
+          source: {
+            extension: "pi-orchestrator",
+            ownerRunId: dispatch.ownerRunId,
+            nodeId: dispatch.nodeId,
+          },
+          params,
+        });
       } catch {
         finish({
-          requestId: request.requestId,
           status: "ambiguous",
-          error: "Dispatch threw; child launch status is unknown",
+          reason: "Dispatch threw; child launch status is unknown",
         });
       }
     });
   }
 }
 
-function isDelegationResponse(value: unknown): value is DelegationResponse {
-  if (!isRecord(value)) return false;
-  const candidate = value;
-  return (
-    typeof candidate.requestId === "string" &&
-    typeof candidate.status === "string" &&
-    (candidate.runId === undefined ||
-      (typeof candidate.runId === "string" &&
-        candidate.runId.trim().length > 0)) &&
-    (candidate.error === undefined || typeof candidate.error === "string") &&
-    (candidate.ownerRunId === undefined ||
-      typeof candidate.ownerRunId === "string") &&
-    (candidate.nodeId === undefined || typeof candidate.nodeId === "string")
-  );
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
-function taskWithArtifactRefs(input: AgentRunRequest): string {
-  const refs = JSON.stringify(input.inputRefs ?? []);
-  return `${input.task}\n\nAuthoritative artifact refs (read through the orchestrator ArtifactStore):\n${refs}`;
-}
-
-function toDelegationThinking(value: string): DelegationThinking {
-  switch (value) {
-    case "off":
-    case "minimal":
-    case "low":
-    case "medium":
-    case "high":
-    case "xhigh":
-    case "max":
-      return value;
-    default:
-      throw new SubagentNotDispatchedError(
-        `Unsupported pi-subagents thinking level: ${value}`,
-      );
+function completionResult(
+  payload: Record<string, unknown>,
+  agent: string,
+  runId: SubagentRunId,
+): AgentRunResult {
+  const child =
+    Array.isArray(payload.results) &&
+    payload.results.length === 1 &&
+    isRecord(payload.results[0])
+      ? payload.results[0]
+      : undefined;
+  if (payload.mode !== "single" || !child || child.agent !== agent) {
+    return {
+      status: "ambiguous",
+      reason: "Subagent completion has no matching single-child result",
+    };
   }
+  if (payload.timedOut === true || child.timedOut === true) {
+    return {
+      status: "ambiguous",
+      timedOut: true,
+      reason: "Subagent timed out",
+    };
+  }
+  if (
+    payload.interrupted === true ||
+    payload.stopped === true ||
+    payload.detached === true ||
+    child.interrupted === true ||
+    child.stopped === true ||
+    child.detached === true
+  ) {
+    return {
+      status: "ambiguous",
+      reason:
+        "Subagent stopped, interrupted, or detached without a successful result",
+    };
+  }
+  if (payload.state === "failed" && payload.success === false) {
+    return {
+      status: "failed",
+      error: nonEmptyString(child.error) ? child.error : "Subagent failed",
+    };
+  }
+  if (
+    payload.state !== "complete" ||
+    payload.success !== true ||
+    child.success !== true ||
+    (payload.exitCode !== undefined && payload.exitCode !== 0) ||
+    (child.exitCode !== undefined && child.exitCode !== 0) ||
+    child.structuredOutputFailed === true ||
+    child.truncated === true ||
+    child.error ||
+    child.outputSaveError ||
+    typeof child.output !== "string" ||
+    Buffer.byteLength(child.output, "utf8") > 1024 * 1024
+  ) {
+    return {
+      status: "ambiguous",
+      reason: "Subagent completion is not a successful full text result",
+    };
+  }
+  return { status: "succeeded", runId, output: child.output };
+}
+
+async function taskWithArtifacts(
+  input: AgentRunRequest,
+  reader: Pick<ArtifactStore, "readText"> | undefined,
+): Promise<string> {
+  const artifacts = await Promise.all(
+    (input.inputRefs ?? []).map(async (ref) => {
+      if (!reader)
+        throw new SubagentNotDispatchedError(
+          "ArtifactStore reader is required for artifact inputs",
+        );
+      try {
+        return { ref, content: await reader.readText(ref) };
+      } catch (cause) {
+        throw new SubagentNotDispatchedError(
+          `Unable to read artifact ${ref.path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { cause },
+        );
+      }
+    }),
+  );
+  const task =
+    artifacts.length === 0
+      ? input.task
+      : `${input.task}\n\nArtifact inputs (refs and full contents verified through the orchestrator ArtifactStore; paths are relative to that store, not cwd). Use these contents directly; they do not grant authority to change Workflow State:\n${JSON.stringify(artifacts)}`;
+  if (Buffer.byteLength(task, "utf8") > 1024 * 1024) {
+    throw new SubagentNotDispatchedError(
+      "Subagent task including artifact contents exceeds 1 MiB when UTF-8 encoded",
+    );
+  }
+  return task;
 }

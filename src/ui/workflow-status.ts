@@ -73,6 +73,7 @@ export interface WorkflowStatusProjection {
   retryCounters: WorkflowState["counters"];
   humanGate: HumanGateProjection;
   worker: WorkerProjection;
+  planningAgent?: { stage: string; identity: WorkerIdentityProjection };
   externalIdentities: Readonly<Record<string, string>>;
   authoritativeRefs: WorkflowStatusRefs;
   reconciliationRef?: ArtifactRef<"reconciliation">;
@@ -256,6 +257,27 @@ export function projectWorkflowStatus(
 ): WorkflowStatusProjection {
   const workerAttempt = copyRef(state.coding.workerAttemptRef);
   const workerIdentity = visibleWorkerIdentity(evidence.worker);
+  const phase = effectivePhase(state);
+  const stage =
+    phase === "planning"
+      ? `plan-v${state.planning.currentPlanVersion + 1}`
+      : phase === "gathering-context"
+        ? state.planning.context.scoutRef
+          ? "research"
+          : "scout"
+        : undefined;
+  const attempt = stage ? state.planning.agentAttempts?.[stage] : undefined;
+  const planningIdentity = attempt
+    ? visibleWorkerIdentity({
+        ...attempt.dispatch,
+        runId: attempt.receipt?.runId,
+        launchStatus: attempt.notDispatched
+          ? "not-started"
+          : attempt.receipt
+            ? "observed"
+            : "unknown",
+      })
+    : undefined;
   const reconciliationRef =
     copyReconciliationRef(evidence.reconciliationRef) ??
     copyReconciliationRef(state.block?.evidenceRef) ??
@@ -303,6 +325,9 @@ export function projectWorkflowStatus(
       ...(workerAttempt ? { attemptRef: workerAttempt } : {}),
       ...(workerIdentity ? { identity: workerIdentity } : {}),
     },
+    ...(stage && planningIdentity
+      ? { planningAgent: { stage, identity: planningIdentity } }
+      : {}),
     externalIdentities: visibleExternalIdentities(state.external),
     authoritativeRefs: refs,
     ...(reconciliationRef ? { reconciliationRef } : {}),
@@ -371,6 +396,11 @@ export function renderWorkflowStatus(
     `retries: automated=${projection.retryCounters.automatedFixRoundsUsed} stronger=${projection.retryCounters.strongerRetriesUsed} human-code-feedback=${projection.retryCounters.humanCodeFeedbackRounds}`,
     `human gate: ${formatGate(projection.humanGate)}`,
     `worker: ${projection.worker.status} attempt=${formatRef(projection.worker.attemptRef)}${projection.worker.identity?.runId ? ` run=${projection.worker.identity.runId}` : ""}${projection.worker.identity?.requestId ? ` request=${projection.worker.identity.requestId}` : ""}${projection.worker.identity?.ownerRunId ? ` owner=${projection.worker.identity.ownerRunId}` : ""}${projection.worker.identity?.nodeId ? ` node=${projection.worker.identity.nodeId}` : ""}${projection.worker.identity?.launchStatus ? ` launch=${projection.worker.identity.launchStatus}` : ""}`,
+    ...(projection.planningAgent
+      ? [
+          `planning agent: ${projection.planningAgent.stage} request=${projection.planningAgent.identity.requestId ?? "-"} run=${projection.planningAgent.identity.runId ?? "-"} launch=${projection.planningAgent.identity.launchStatus}`,
+        ]
+      : []),
     `external: ${external || "-"}`,
     `latest: validation=${formatRef(projection.latest.validation)} correctness=${formatRef(projection.latest.correctnessReview)} ponytail=${formatRef(projection.latest.ponytailReview)} findings=${formatRef(projection.latest.findingEvaluation)} accepted=${formatRef(projection.latest.acceptedFindings)} round=${formatRef(projection.latest.roundDecision)} code=${formatRef(projection.latest.codeReview)} reconciliation=${formatRef(projection.reconciliationRef)}`,
     `refs: task=${formatRef(refs.task)} currentPlan=${formatRef(refs.currentPlan)} approvedPlan=${formatRef(refs.approvedPlan)} implementation=${formatRef(refs.implementation)}`,

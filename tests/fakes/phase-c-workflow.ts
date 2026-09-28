@@ -27,12 +27,7 @@ import {
   type JevClient,
 } from "../../src/runtime/integrations/jev.ts";
 import { PlannotatorIntegration } from "../../src/runtime/integrations/plannotator.ts";
-import {
-  SubagentsIntegration,
-  SUBAGENT_DELEGATION_REQUEST_EVENT,
-  SUBAGENT_DELEGATION_RESPONSE_EVENT,
-  type EventBus,
-} from "../../src/runtime/integrations/subagents.ts";
+import { SubagentsIntegration } from "../../src/runtime/integrations/subagents.ts";
 import { startWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
 import { PlanningOrchestrator } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { CodingOrchestrator } from "../../src/runtime/orchestrator/coding-orchestrator.ts";
@@ -54,6 +49,7 @@ import type {
 import { configuration as defaults, plan } from "./coding-scenario.ts";
 import { jevPolicy } from "./jev-policy.ts";
 import { makeEvaluation } from "./typed-boundaries.ts";
+import { FakeSubagentRpc } from "./subagent-rpc.ts";
 
 export interface RoundReply {
   action: RoundAction;
@@ -198,19 +194,13 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   };
   const children: ChildRequest[] = [];
   const childCounts = new Map<string, number>();
-  const listeners = new Set<(value: unknown) => void>();
   const deliver = (request: ChildRequest, status: string, output?: string) => {
-    for (const listener of listeners)
-      listener({
-        requestId: request.requestId,
-        ownerRunId: request.ownerRunId,
-        nodeId: request.nodeId,
-        status,
-        runId: `${request.agent}-${childCounts.get(request.agent)}`,
-        ...(output === undefined
-          ? {}
-          : { result: { kind: "text", text: output } }),
-      });
+    events.complete(
+      { ...request },
+      `${request.agent}-${childCounts.get(request.agent)}`,
+      status === "completed" ? "complete" : status,
+      output,
+    );
   };
   const handleChild = async (request: ChildRequest) => {
     const nth = childCounts.get(request.agent)!;
@@ -277,23 +267,15 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         : "Repository facts";
     deliver(request, "completed", output);
   };
-  const events: EventBus = {
-    on: (event, listener) => {
-      if (event !== SUBAGENT_DELEGATION_RESPONSE_EVENT)
-        throw Error("Unexpected response channel");
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    emit: (event, payload) => {
-      if (event !== SUBAGENT_DELEGATION_REQUEST_EVENT) return;
-      if (!isChildRequest(payload)) throw Error("Invalid child request");
-      const request = payload;
-      children.push(request);
-      childCounts.set(request.agent, (childCounts.get(request.agent) ?? 0) + 1);
-      void handleChild(request).catch(() => deliver(request, "failed"));
-    },
-  };
+  const events = new FakeSubagentRpc((request, bus) => {
+    if (!isChildRequest(request)) throw Error("Invalid child request");
+    children.push(request);
+    childCounts.set(request.agent, (childCounts.get(request.agent) ?? 0) + 1);
+    bus.receipt(request, `${request.agent}-${childCounts.get(request.agent)}`);
+    void handleChild(request).catch(() => deliver(request, "failed"));
+  });
   const subagentExecutor = new SubagentsIntegration(events, {
+    artifactReader: artifactStore,
     cwd: repositoryCwd,
     timeoutMs:
       script.workers?.includes("timeout") || script.silentReviewer ? 100 : 5000,
@@ -640,7 +622,11 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         reviewId: state.coding.codeReview.reviewId,
       });
     },
-    listenerCount: () => listeners.size,
+    listenerCount: () =>
+      [...events.listeners.values()].reduce(
+        (count, listeners) => count + listeners.size,
+        0,
+      ),
     roundCalls: () => roundCalls,
   };
 }

@@ -3,7 +3,10 @@ import type { WorkflowId } from "../../types.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import { ArtifactStore } from "../persistence/artifact-store.ts";
 import { StateStore } from "../persistence/state-store.ts";
-import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
+import {
+  PlanningOrchestrator,
+  type WorkflowArtifactWriter,
+} from "./planning-orchestrator.ts";
 import type { WorkflowStateWriter } from "./advance-workflow.ts";
 import {
   WorkflowReconciler,
@@ -106,17 +109,63 @@ async function runResume(
     stateStore: stateStore.withLock ? lockedWriter(stateStore) : stateStore,
     loadState: load,
   };
-  const execute = async (): Promise<ReconciliationResult> => {
+  const execute = async (): Promise<
+    { planning: WorkflowState } | { result: ReconciliationResult }
+  > => {
     const state = await load();
     if (state.workflowId !== workflowId) {
       throw new Error(
         "Persisted Workflow State identity does not match resume input",
       );
     }
-    return new WorkflowReconciler(deps).reconcile(state);
+    const phase =
+      state.phase === "blocked" ? state.block?.blockedFrom : state.phase;
+    if (
+      state.planning.agentAttempts &&
+      (phase === "gathering-context" || phase === "planning")
+    )
+      return { planning: state };
+    return { result: await new WorkflowReconciler(deps).reconcile(state) };
   };
-  if (stateStore.withLock) return stateStore.withLock(execute);
-  return execute();
+  const selected = stateStore.withLock
+    ? await stateStore.withLock(execute)
+    : await execute();
+  if ("result" in selected) return selected.result;
+  const snapshot = selected.planning;
+  // Planning dispatch is guarded by a durable CAS intent, not a lock held across a child wait.
+  const result = await new WorkflowReconciler({
+    ...deps,
+    stateStore,
+    plannotatorGate: undefined,
+  }).reconcile(snapshot);
+  if (
+    result.state.phase !== "awaiting-plan-review" ||
+    !deps.plannotatorGate ||
+    result.state.external[
+      `plannotator.plan-review.v${result.state.planning.currentPlanVersion}`
+    ]
+  )
+    return result;
+  // Human Gate creation still uses the existing exclusive reconciliation boundary.
+  const gate = async (): Promise<ReconciliationResult> => {
+    const latest = await load();
+    if (latest.phase !== "awaiting-plan-review")
+      return { status: "advanced", state: latest, phase: latest.phase };
+    if (
+      latest.stateRevision !== result.state.stateRevision ||
+      latest.planning.planReview
+    )
+      return new WorkflowReconciler(deps).reconcile(latest);
+    const opened = await new PlanningOrchestrator(deps).openPlanReview({
+      state: latest,
+    });
+    return {
+      status: opened.status === "blocked" ? "blocked" : "pending",
+      state: opened.state,
+      phase: opened.state.phase,
+    };
+  };
+  return stateStore.withLock ? stateStore.withLock(gate) : gate();
 }
 
 export function resumeWorkflow(

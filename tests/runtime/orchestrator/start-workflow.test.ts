@@ -171,11 +171,10 @@ describe("startWorkflow", () => {
   test("does not publish context authority when State persistence fails after the scout artifact", async () => {
     const runsDirectory = await makeRoot();
     const realStore = new StateStore(join(runsDirectory, "workflow-1"));
-    let saves = 0;
     const stateStore: WorkflowStateWriter = {
       async saveState(state, expectedRevision) {
-        saves += 1;
-        if (saves === 2) throw new Error("simulated crash before State update");
+        if (state.planning.context.scoutRef)
+          throw new Error("simulated crash before State update");
         return realStore.saveState(state, expectedRevision);
       },
     };

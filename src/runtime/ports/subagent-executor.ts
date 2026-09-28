@@ -12,16 +12,19 @@ import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import type { SubagentRunId } from "../../types.ts";
 
-export interface AgentDispatch {
-  requestId: string;
-  ownerRunId: string;
-  nodeId: string;
-  deadline: string;
-}
+import type {
+  AgentDispatch,
+  AgentRunReceipt,
+} from "../../core/planning/agent-attempt.ts";
+export type {
+  AgentDispatch,
+  AgentRunReceipt,
+} from "../../core/planning/agent-attempt.ts";
 
 export interface AgentRunRequest {
   /** Orchestrator-owned correlation, persisted before dispatch. */
   dispatch?: AgentDispatch;
+  onStarted?: (receipt: AgentRunReceipt) => Promise<void>;
   agent: string;
   task: string;
   cwd?: string;
@@ -67,6 +70,9 @@ export interface AgentRunStatus {
 export interface SubagentExecutor {
   run(input: AgentRunRequest): Promise<AgentRunResult>;
   runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]>;
-  status(runId: SubagentRunId): Promise<AgentRunStatus>;
+  status(
+    runId: SubagentRunId,
+    receipt?: AgentRunReceipt,
+  ): Promise<AgentRunStatus>;
   resume(runId: SubagentRunId, task: string): Promise<AgentRunResult>;
 }

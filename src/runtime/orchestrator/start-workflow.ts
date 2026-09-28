@@ -96,6 +96,7 @@ export async function startWorkflow(
     phase: "gathering-context",
     taskRef,
     planning: {
+      agentAttempts: {},
       context: {},
       researchRequired: policy.research === "required",
       clarificationRequired: policy.clarification === "required",
