@@ -1,860 +1,214 @@
 # pi-orchestrator 基本設計
 
-Version: 1.0
+Version: 2.0 — v1 runtime redesign / GitHub Issue #3
 
-## 1. 目的
+## 1. Scope / design status
 
-本システムは、Pi 上でソフトウェア開発作業を一貫したプロセスとして実行するための Orchestrator Extension である。
+本書と `docs/basic-design/`・`docs/detailed-design/` は、[Issue #3](https://github.com/minorunakamura/pi-orchestrator/issues/3) の **v1 target contract** を定義する。実装順・完了状態は [Issue #13](https://github.com/minorunakamura/pi-orchestrator/issues/13) と [Implementation Plan](../implementation/implementation-plan.md) を参照する。設計更新は実装済み・production 検証済みを意味しない。
 
-対象:
+既存 v0.1.0 の実装・検証結果は [release evidence](../release/v0.1.0.md) に固定する。旧コードとの差分を設計に合わせる作業は後続 Issue が所有する。
 
-- 新規プロジェクト開発
-- 既存プロジェクトへの機能追加
-- Bugfix
-- Hotfix
-- Chore
+対象は new-project / feature / bugfix / hotfix / chore。v1 は single active Workflow、single Planning Orchestration、single Coding Orchestration、single Worker とする。Git と filesystem（non-Git）workspace を同等の authority 対象とする。
 
-作業種別ごとに工程の有無や厳格さは異なるが、共通の Orchestrator、State、Artifact、Human Gate、Decision Engine を利用する。
+## 2. Platform baseline
 
-Initial Scope では Coding Orchestration は1本のみとする。
+| Component | v1 production baseline / ownership |
+| --- | --- |
+| Pi / `@earendil-works/pi-coding-agent` | **>=0.99.1**。host / peer dependency、bundled runtime ではない |
+| `pi-subagents` | **>=0.74.0**。released public single-agent RPC / preflight / lifecycle contracts |
+| `pi-typesafe` | **>=0.8.1 transitional only until #19**。native classifier 移行後に direct dependency を削除 |
+| Plannotator | public event API。Plan Review async、Code Review synchronous |
 
-Planning による Work Package 分割、および複数 Coding Orchestration の並列実行は将来拡張として考慮するが、Initial Scope の対象外とする。
+Jev decision transport の v1 target は Pi native classifier、default は `typesafe/jev-latest`。Virtual Models は v1 execution authority ではなく Future Scope。bounded read-only child Codemode は #20、全 child の Agent Launch Policy は #21 が実装する。
 
----
+第三者 package は read-only dependency。source / `node_modules` 編集、patch、fork、private API 依存は認めない。released public contract で安全に実現できなければ orchestrator-side adapter または `blocked` / unsupported とし、main / Unreleased behavior を前提にしない。
 
-## 2. 基本方針
-
-Orchestrator をシステム全体の Control Plane とする。
-
-```text
-                              Pi
-                               │
-                               ▼
-                     ┌─────────────────┐
-                     │   Orchestrator  │
-                     │   Extension     │
-                     └────────┬────────┘
-                              │
-       ┌──────────────────────┼──────────────────────┐
-       │                      │                      │
-       ▼                      ▼                      ▼
-  pi-subagents           Decision Engine        Plannotator
-       │                    (Jev)                   │
-       │                      │                      │
-       │                      │                  Human Gate
-       │                      │
-       │                      └─ typed decisions
-       │
-       ├─ workflow-scout
-       ├─ pi-ketch.researcher
-       ├─ planner
-       ├─ worker
-       ├─ reviewer
-       └─ ponytail-reviewer
-
-Main Pi Agent
-   └─ grilling
-       └─ ask_user_question
-           ↕
-          Human
-```
-
-責務:
+## 3. Authority boundaries
 
 ```text
-Orchestrator
-    = いつ、何を、どの順番で実行するか
-
-Jev
-    = bounded な State / Evidence に対する typed decision
-
-Agent
-    = 誰が作業するか
-
-Skill
-    = どの方法で作業するか
-
-Artifact
-    = Stage 間で受け渡す成果物・証拠
-
-Gate
-    = 次の Phase に進めるかを決定する境界
-
-State
-    = Workflow が現在どこにいるか
+Orchestrator                 State / lifecycle / Artifact / policy / Human Gate authority
+Scout / Diagnosis / Research evidence generation
+Jev native classifier        bounded typed decision evidence
+Oracle                       bounded read-only advisory evidence
+Planner                      candidate implementation strategy
+Plan Simplicity Reviewer     pre-code strategy findings（read-only）
+Human Plan Gate              exact approved Plan の implementation authority
+Worker                       approved strategy 内の automated implementation
+Deterministic Validation     test / build / lint / typecheck の pass/fail authority
+Correctness / Ponytail       post-code structured findings
+Human Code Gate              completion authority
+Main/root Pi Agent           Human interaction / clarification、通常の source mutation authority なし
 ```
 
----
+外部 Agent、classifier、Oracle、Codemode、reviewer、pi-subagents は State を変更せず、Plan / Code を承認しない。preflight success、model confidence、API key、child success、Plannotator UI の消失は Human authority ではない。
 
-## 3. 設計原則
+Raw findings は Fix Authority ではない。Orchestrator が approved Plan と evidence を検証した Accepted Findings のみが自動 Fix の追加 authority となる。Human Code Feedback も exact implementation に bind した durable authority を必要とする。
 
-### 3.1 Generation / Decision / Verification の分離
+## 4. Normal lifecycle and recovery
 
 ```text
-生成・探索
-    → LLM Agent / Tool
-
-曖昧な意味判断
-    → Jev
-
-機械的に証明可能な判定
-    → deterministic code / test / build / lint / typecheck
-
-最終承認
-    → Human
+/wf-* Task
+ -> Scout
+ -> Diagnosis?                         # bugfix/hotfix: required
+ -> Conditional Research
+ -> Clarification Routing              # SKIP | GRILL_ME | GRILL_WITH_DOCS | ESCALATE
+ -> Conditional Architecture           # Planner owns design; optional Oracle advice
+ -> Development Method Routing         # STANDARD | TDD
+ -> Planner
+ -> deterministic Plan validation
+ -> Plan Simplicity Review
+ -> optional one-shot Planner refinement + fresh simplicity review
+ -> Human Plan Gate                    # required for every playbook
+ -> Jev Execution Routing
+ -> Worker
+      -> local detail: continue
+      -> material deviation: stop -> durable evidence -> Planning
+ -> Deterministic Validation
+ -> Correctness + Ponytail Review
+ -> Jev Finding Evaluation / Round Decision
+      -> bounded Fix / stronger retry / replan / Human attention
+      -> optional Oracle advice for hard escalation
+ -> Human Code Gate                    # required for every playbook
+ -> completed
 ```
 
-Jev に source code、Plan、Review本文などの主要成果物を生成させない。
+`driveWorkflow()` は pi-orchestrator が所有する normal lifecycle driver。single `/wf-*` invocation は genuine Human/external wait、`blocked`、`failed`、`completed` まで進める。Human result / child completion の受理後も同じ driver で continuation する。phase を1つ進めるために繰り返し `/wf-resume` を呼ぶ設計にはしない。
 
-また以下を Jev に代替させない。
+`/wf-resume` は durable State / Artifact / external identity の reconciliation **後**、同じ normal driver へ continuation する recovery entry。通常 lifecycle を pi-subagents workflow scripts へ移さない。`/wf-status` は read-only projection。
 
-- test success / failure
-- build success / failure
-- Artifact existence
-- State version check
-- Human Plan Approval
-- Human Code Approval
+## 5. Playbook baseline
 
-### 3.2 State Authority
+`new` は command `/wf-new` / internal playbook `new-project` を表す。
 
-Workflow State を変更できるのは Orchestrator のみ。
+| Stage | new | feature | bugfix | hotfix | chore |
+| --- | --- | --- | --- | --- | --- |
+| Scout | required | required | required | required | required |
+| Diagnosis | skip | skip | required | required | skip |
+| Research | conditional | conditional | conditional | conditional | conditional |
+| Clarification | conditional | conditional | conditional | conditional | conditional |
+| Architecture | required | conditional | conditional | skip | skip |
+| Human Plan Gate | required | required | required | required | required |
+| Human Code Gate | required | required | required | required | required |
 
-Jev、Agent、Skill、Plannotator は State を直接変更しない。
+`required -> RUN`、`skip -> SKIP` は deterministic。Jev は `conditional -> RUN / SKIP / ESCALATE` のみ判断する。low confidence を silent SKIP にしない。Human Gates は conditional routing の候補に含めない。
 
-### 3.3 Third-Party Dependency Immutability
+Scout → Diagnosis → Research → Clarification → Architecture は accumulated durable evidence から **sequential** に解決する。開始時に全 conditional flag を transient hint から固定しない。Stage decision は exact input refs/hash と policy に bind して保存し、次 side effect より先に State を保存する。
 
-pi-orchestrator Initial Scope が利用する third-party library / package は read-only dependency として扱い、pi-orchestrator の実装のために変更してはならない。Initial Scope ではこの制約に例外を設けない。
+Diagnosis は症状、再現 / observed failure、root-cause hypothesis、支持 / 反証 evidence、affected surface、unknowns を durable に残す。競合 hypothesis への Oracle advice は optional で、Diagnosis を省略しない。
 
-対象には以下を含む。
+## 6. Clarification and domain-document authority
 
-- Pi / pi-coding-agent
-- pi-subagents
-- Plannotator
-- pi-ketch
-- pi-ask-user-question
-- Jev / TypeSafe client library
-- その他の npm / external dependency
+| Mode | Executor / semantics |
+| --- | --- |
+| `SKIP` | current evidence で Human decision 不要 |
+| `GRILL_ME` | Main/root Pi Agent + `grilling` + `ask_user_question` |
+| `GRILL_WITH_DOCS` | Main/root Pi Agent + `grilling` + `domain-modeling`、Human interaction は root |
+| `ESCALATE` | unresolved / low-confidence / unavailable capability、Human attention。回答を推測しない |
 
-禁止する実装方式:
+Fact は Agent / Tool が調査し、Product / Architecture / Scope decision は Human が決める。Jev は bounded evidence から mode を route できるが、質問文の生成や Human の代理回答はしない。`grill-me` / `grill-with-docs` は product semantics。wrapper invocation が未対応・無効なら underlying skills を直接利用できる。
+
+`domain-modeling` は独立 Stage ではなく **GRILL_WITH_DOCS のみ**。この mode 自体で write authority は発生しない。Orchestrator が active clarification request に bind した exact path allowlist / intent を保存してから、以下の範囲だけを許可する。
 
 ```text
-third-party source の直接変更
-node_modules の編集
-pnpm patch / patch-package を必須とする実装
-fork した dependency を Initial Scope の前提とする実装
-private / internal API の変更を前提とする実装
+CONTEXT.md
+CONTEXT-MAP.md
+**/CONTEXT.md
+docs/adr/*.md
+**/docs/adr/*.md
 ```
 
-外部 component との不整合は pi-orchestrator 側の Integration Adapter / Wrapper で吸収する。公開 contract の範囲で安全に実現できない場合は dependency を変更せず、`blocked` / unsupported として扱う。
+許可対象は CONTEXT / context map / ADR の narrowly-scoped design-document writes。canonical project root 内に限定し、path traversal・symlink escape・source / implementation / configuration mutation を拒否する。before identity（absence を含む）、authorized intent、clarification binding を **write 前**に保存し、after identity / exact diff / Human answers の refs を write 後に保存する。missing / ambiguous evidence は fail closed。これは source implementation authority、一般的 docs write 権、Plan approval の代替ではない。
 
-必要な capability が upstream に存在しない場合も、pi-orchestrator Initial Scope が third-party の改変版に依存してはならない。
+## 7. Plan contract and simplicity review
 
----
+Plan は frozen line-by-line execution recipe ではなく、Human が承認する **implementation strategy and boundary**。exact approved Plan content/hash が Implementation Authority である。
 
-## 4. Playbook
+Required logical content:
 
-初期 Slash Command:
+- Scope / Requirements
+- Architecture / Design（Stage policy が RUN のとき）
+- Implementation Approach
+- Expected Change Surface
+- New Components（なしなら明記）
+- New Dependencies（なしなら明記）
+- Non-goals
+- Development Method: `STANDARD` / `TDD`
+- Test Seams（TDD のとき required）
+- machine-readable Validation Contract
+
+Planner → candidate Plan → deterministic section/contract validation → required read-only Plan Simplicity Review → optional **at most one** automatic refinement → fresh review of changed Plan → Human Plan Gate。repository pattern / file / dependency evidence なしの好みは finding としない。
+
+Plan Simplicity Review は不要な abstraction、speculative flexibility、avoidable dependency、ignored repository pattern、過大な change surface を検査する。evidence は exact Plan version/hash に bind し、**any Plan change** で stale。one-shot refinement の消費を durable に残し、自動再生成で cap をリセットしない。残る findings は Human に提示し、無限 refinement を行わない。
+
+Plan feedback / replan / material deviation は新しい immutable Plan と fresh simplicity evidence、Human Plan Approval を必要とする。Simplicity reviewer は Plan を承認・修正・実装しない。post-code Ponytail Reviewer とは対象とタイミングが異なる。
+
+## 8. Development Method
+
+- explicit Human TDD request → deterministic `TDD`
+- clearly inapplicable behavior-free work → deterministic `STANDARD`
+- ambiguous eligible case → bounded Jev routing
+- low confidence → `ESCALATE` / Human clarification、Human decision を捏造しない
+
+method routing evidence は durable。TDD Plan には Human-reviewable Test Seams（observable behavior / interface / controllable dependency / regression assertions）を含める。Human Plan Approval は method + exact Test Seams + Validation Contract を含む Plan 全体へ bind する。
+
+TDD Worker は public pi-subagents skill selection で `tdd` を明示取得する。`codebase-design` は supporting seam/interface vocabulary として選択可能。builtin Worker の ambient skill inheritance は仮定しない。vertical RED → minimal GREEN slices とし、TDD は deterministic Validation を置き換えない。
+
+## 9. Worker flexibility and material deviation
+
+Worker は approved approach / scope / boundary を保つ local internal implementation choice（private helper、local algorithm 等）を行える。Plan は全編集行を指定する必要がない。
+
+新たな unauthorized component / dependency、public API change、architecture boundary change、scope broadening、Development Method / Test Seam / Validation change 等は **material deviation**。Worker は knowingly 実装する前に停止する。
 
 ```text
-/wf-new
-/wf-feature
-/wf-bugfix
-/wf-hotfix
-/wf-chore
-/wf-resume
-/wf-status
+Worker stop
+ -> deviation evidence + observed workspace identity を永続化
+ -> approved authority を無効化
+ -> optional read-only Oracle analysis
+ -> Planner -> Plan validation -> Plan Simplicity Review -> Human Plan Gate
+ -> new approved authority のみで Worker continuation
 ```
 
-Slash Command は薄い entry point とする。
+Oracle がなくても fail closed で停止・replan できる。existing mutation は history として保持し、blind relaunch / rollback しない。
 
-```ts
-orchestrator.start({
-  playbook: "feature",
-  task: args,
-});
-```
+## 10. Oracle advisory
 
-Stage policy:
+pi-subagents builtin `oracle` は rare / hard decision の bounded read-only escalation。mandatory linear Stage ではない。
 
-```ts
-type StagePolicy = "required" | "conditional" | "skip";
-```
+候補: competing Diagnosis、difficult Architecture trade-off、unresolved Planner vs simplicity disagreement、material deviation analysis、hard post-implementation escalation。
 
-Initial Scope では `conditional` Stage の判定は Playbook の明示 rule / Orchestrator policy を使用する。
+Orchestrator が trigger、finite attempt budget / timeout、input evidence refs、launch policy を dispatch 前に保存し、output を durable advisory Artifact にする。Oracle は State / target files を変更せず、Plan / Code approval、implementation / Fix authority、Human Gate bypass を一切行わない。unavailable / uncertain advice を authority に昇格させない。
 
-Future Scope では conditional Stage 判定を Jev Decision Engine に拡張可能とする。
+## 11. Execution, validation and gates
 
----
+全 child は #21 の explicit Agent Launch Policy と public preflight を通す。resolved physical model / thinking、explicit skills、effective callable tools、Agent definition digest、inheritance flags、project-trust expectation、package / lifecycle version、launch-contract digest を durable に bind する。model / skill / tool / definition drift を同じ attempt と扱わない。preflight は resolved intent であり、runtime tool provider/trust/skill-body の attestation ではない。公開 host/child-startup checks と exact input hashes を別途検証する。
 
-## 5. Top-Level Lifecycle
+Worker intent / routing / workspace baseline → State persist → dispatch。実行中は exact receipt / run identity を保存し、output / after-workspace evidence → State persist → next stage。truncated/display text、timeout、stop request は completion proof ではない。曖昧な mutating attempt を再起動しない。
 
-```text
-Planning Orchestration
-        ↓
-Human Plan Gate
-        ↓
-Coding Orchestration
-        ↓
-Human Code Gate
-        ↓
-Completed
-```
+Validation は exact Approved Plan の machine-readable contract を実行し、pass/fail は deterministic tools が決める。validation failure の retry は durable Round Decision + hard policy を通す。passed round は Correctness / Ponytail / evaluation / accepted-findings の全 current evidence（空配列を含む）が required。
 
-Planning と Coding は別 Orchestration とする。
+Jev は classifier selection / auth transport ではなく bounded domain decision plane。Orchestrator は project/operator grant upper bound から generated workflowId に bind した workflow consent と finite request budget を保存し、毎 outbound attempt を reservation-before-request で計上する。credentials / Plan approval は consent ではない。native classify は maxRetries:0 と finite cancellation/deadline を明示し、returned stopReason/answers を検証する。
 
-詳細な State / Event / Transition は [state-machine.md](./state-machine.md) を正本とする。
+Plan Gate は async external reviewId と exact Plan を bind。Code Gate は synchronous public request/result と **orchestrator-owned local attempt** を exact implementation / review source に bind。non-Git は durable snapshot から生成した static patch を `patchFile` に渡す。result Artifact → Event → State の保存後に authority を進める。
 
----
+## 12. Ownership, persistence and recovery
 
-## 6. Planning Orchestration
+Active workflow ownership は canonical workspace / root session / workflowId / authority を durable に bind し、Main Agent の source mutation や別 child 経由の迂回を拒否する。GRILL_WITH_DOCS の exact authorized paths だけが clarification exception。project trust を再実装・推測せず、Pi / pi-subagents の public trust contract を継承する。enforcement を証明できなければ blocked/unsupported。
 
-```text
-User Request
-     ↓
-Context Gathering
-     ↓
-Clarification
-     ↓
-Architecture / Design
-     ↓
-Planning
-     ↓
-Plan Artifact
-```
+State の sole writer は Orchestrator。immutable Artifact refs/hash、stateRevision、exclusive lock / revision check、stale binding rejection を維持する。intent / authority / reservation が必要な外部・mutating side effect は **実行前に**保存する。
 
-### 6.1 Context Gathering
+`blocked` は一時依存障害・authority ambiguity・budget exhaustion 等の recoverable suspension。`failed` は State / Authority / Artifact の安全な再構築が不能な terminal state。通常 test failure / feedback / finding は terminal failure ではない。
 
-```text
-                   Context Gathering
-                    /             \
-                   /               \
-        workflow-scout       pi-ketch.researcher
-        Local Repository      External Evidence
-                   \               /
-                    \             /
-                     Context Artifacts
-```
+## 13. Canonical references / Future Scope
 
-- Local repository: `workflow-scout`
-- External Research: `pi-ketch.researcher`
+- [State Machine](./state-machine.md): phases / events / transitions
+- [Decision Engine](./decision-engine.md): bounded decisions / confidence / authorization
+- [Artifacts](./artifacts.md): identity / freshness / authority / ordering
+- [Integrations](./integrations.md): released public platform contracts
+- [Configuration](./configuration.md): grants / profiles / budgets
+- [Directory Structure](./directory-structure.md): ownership / dependencies
+- [Detailed Design Overview](../detailed-design/detailed-design-overview.md)
+- [Dependency Contract Review](../implementation/dependency-contract-review.md): released references / corrections / pending source and runtime verification
 
-### 6.2 Clarification
+Future Scope: multiple Coding Orchestrations / Work Package DAG / worktree parallelism、generic Context Routing、arbitrary Jev escalation-target selection、semantic Validation failure classifier、dynamic reviewer selection、Virtual Models execution authority。Conditional Stage Routing、Diagnosis、non-Git、clarification modes、TDD、Plan Simplicity Review、material deviation、Oracle advisory、bounded read-only Codemode は **v1**。
 
-```text
-Context
-   ↓
-grilling
-   ↓
-Decision frontier
-   ↓
-ask_user_question
-   ↕
-Human
-   ↓
-Shared Understanding
-```
-
-原則:
-
-```text
-Fact
-    → Agent / Tool が調査
-
-Decision
-    → Human が決定
-```
-
-### 6.3 Architecture / Planning
-
-Initial Scope では Architecture / Design と Implementation Planning を `planner` が所有する。
-
-独立した `architect` Agent は Initial Scope では作成しない。
-
-Architecture 判断が必要な場合、Planner は Approved Plan の中に Architecture / Design section を含める。
-
-```text
-Context Artifacts
-+
-Clarification Result
-        ↓
-      Planner
-        ↓
-plans/plan-vN.md
-    ├─ Scope / Requirements
-    ├─ Architecture / Design（必要時）
-    ├─ Implementation Plan
-    └─ Validation Contract
-```
-
-Validation Contract は、その Plan を実装・検証するときに実行すべき検証条件の正本とする。
-
-例:
-
-```text
-- project test command
-- typecheck
-- lint
-- build
-- task-specific regression / focused verification
-```
-
-Planner は Implementation を開始しない。
-
-将来、Architecture の複雑性が増した場合は `architect` Agent の分離を検討できるが、Initial Scope の責務境界は変更しない。
-
----
-
-## 7. Human Plan Gate
-
-```text
-plan-vN.md
-    ↓
-Plannotator
-    ↕
-Human
-```
-
-Feedback:
-
-```text
-PLAN_FEEDBACK
-→ Planning
-→ plan-vN+1.md
-```
-
-Approve:
-
-```text
-PLAN_APPROVED
-→ approvedPlanRef を固定
-→ Coding Orchestration
-```
-
-Implementation Authority は `approvedPlanRef` のみとする。
-
----
-
-## 8. Coding Orchestration
-
-Initial Scope:
-
-```text
-Approved Plan
-      ↓
-Jev: Execution Routing
-      ↓
-Implementation
-      ↓
-Deterministic Validation
-      ↓
-Automated Review
-      ↓
-Structured Findings
-      ↓
-Jev: Finding Evaluation
-      ↓
-Jev: Round Decision
-   ┌──┼──────────────┐
-   │  │              │
- RETRY COMPLETE   ESCALATE
-   │  │              │
-   │  │       deterministic
-   │  │       escalation policy
-   │  │              │
-   ▼  ▼              ▼
- Fix  Human       Stronger Retry /
-      Code Gate   Planning /
-                  Clarification
-```
-
----
-
-## 9. Jev Decision Engine - Initial Scope
-
-Initial Scope では Jev を以下3箇所で必須利用する。
-
-### 9.1 Coding Entry Routing
-
-Approved Plan から Coding execution profile を選択する。
-
-Jev が返す logical decision 例:
-
-```text
-modelTier:
-  ECONOMY | STANDARD | STRONG
-
-reasoningTier:
-  LOW | MEDIUM | HIGH
-```
-
-具体的な provider / model 名への変換は Orchestrator Configuration が担当する。
-
-Jev が provider/model 名を直接 Workflow contract に埋め込まない。
-
-### 9.2 Finding Evaluation
-
-Correctness Reviewer と Ponytail Reviewer は structured finding を返す。
-
-Jev は finding ごとに狭い判断を行う。
-
-例:
-
-```text
-evidenceSupported?
-conflictsWithApprovedPlan?
-conflictsWithArchitecture?
-inScope?
-requiresHumanDecision?
-```
-
-最終的な:
-
-```text
-ACCEPT
-REJECT
-ESCALATE
-```
-
-は Jev の typed decision と deterministic policy を組み合わせて決める。
-
-### 9.3 Post-Implementation Round Decision
-
-Validation と Review evidence を入力として:
-
-```text
-COMPLETE
-RETRY
-ESCALATE
-```
-
-を判断する。
-
-Hard rule:
-
-- deterministic validation failure がある場合 `COMPLETE` 不可
-- accepted blocking finding がある場合 `COMPLETE` 不可
-- Human Approval の代替にはならない
-
-詳細は [decision-engine.md](./decision-engine.md) を参照する。
-
----
-
-## 10. Escalation - Initial Scope
-
-Initial Scope では Jev が `ESCALATE` と理由分類を返し、対象先は code policy が決定する。
-
-例:
-
-```text
-implementation-capability
-    → stronger execution profile で Fix / Retry
-
-plan-conflict
-    → Planning へ戻す
-    → approvedPlanRef を無効化
-    → Human Plan Gate を再度通す
-
-human-decision
-    → Clarification
-    → Planning
-    → Human Plan Gate
-
-uncertain
-    → Clarification / Human attention
-```
-
-Jev 自身が任意の routing target を生成しない。
-
-Future Scope では bounded Choice として Escalation Target を Jev に選択させることを検討する。
-
----
-
-## 11. Implementation
-
-pi-subagents builtin `worker` を基本利用する。
-
-Worker input:
-
-- approvedPlanRef
-- required context refs
-- execution profile
-- accepted findings（Fix時）
-
-Worker は未承認の Product / Architecture / Scope Decision を行わない。
-
----
-
-## 12. Validation
-
-Validation は Approved Plan の `Validation Contract` を正本として deterministic に実行する。
-
-Validation Contract の例:
-
-- project test command
-- typecheck
-- lint
-- build
-- task-specific regression / focused verification
-
-各 check の pass / fail は code で判定する。
-
-Jev に exit code や pass/fail 自体を判断させない。
-
-Validation が失敗した場合は、その時点で直接 `fixing` / `planning` / `clarifying` へ遷移しない。
-
-```text
-Validation failure
-      ↓
-Validation Evidence を保存
-      ↓
-Jev Round Decision
-      ↓
-Orchestrator Escalation Policy
-      ↓
-RETRY_REQUIRED
-STRONGER_RETRY_REQUIRED
-REPLAN_REQUIRED
-CLARIFICATION_REQUIRED
-```
-
-最終 routing event によって State Transition を一意に決定する。
-
----
-
-## 13. Automated Review
-
-```text
-                  Current Diff
-                       │
-             ┌─────────┴─────────┐
-             ▼                   ▼
-   Correctness Reviewer    Ponytail Reviewer
-             │                   │
-             └─────────┬─────────┘
-                       ↓
-               Structured Findings
-```
-
-Reviewer は fresh context を基本とする。
-
-Raw Review prose だけに依存せず、Finding Evaluation 用の structured finding contract を持つ。
-
----
-
-## 14. Finding Evaluation
-
-従来の `Finding Synthesis` という名称は使用せず、`Finding Evaluation` とする。
-
-```text
-Structured Findings
-       ↓
-      Jev
-       ↓
-typed decisions
-       ↓
-deterministic policy
-       ↓
-accepted / rejected / escalated findings
-```
-
-Jev は Finding を修正しない。
-
-Orchestrator が evaluation artifact を検証して `acceptedFindingsRef` を authoritative に設定する。
-
----
-
-## 15. Fix Loop
-
-`RETRY` または accepted finding がある場合:
-
-```text
-Approved Plan
-+
-Accepted Findings
-+
-Current Implementation
-+
-Execution Profile
-        ↓
-      Worker
-        ↓
-    Validation
-        ↓
-Automated Review
-        ↓
-Jev Evaluation / Round Decision
-```
-
----
-
-## 16. Human Code Gate
-
-`COMPLETE` は「Automated Stage が完了した」という意味であり Workflow completion ではない。
-
-```text
-Jev Round Decision = COMPLETE
-        ↓
-Plannotator Code Review
-        ↕
-Human
-```
-
-Feedback:
-
-```text
-CODE_FEEDBACK
-→ Fixing
-```
-
-Approve:
-
-```text
-CODE_APPROVED
-→ Completed
-```
-
----
-
-## 17. Blocked / Failed / Resume
-
-外部依存の一時障害と、通常 recovery ができない failure を分離する。
-
-```text
-blocked
-    = 現在は安全に続行できないが、原因解消後に resume 可能
-
-failed
-    = State / Authority / Artifact の整合性を安全に再構築できず、
-      通常の resume を許可しない terminal state
-```
-
-`blocked` の代表例:
-
-- Jev / TypeSafe API unavailable
-- Plannotator unavailable
-- pi-subagents infrastructure unavailable
-- retry budget exhausted and Human intervention required
-
-`failed` の代表例:
-
-- persisted State corruption
-- authoritative Artifact loss / corruption
-- impossible / invalid State Transition
-- Authority の再構築不能
-
-Resume の正本:
-
-```text
-Workflow State
-+
-Authoritative Artifacts
-+
-External Identities
-+
-Decision Artifacts
-```
-
-Jev の決定も durable artifact として保存する。
-
-Resume 時に Jev decision を無条件再実行しない。
-
-既存の valid decision artifact が current input version / revision と一致する場合は再利用可能とする。
-
-`blocked` からの resume は原因解消を reconcile した後、`blockedFrom` に記録された Phase へ戻り、通常 Event / Transition を再開する。
-
----
-
-## 18. Source Code Architecture
-
-```text
-commands / tools / events / ui
-              ↓
-           runtime
-              ↓
-             core
-```
-
-追加:
-
-```text
-runtime/integrations/jev.ts
-core/decisions/*
-core/configuration.ts
-```
-
-詳細は [directory-structure.md](./directory-structure.md)。
-
-Configuration / Retry policy の正本は [configuration.md](./configuration.md) とする。
-
----
-
-## 19. Artifact
-
-Artifact は durable contract / evidence。
-
-Jev 関連:
-
-- execution-routing decision
-- finding-evaluation decision
-- round-decision
-
-詳細は [artifacts.md](./artifacts.md)。
-
----
-
-## 20. Integrations
-
-詳細は [integrations.md](./integrations.md)。
-
-Jev の Decision contract は [decision-engine.md](./decision-engine.md) を正本とする。
-
-Configuration / Retry policy は [configuration.md](./configuration.md) を正本とする。
-
----
-
-## 21. Configuration / Retry Policy
-
-Initial Scope では以下を Orchestrator Configuration が所有する。
-
-- Jev confidence thresholds
-- logical execution tier → concrete provider/model mapping
-- reasoning tier → concrete thinking level mapping
-- automated Fix / Review round upper bound
-- stronger retry upper bound
-- Jev integration settings
-- Validation execution policy
-
-推奨 Initial Scope default:
-
-```text
-maxAutomatedFixRounds = 3
-maxStrongerRetries    = 1
-```
-
-上限到達時に silent loop を継続しない。
-
-```text
-retry budget exhausted
-    ↓
-blocked
-    ↓
-Human attention / explicit resume
-```
-
-API key 等の secret は Workflow State / Artifact に保存しない。
-
-詳細は [configuration.md](./configuration.md)。
-
----
-
-## 22. Initial Scope
-
-- Single top-level Workflow
-- Single Planning Orchestration
-- Single Coding Orchestration
-- Context Gathering
-- Clarification
-- Planning
-- Plannotator Plan Gate
-- Jev Coding Entry Routing
-- Implementation
-- Deterministic Validation
-- Correctness Review
-- Ponytail Review
-- Jev Finding Evaluation
-- Jev Round Decision
-- Deterministic Initial Scope Escalation Policy
-- Fix Loop
-- Plannotator Code Gate
-- State / Artifact / Decision Persistence
-- Blocked / Failed separation
-- Validation Contract
-- Configuration / Retry policy
-- Resume / Recovery
-
----
-
-## 23. Initial Scope Out
-
-- Multiple Coding Orchestration
-- Work Package DAG
-- Integration Orchestration
-- Jev Context Routing
-- Jev Conditional Stage Routing
-- Jev Escalation Target selection
-- Agent Trace observability decision
-- Dynamic Reviewer selection
-
----
-
-## 24. Future Scope Jev Extension
-
-優先候補:
-
-### Future Scope
-
-```text
-Context Routing
-    READY
-    RESEARCH
-    CLARIFY
-    RESEARCH_AND_CLARIFY
-
-Conditional Stage Decision
-    RUN
-    SKIP
-    ESCALATE
-
-Escalation Target
-    STRONGER_WORKER
-    PLANNING
-    HUMAN
-
-Validation Failure Semantic Classification
-```
-
-### Future Scope: Later Candidates
-
-```text
-Agent Trace Observability
-Dynamic Reviewer Routing
-Adaptive model/cost/latency routing
-Work Package priority / dependency triage
-Multiple Coding Orchestration routing
-```
-
-詳細は [decision-engine.md](./decision-engine.md)。
-
----
-
-## 25. Final Design Principles
-
-```text
-Orchestrator
-    = Control Plane
-
-Jev
-    = Decision Plane
-
-pi-subagents
-    = Agent Execution Plane
-
-Agents
-    = Generation / Exploration / Review
-
-Deterministic tools
-    = Verification Plane
-
-Artifacts
-    = Durable Contracts / Evidence
-
-Plannotator
-    = Human Approval Gate
-
-Human
-    = Final Decision Authority
-```
-
-Jev は「Workflow を考える Agent」ではない。
-
-Orchestrator が設計した bounded decision point に対して typed decision を返す Decision Engine とする。
+Release evidence / CHANGELOG は後続実装と production-path validation の合格後だけ更新する。real Pi integration / smoke は new Herdr tab（tmux 禁止）で #12 が最終検証する。

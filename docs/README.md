@@ -1,85 +1,48 @@
 # Pi Orchestrator Documentation
 
-Pi Orchestrator の Initial Scope に関する設計・実装ドキュメントを、設計・実装の3階層と release evidence に分けて管理する。
+## 1. Status / source of truth
 
-## Release entrypoints
+Canonical Basic/Detailed Design now describe the **v1 target contract** finalized by [Issue #3](https://github.com/minorunakamura/pi-orchestrator/issues/3)。This documentation update does not implement or validate redesigned production paths。
 
-- [利用者向け README](../README.md) — installation、commands、lifecycle、configuration、known constraints
-- [Initial Scope release notes](../CHANGELOG.md) — 実装・検証済みの利用者向け変更点
-- [v0.1.0 release evidence](./release/v0.1.0.md) — ORCH-020 completion、validation、package inspection、release boundary
+[Issue #13](https://github.com/minorunakamura/pi-orchestrator/issues/13) owns dependency/order/completion; child Issues own implementation acceptance。Current package is v0.1.0; its historical [release evidence](./release/v0.1.0.md) / [CHANGELOG](../CHANGELOG.md) remain separate and unchanged。
 
-## Terminology
+Terminology:
 
-- **Initial Scope**: 現在実装・検証済みの product scope。
-- **Future Scope**: Initial Scope では意図的に除外し、将来検討する機能。
-- Package release version (`0.1.0`) は、上記の design-scope names とは独立している。
-- `Basic Design (document revision 1.0)` などの表記は document revision を示し、package release version ではない。
+- **v1 / Initial Scope target**: redesigned single-Workflow product scope in these canonical docs, including conditional routing/Diagnosis/non-Git/TDD/simplicity/Oracle。
+- **v0.1.0 verified scope**: historical implementation/validation, not the v1 target PASS。
+- **Future Scope**: explicitly deferred multiple coding/DAG/generic context routing/arbitrary escalation/semantic failure classifier/Virtual Models authority。
+- Document revision 2.0 is not package release version。
 
-## 1. Reading Order
+## 2. Reading order
 
-基本の読み順は以下。
+1. [Basic Design](./basic-design/basic-design.md): WHAT/WHY/authority/baseline
+2. [Detailed Design Overview](./detailed-design/detailed-design-overview.md): HOW/contracts
+3. [Implementation Plan](./implementation/implementation-plan.md): current gaps / Issue #13 order
+4. [Dependency Contract Review](./implementation/dependency-contract-review.md): released public references / corrected assumptions / pending publication and runtime evidence
 
-1. [Basic Design](./basic-design/basic-design.md)
-2. [Detailed Design Overview](./detailed-design/detailed-design-overview.md)
-3. [Implementation Plan](./implementation/implementation-plan.md)
-
-```text
-Basic Design
-    WHAT / WHY / authoritative constraints
-            ↓
-Detailed Design
-    HOW / contracts / runtime behavior
-            ↓
-Implementation
-    ORDER / Story / PR / acceptance criteria
-```
-
-## 2. Directory Structure
-
-```text
-docs/
-├── README.md
-├── basic-design/
-├── detailed-design/
-├── implementation/
-└── release/
-```
+Conflicts are resolved through explicit Issue/canonical design changes, never silent implementation scope expansion。
 
 ## 3. Basic Design
 
-Basic Design (document revision 1.0) は Initial Scope の前提・制約・権限境界の正本。Detailed Design や Implementation Plan は、Basic Design と矛盾する変更を行わない。
-
-- [basic-design.md](./basic-design/basic-design.md) — 全体目的、責務境界、Initial Scope
-- [state-machine.md](./basic-design/state-machine.md) — Workflow State / Event / Transition の正本
-- [decision-engine.md](./basic-design/decision-engine.md) — Jev Decision Contract の正本
-- [artifacts.md](./basic-design/artifacts.md) — Artifact / Authority / Persistence ordering
-- [integrations.md](./basic-design/integrations.md) — 外部 component との接続境界
-- [configuration.md](./basic-design/configuration.md) — Configuration / Retry / model mapping
-- [directory-structure.md](./basic-design/directory-structure.md) — Source / Runtime directory と依存方向
+- [basic-design.md](./basic-design/basic-design.md): lifecycle/playbooks/authority/platform
+- [state-machine.md](./basic-design/state-machine.md): phases/events/transitions/invariants
+- [decision-engine.md](./basic-design/decision-engine.md): bounded native classifier decisions/freshness/consent
+- [artifacts.md](./basic-design/artifacts.md): kind/path/authority/persistence catalog
+- [integrations.md](./basic-design/integrations.md): released public preflight/trust/skills/Codemode/Gate contracts
+- [configuration.md](./basic-design/configuration.md): profiles/budgets/grant vs workflow consent
+- [directory-structure.md](./basic-design/directory-structure.md): responsibility/allowed dependencies
 
 ## 4. Detailed Design
 
-Basic Design (document revision 1.0) を変更せず、Initial Scope の実装可能な型・契約・runtime behavior へ具体化する。
+- [domain-model.md](./detailed-design/domain-model.md): typed State/Event/Artifact contract
+- [runtime-design.md](./detailed-design/runtime-design.md): normal driver vs reconciliation/ports/ownership/launch
+- [planning-orchestration.md](./detailed-design/planning-orchestration.md): sequential evidence/modes/TDD/strategy/simplicity
+- [coding-orchestration.md](./detailed-design/coding-orchestration.md): Worker boundary/deviation/validation/review
+- [plannotator.md](./detailed-design/plannotator.md): async Plan / synchronous Code + local attempt/static patch
+- [persistence-recovery.md](./detailed-design/persistence-recovery.md): intent-before-effect/freshness/recovery
+- [test-strategy.md](./detailed-design/test-strategy.md): focused/fault/host/live Herdr verification
 
-- [detailed-design-overview.md](./detailed-design/detailed-design-overview.md) — 詳細設計の境界と解釈
-- [domain-model.md](./detailed-design/domain-model.md) — TypeScript domain model / State / Event
-- [runtime-design.md](./detailed-design/runtime-design.md) — Orchestrator runtime / ports / integrations
-- [planning-orchestration.md](./detailed-design/planning-orchestration.md) — Planning Orchestration
-- [coding-orchestration.md](./detailed-design/coding-orchestration.md) — Coding / Jev / Validation / Retry
-- [persistence-recovery.md](./detailed-design/persistence-recovery.md) — State / Artifact persistence / Resume / reconciliation
-- [test-strategy.md](./detailed-design/test-strategy.md) — Test architecture / recovery testing
-
-## 5. Implementation
-
-実装順、Story / PR boundary、Acceptance Criteria、依存関係を管理する。
-
-- [implementation-plan.md](./implementation/implementation-plan.md)
-
-実装計画は Basic Design と Detailed Design を参照する実行計画であり、設計上の正本を置き換えない。
-
-## 6. Runtime Commands
-
-Pi package を読み込むと、workflow の開始・reconciliation・read-only status を次の commands で利用できる。
+## 5. Commands / runtime target
 
 ```text
 /wf-new <task>
@@ -91,10 +54,6 @@ Pi package を読み込むと、workflow の開始・reconciliation・read-only 
 /wf-status <workflow-id>
 ```
 
-`/wf-resume` は phase の直接変更ではなく ORCH-018 reconciliation を通り、`/wf-status` は State と authoritative refs の projection のみを表示する。
+/wf-* invokes normal driveWorkflow() until genuine Human/external wait, block, failure or completion。Accepted results continue the same driver。/wf-resume reconciles first, then continues normal driver; repeated resume is not normal progress。/wf-status is read-only。
 
-## 7. Change Rule
-
-実装中に Basic Design と矛盾する変更が必要になった場合は、実装側だけで吸収しない。変更理由と影響範囲を明示し、Basic Design の変更として扱う。
-
-Future Scope と定義された機能は、Initial Scope の Detailed Design / Implementation に先行実装しない。
+Production target: Pi >=0.99.1 / pi-subagents >=0.74.0; pi-typesafe >=0.8.1 transitional until #19。Implementation/migration/production smoke are still tracked child work. Release evidence/CHANGELOG update only after those required checks pass。

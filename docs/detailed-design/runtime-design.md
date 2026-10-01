@@ -1,382 +1,154 @@
 # Pi Orchestrator Runtime Design
 
-Version: 1.7
+Version: 2.0 — v1 target contract (Issue #3)
 
-## 1. Purpose
+## 1. Responsibility / platform
 
-This document defines runtime responsibility boundaries and external integration ports for pi-orchestrator's Initial Scope.
+Commands/tools/events/UI → runtime → pure core。No core import of Pi/filesystem/network/classifier/Plannotator/pi-subagents transport types。
 
-## 2. Dependency Direction
+Pi >=0.99.1 and pi-subagents >=0.74.0 are production baselines; pi-typesafe >=0.8.1 transitional only until #19。Use only released public APIs; no package modification/private API dependency。
 
-```text
-commands / tools / events / ui
-              ↓
-           runtime
-              ↓
-             core
-```
-
-Forbidden dependencies:
+## 2. Normal driver vs recovery
 
 ```text
-core → runtime
-core → Pi API
-core → TypeSafe API SDK
-core → Plannotator API
-core → pi-subagents API
+/wf-* -> startWorkflow (task / ownership / initial State)
+      -> driveWorkflow
+         -> sequential planning / Human Plan Gate
+         -> coding / Validation / reviews / Human Code Gate
+         -> wait | blocked | failed | completed
+
+/wf-resume -> reconcileWorkflow (exact persisted authority)
+           -> driveWorkflow continuation
+
+/wf-status -> read-only projection
 ```
 
-## 3. Runtime Components
+A single normal invocation progresses until genuine Human/external wait, block, failure or completion。Human/child result handlers validate/persist evidence and wake the same driver。Repeated resume is not normal phase advancement。pi-subagents scripts are execution helpers, not lifecycle authority。
 
-Recommended runtime split:
+Driver loads current State, validates ownership/authority, selects one admissible phase action, receives evidence, applies core policy/Event, persists State and only then starts next side effect。It must use State returned by persistence (updated stateRevision), not cached pre-reservation/approval snapshots。
 
-```text
-src/runtime/orchestrator/
-  workflow-controller.ts
-  advance-workflow.ts
-  planning-orchestrator.ts
-  coding-orchestrator.ts
-  validation-runner.ts
-  review-runner.ts
-  resume-workflow.ts
-  reconciler.ts
-```
+Recovery inspects State/Artifact/public historical identities and reconstructs a safe next action before continuation。No blind Worker/review recreation when dispatch/result is ambiguous。Driver and reconciler share action/phase runners rather than maintaining two different normal lifecycles。
 
-## 4. Workflow Controller
+## 3. Runtime ports (logical target)
 
-The Workflow Controller is the single top-level runtime controller.
+Minimal ports retain existing responsibility areas; exact TypeScript fields belong to implementing Issues。
 
-```ts
-export interface WorkflowController {
-  start(input: StartWorkflowInput): Promise<void>;
-  advance(workflowId: WorkflowId): Promise<void>;
-  resume(workflowId: WorkflowId): Promise<void>;
-}
-```
+| Port | Contract |
+| --- | --- |
+| SubagentExecutor | public preflight resolution + exact single-agent dispatch/receipt/result/status; normalized launch policy projection |
+| DecisionClassifierPort | conditional stage, clarification mode, method, execution, finding and round requests; bounded domain decisions |
+| ClarificationPort | persisted root/Main request/mode/evidence/scope → confirmed Human questions/answers + authorized write refs |
+| PlanGate | async open/pending/external identity/status/result |
+| CodeGate | synchronous request/settled Human result through pre-persisted local attempt; no external review-status |
+| ValidationExecutor | authoritative parsed contract → execution statuses/checks only |
+| workspace observation | deterministic Git/filesystem baseline/after/source/patch evidence |
 
-Responsibilities:
+ValidationExecutor does not read WorkflowState or invent revision。ValidationRunner reads/hash-validates exact approved Plan, parses contract, validates result coverage/aggregation, binds Plan/implementation/contract digest, persists result and normal Event。
 
-1. Load persisted state.
-2. Inspect current phase.
-3. Invoke the phase runner.
-4. Receive evidence or integration results.
-5. Produce a domain `WorkflowEvent`.
-6. Call pure `transition()`.
-7. Persist the resulting state.
-8. Begin the next side effect only after persistence succeeds.
+Adapters forward runtime-assembled evidence and normalize output/errors。They do not read ArtifactStore to guess classifier constraints or mutate State。
 
-The controller must not contain Jev business policy, transition tables, or reviewer evaluation rules.
+## 4. Planning runtime
 
-## 5. Runtime Ports
+Scout → required Diagnosis? → Research routing/execution → clarification mode/root Human → Architecture routing → method → Planner → deterministic Plan validation → read-only simplicity → optional one-shot refinement/fresh review → async Human Plan Gate。
 
-External capabilities are accessed through interfaces.
+Each stage consumes accumulated durable evidence sequentially。required/skip deterministic, conditional classifier only。New normal code must not use start-time transient booleans as authority or run Scout/Research concurrently before dependent routing。
 
-```ts
-export interface SubagentExecutor {
-  run(input: AgentRunRequest): Promise<AgentRunResult>;
-  runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]>;
-  status(runId: SubagentRunId): Promise<AgentRunStatus>;
-  resume(runId: SubagentRunId, task: string): Promise<AgentRunResult>;
-}
+GRILL_WITH_DOCS grants only exact clarification-bound CONTEXT/ADR write scope after before/intent persistence。No independent domain-modeling Stage/general source write。Plan stays planning after PLAN_CREATED until fresh simplicity/method/Test Seams permit PLAN_REVIEW_READY。
 
-export interface ExecutionRoutingPlanSectionEvidence {
-  title: PlanSection;
-  content: string;
-}
+## 5. Active workflow ownership / Main guard (#5)
 
-export interface ExecutionRoutingPlanEvidence {
-  summary: string;
-  relevantSections: readonly ExecutionRoutingPlanSectionEvidence[];
-}
+Bind active workflow to canonical workspace/root session/workflow identity and durable ownership projection。Enforce the same policy at public host tool-call and launch boundaries: Main cannot directly edit source, run mutating shell/MCP or launch a child to bypass Worker/Plan authority。
 
-export interface ExecutionRoutingContextEvidence {
-  ref: ArtifactRef;
-  content: string;
-}
+Root/Main normally owns Human interaction/read-only explanation only。GRILL_WITH_DOCS temporarily admits exact authorized CONTEXT/ADR paths/operations with persisted clarification intent/before/after evidence。Mode selection is not general mutation permission。
 
-export interface ExecutionRoutingInput {
-  approvedPlanRef: ArtifactRef<"plan">;
-  planEvidence: ExecutionRoutingPlanEvidence;
-  playbook: PlaybookKind;
-  changeScope: string;
-  contextRefs: readonly ArtifactRef[];
-  contextEvidence: readonly ExecutionRoutingContextEvidence[];
-  priorRetryCount: number;
-}
+Worker mutation requires current approved strategy/routing/launch/attempt identity。Evidence/review/Oracle/Codemode roles remain read-only。Permission prompts/tool hints are not a sandbox; unsupported/unverifiable enforcement fails closed。Do not recursively invoke subagent tools inside tool_call; use supported public adapter/capability seams。
 
-export interface JevDecisionClient {
-  routeExecution(input: ExecutionRoutingInput): Promise<ExecutionRoutingRawDecision>;
-  evaluateFindings(input: FindingEvaluationInput): Promise<FindingEvaluationRawDecision[]>;
-  decideRound(input: RoundDecisionInput): Promise<RoundDecisionRawDecision>;
-}
-
-export interface PlannotatorGate {
-  openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle>;
-  getPlanReview(reviewId: PlannotatorReviewId, persistedBinding?: PlanReviewBinding): Promise<PlanReviewStatus>;
-  openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle>;
-  getCodeReview(reviewId: PlannotatorReviewId, persistedBinding?: CodeReviewBinding): Promise<CodeReviewStatus>;
-}
-
-export interface ValidationExecutionResult {
-  status: "passed" | "failed" | "infrastructure-error";
-  checks: ValidationCheckResult[];
-}
-
-export interface ValidationExecutor {
-  execute(contract: ValidationContract): Promise<ValidationExecutionResult>;
-}
-
-export interface ClarificationPort {
-  request(input: ClarificationRequest): Promise<ClarificationResult>;
-}
-```
-
-`ValidationExecutor` is intentionally unaware of Workflow State and implementation revision. It owns deterministic execution of the Validation Contract only. `ValidationRunner` obtains that contract exclusively by reading/hash-validating the current Approved Plan Artifact and parsing its machine-readable block; callers cannot substitute a contract (B2). The runner validates result coverage/aggregation and binds `ValidationResult` to exact Plan/implementation refs, versions, and contract digest before persistence.
-
-```text
-ValidationExecutor
-    → ValidationExecutionResult (status / checks)
-
-ValidationRunner + current WorkflowState + Approved Plan Artifact
-    → parsed authoritative Validation Contract → ValidationExecutor
-    → ValidationResult (Plan/implementation binding / contract digest / status / checks)
-```
-
-This prevents hidden State access or fabricated revision values inside the execution port.
+Pi/pi-subagents own trust inheritance。Untrusted trust-gated project settings/.pi prompts/skills/extensions must be skipped; AGENTS.md/CLAUDE.md context and startup sessionDir lookup are exceptions, not sandboxed by trust。Use explicit inheritance policy for context exclusion。tool_call guards model/nested/MCP calls, not arbitrary trusted extension pi.exec/filesystem code; deny unknown mutation providers and detect out-of-band workspace drift。Single active owner is reconciled before continuation; ownership conflicts block rather than switching Main into executor。
 
 ## 6. pi-subagents Integration
 
-Agent mapping remains identical to Basic Design:
+Mapping: workflow-scout / read-only Diagnosis role / pi-ketch.researcher / planner / plan-simplicity-reviewer / worker / reviewer / ponytail-reviewer / builtin oracle。Product custom definitions must exist before runtime selection; development-time builtin helpers do not replace them。
 
-```text
-scout                workflow-scout
-researcher           pi-ketch.researcher
-planner              planner
-worker               worker
-reviewer             reviewer
-simplicity-reviewer  ponytail-reviewer
-```
+### Agent Launch Policy / preflight
 
-Jev must not be launched as an agent.
+#21 common boundary applies to **all** production child roles。Call released resolveSubagentLaunchContract from pi-subagents/preflight with consistent actual host snapshots and launch parameters before avoidable child side effects。
 
-### Product custom Agent vs development-time agent
+Resolve/validate canonical Agent/source/definition digest, physical model/thinking, required/resolved skills, effective callable tools/extensions/MCP, inheritance/context/trust expectations, cwd/input/output identity, package/lifecycle versions and launchContractDigest。Preflight contract version 3 is released in 0.74.0; unresolved host_required execution facts deny dispatch。ok:true/effectiveAllowlist resolves intent, not runtime provider availability/trust/skill-body attestation。Supplement public host/child-startup checks before model/mutation work, not private API guesses。Single-agent RPC thinking uses model provider/id:level, not the ignored model-facing thinking field。
 
-`workflow-scout`, `planner`, and `ponytail-reviewer` are product custom Agent definitions supplied by pi-orchestrator under `agents/`. They are not assumed to exist before the Story that introduces each definition.
+Persist bounded non-secret projection + attempt intent + State before spawn。Capture actual launch receipt and exact run ID as exposed; compare execution digest to intended launch。No secret/raw settings/unbounded prompt durability。Changed model/thinking/skills/tools/definition/digest cannot be equivalent historical attempt。
 
-During development, a new Pi session may use currently available pi-subagents builtin agents as development-time helpers, for example:
-
-```text
-builtin scout
-    → read-only repository investigation
-
-builtin reviewer
-    → read-only correctness review
-```
-
-This development-time usage does not satisfy or replace the product custom Agent definitions. A generic reviewer may be used as an explicitly labeled advisory fallback, but it must not be reported as execution of `ponytail-reviewer`.
-
-The product runtime must use the configured Agent Mapping only after the corresponding custom Agent definition exists.
+TDD Worker explicitly requests tdd via public skill selection; inheritSkills:false isolates inherited/extension-added skills, optional codebase-design is explicit。Oracle verifies builtin identity + read-only ceiling。Read-only Codemode (#20) initial Scout/simplicity (optional correctness/ponytail) roles require proven callable ceiling excluding mutation/nested authority plus finite child/tool/output bounds。Stock models.classify bypasses the tool list; disable the models namespace with public createCodemodeExtension({models:false}) via supported child extension loading/replacement, or keep the capability disabled until isolation is proven。denyExtensions:true also prevents Codemode registration; preflight alone cannot prove replacement behavior。Oracle/Research/Worker expansion is not part of #20。
 
 ### Product runtime fresh-context policy
 
-Default policy:
-
-- Scout: fresh child
-- Researcher: fresh child
-- Planner: fresh child
-- Correctness Reviewer: fresh child
-- Ponytail Reviewer: fresh child
-- Initial Worker: fresh child
-- Ordinary same-profile Fix: fresh child by default; retained resume is allowed only when the exact child identity and contract are known safe
-- Stronger Retry: always fresh child
-
-A retained child must never be used when escalation requires a stronger execution profile.
+Scout/Diagnosis/Research/Planner/simplicity/Correctness/Ponytail/Oracle/initial Worker default fresh。Ordinary Fix is fresh by default; retained resume only when exact historical identity/policy is proven safe。Stronger retry always fresh, never reuse a weaker retained Worker。
 
 ### Durable Dispatch and Bounded Wait (I2 / I4)
 
-The orchestrator-side dispatch boundary persists [Worker attempt intent](./persistence-recovery.md#61-worker-attempt-evidence-i2) and State before emitting a public request. The adapter exposes the request correlation identity to that boundary before dispatch and reports actual runId as soon as available through the existing public API. This may require an orchestrator-owned wrapper/port lifecycle notification; it does not require new third-party events or early run IDs.
+Persist request correlation and intent before emitting public async single-agent RPC spawn。A requestId is not runId。Receipt/run/session/launch/output identities are persisted as soon as public API exposes them; preflight placeholder IDs/roots are not real execution identity。
 
-Every adapter request has a positive finite response deadline, including when no subscriber responds. Passing a child timeout in the request alone is insufficient. On response, error, or expiry, the adapter settles once and releases its timer/listener. Mismatched identities cannot settle the request; late results cannot silently authorize work after timeout.
+Every adapter request has a positive finite deadline even without a subscriber。On result/error/expiry settle once and release timer/listener。Mismatched IDs cannot settle; late results cannot authorize work after timeout。
 
-A proven pre-dispatch failure maps to `agent-infrastructure-unavailable`. Once dispatch may have happened, no response, timeout, or ambiguous completion preserves correlation/run identity and maps to `agent-execution-ambiguous`; timeout does not prove cancellation or absence of repository mutation. The runtime persists evidence and `BLOCK` before any subsequent Worker. There is no automatic redispatch of an unresolved mutating attempt. Public status/resume capability gaps remain blocked/unsupported, not patched dependencies.
+Proven no dispatch → infrastructure unavailable。Possible dispatch/timeout/unknown completion → ambiguous execution; preserve intent/known run/workspace evidence and BLOCK before another Worker。Timeout/stop request is not terminal/cancellation/mutation-absence proof。
 
-Phase C owns evidence production and these bounded failure paths; full reconciliation and late/orphan-result recovery remain ORCH-018.
+Authoritative output is full hash/schema-valid file/structured result bound to receipt, never truncated display/status/notification text。Public lifecycle v3 is reconciled exactly; missing/unsupported identity/output blocks。
+
+0.74 background survival/revival is not orchestrator authority。Workflow-specific failureKind is normalized only when that selected public mode exposes it; ordinary single-agent completion does not require workflow-only fields。Normal lifecycle never depends on workflowScript/workflowScriptPath; released script RPC forms, if needed later, are script/workflow。
 
 ## 7. Plannotator Integration
 
-`runtime/integrations/plannotator.ts` translates Plannotator events / statuses into domain results.
+See [Plannotator](./plannotator.md) for complete public payloads and persistence barriers。
 
-The adapter must not mutate Workflow State.
+PlanGate shared API is review-only and async: pending external reviewId then review-result/status。Exact current review-ready Plan/version/hash + fresh simplicity + external binding must agree before application。Persist intent before open, returned binding before use, settled result before Event/State。No inferred approval/reopen on unknown status。
 
-`getPlanReview` may use the handle it opened, or an exact persisted binding validated by the Orchestrator. The optional second argument includes `reviewId`, `planRef`, and `planVersion`; it is not a current-Plan expectation to attach to arbitrary external results. Missing bindings yield `unknown`, and conflicting bindings are rejected. Both runtime reconciliation and direct result application require the durable binding to match State before using adapter evidence.
+CodeGate is synchronous: persist local attemptId + exact implementationRef/revision + review source before code-review request; actual payload uses cwd/VCS options or static patchFile。Result approved/feedback/annotations after Human completion is bound locally。No external Code reviewId or getCodeReview/status polling, no five-second Human timeout。
 
-`PlannotatorGate.openPlanReview` is the adapter port: it returns an external handle and does not persist Workflow State. `PlanningOrchestrator.openPlanReview` owns the persistence barrier: it persists that exact handle as `planning.planReview` together with the versioned external identity before reporting an opened handle to its caller. If a current binding or external identity already exists, the Orchestrator reconciles it or fails closed rather than making another external open or overwriting it. A reconciled outcome may be pending, settled, unknown, or blocked.
+Both Gate results require unchanged current authority/source on settlement。Identical duplicates preserve current State; changed/stale results reject。Lost synchronous result leaves blocked local attempt for explicit recovery, not guessed approval/reopen。
 
-Duplicate settled-result handling uses current persisted State and never a cached State snapshot. These are orchestrator-side contracts; they do not add fields or persistence responsibilities to the third-party Plannotator API.
+## 8. Classifier / Jev Integration
 
-Human review result must first be persisted as an artifact. Only then may the runtime emit `PLAN_APPROVED`, `PLAN_FEEDBACK`, `CODE_APPROVED`, or `CODE_FEEDBACK`.
+#19 native target: DecisionClassifierPort → Pi classifier adapter → ctx.modelRegistry.classify, explicit default typesafe/jev-latest。Pi owns transport/provider/auth; core sees domain decisions/normalized errors。Require stopReason:stop plus complete answers; error/aborted is returned without necessarily throwing。Bool has probability only, Score no guaranteed probabilities; use Yes/No Choice for Boolean confidence。Pass maxRetries:0 and finite cancellation/deadline so each retry stays separately reserved。
 
-For Code Review, `coding.codeReview` durably binds `reviewId + exact implementationRef + implementationRevision` together with the versioned external index (B5). `getCodeReview` accepts that validated persisted tuple, not a synthesized current-implementation expectation. Missing/mismatched bindings fail closed, including after restart and for direct apply. An external result without implementation metadata may use only the original durable binding; no third-party field is required. Existing identities are reconciled without unconditional reopen. See [Human Code Gate](./coding-orchestration.md#15-human-code-gate) for persistence, duplicate handling, and invalidation.
-
-## 8. Jev Integration
-
-### Selected client package
-
-The Initial Scope uses [`DevMortimer/pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) as the Jev client package.
-
-The product runtime uses the package's **public library API** from `runtime/integrations/jev.ts`; it does not route decisions through the `typesafe_evaluate` Pi agent tool. Consequently, `/typesafe enable` is not a prerequisite for pi-orchestrator's runtime decision calls.
-
-```text
-JevDecisionClient port
-        ↓
-runtime/integrations/jev.ts
-        ↓
-pi-typesafe public API
-        ↓
-TypeSafe / Jev
-```
-
-`runtime/integrations/jev.ts` owns:
-
-- `pi-typesafe` client creation / public-API calls
-- authentication / availability normalization
-- backend / transport options permitted by Initial Scope configuration
-- Choice / Score / Noul external schema handling
-- confidence normalization
-- response validation
-- budget / transport / auth error normalization
-- optional usage metadata
-
-Where the domain requires `Decision<T>.confidence`, use a confidence-bearing bounded primitive (normally Choice) rather than letting an external primitive shape weaken the domain contract.
-
-The adapter converts `pi-typesafe` success/failure results into the existing `JevDecisionClient` contract and domain integration errors. `pi-typesafe` result/error types must not escape into `core/`.
+Until migration and live verification, pi-typesafe >=0.8.1 public library API remains transitional。Never forward TypeSafe credentials through arbitrary endpoint rewrite or keep a silent automatic second evaluator。Remove direct dependency/obsolete settings after all families migrate。
 
 ### Product Runtime Consent and Budget (I5)
 
-pi-orchestrator owns and enforces the permission to send evidence and incur Jev requests. The package's agent-tool opt-in state is not Workflow authority. Neither `/typesafe enable`, an available API key, a Plan approval, nor model confidence constitutes Product Runtime consent.
+Operator/project grant upper bounds canonical trusted project/classifier/destination/evidence categories/finite requests。After generated workflowId, persist workflow-scoped consent no broader than that grant (#11)。No preconfiguration of unknown workflowId is required。
 
-Minimum Initial Scope contract:
+Before every outbound attempt—including per-finding and retry—validate active exact scope, persist immutable reservation then State/counter。Missing/revoked/mismatched consent, unknown/exhausted budget or save failure → zero network calls + operator-attention block。Use State returned by reservation in subsequent runner operations。
 
-- Before any network request, runtime requires explicit operator-authorized Product Runtime consent scoped to the project/workflow, destination/backend, and permitted evidence categories. Record a non-secret consent identity/scope and policy version; missing, revoked, or mismatched consent denies dispatch. No new Human Gate bypass or consent UI is implied.
-- Product configuration supplies a finite per-workflow outbound-request allowance. Runtime durably reserves an attempt before each dispatch, including per-finding requests and transport retries. The persisted counter survives client recreation/restart; library defaults or an in-memory counter are not the budget authority.
-- Exhausted/unknown budget or consent denial makes no network call and produces `BLOCK` for `operator-attention-required` with non-secret diagnostic evidence. A reservation save failure also prevents dispatch. An uncertain timed-out request remains charged to the allowance; automatic refunds/retries cannot reset the cap.
-- The adapter's transport retry loop must obtain permission/reservation for every attempt through the orchestrator-owned boundary; public library budget checks can add restrictions but cannot replace that boundary. Provider/auth/transport failures still normalize to the integration failure path, with no LLM fallback.
-- Retain consent/policy identity, allowance/attempt count, and available usage metadata as bounded durable runtime evidence. Never persist API keys, auth headers, or secret-bearing URLs. Full accounting recovery belongs to ORCH-018; conservative denial on ambiguity is required now.
+Timeout stays charged, client recreation cannot reset budget。Durable history includes predecessor, ordinal/request family, consent/grant/policy/classifier identity, allowance and safe numeric usage。Never API keys/auth headers/secret-bearing destination URLs。
 
-These are orchestrator-side policy and persistence contracts. They require no change to `pi-typesafe`, no dependency on `/typesafe enable`, and no Future Scope decision family.
-
-### Runtime Policy Configuration and Accounting
-
-The concrete permission boundary is `jev.runtimePolicy`: a finite `maxRequests` and `consent` with `id`, `policyVersion`, `active`, exact `workflowId`, `projectRoot`, `destination`, and allowed `evidenceCategories` (`plan`, `context`, `implementation`, `review`, `validation`, `history`). Absence is denial, not an implicit grant. Configuration is operator-supplied; this adds no new approval UI or command.
-
-Workflow start persists `projectRoot` and `jevUsage.attemptsReserved = 0`. Each runner creates an orchestrator-owned authorization context; the adapter awaits its reservation callback before each library request, including each finding and retry. Reservation Artifact → State CAS must complete before outbound execution. The runner continues from the authorization context's updated State revision, not its old snapshot.
-
-Immutable `jev-request` evidence under `decisions/` distinguishes reservation and available numeric usage records. It records ordinal, request family/finding/retry identity, consent/policy scope, allowance, predecessor, and timestamp; it is accounting evidence, never decision or Human authority. Missing/inconsistent accounting and orphan reservation collisions deny dispatch. Client recreation cannot reset the counter, and uncertain timeouts are not refunded. Credential-bearing destination URLs are rejected; no auth secrets are stored. Full recovery of these records remains ORCH-018.
+Pi credentials/availability, typesafe enable, Plan approval or model confidence are not Product Runtime consent。Accounting ambiguity/collision fails closed; no default refund or fallback。
 
 ### Runtime Evidence / Adapter Policy Boundary
 
-For Coding Entry Routing, the Orchestrator/runtime assembles bounded `planEvidence` and `contextEvidence` after reading and validating the referenced immutable artifacts. The `JevDecisionClient` input carries both the authoritative refs and those excerpts. `runtime/integrations/jev.ts` only forwards the supplied evidence; it never reads `ArtifactStore`, resolves refs, or invents missing context.
+Runtime reads authoritative refs and assembles bounded task/Scout/Diagnosis/Research/clarification/document/Plan/repository evidence with provenance。Each family gets exact decision-critical constraints, branch/counters/history and input digest。Adapter only forwards supplied evidence; it never invents missing facts or drops constraints silently。
 
-The same boundary applies to Finding Evaluation and Round Decision (B3): runtime assembles Approved Plan/Architecture/Scope constraints, provenance-bearing implementation/finding/validation evidence, retry State, and previous decision evidence as defined in [Runtime Evidence Assembly](./coding-orchestration.md#runtime-evidence-assembly-b3). Missing evidence is not delegated to Jev to infer. The adapter preserves action and escalation-reason confidence separately for [core precedence policy](./coding-orchestration.md#policy-precedence-b4) (B4).
+Finding/Round preserve B1 completeness, B3 provenance/history and B4 separate action/reason confidence/precedence。Launch/classifier/config identity changes invalidate applicable evidence; historical outputs stay advisory, not reauthorized。
 
-It does not own:
+## 9. Workspace / Worker / Oracle
 
-- State mutation
-- ACCEPT / REJECT policy
-- Round hard rules
-- concrete Workflow transition
-- Human Gate behavior
+Git and filesystem are first-class workspace variants。Capture stable manifest/baseline bytes/content identity, pre-existing changes, before/after and observation policy/exclusions。Non-Git static patch must be reproducible from retained baseline and current snapshot。Unsupported/unstable observation blocks before mutation/review。
 
-## 9. Error Normalization
+Worker is sole automated implementation executor after approval。Local internal choice within strategy is permitted; material dependency/component/API/boundary/scope/method/seam/Validation change stops before implementation → deviation/workspace evidence → authority invalidation → Planning/simplicity/Human Gate。Core stop/replan works without Oracle。
 
-External errors are converted into domain categories.
+Oracle is rare cross-cutting builtin read-only advisory, not stage/authority。Save trigger/finite budget/deadline/input refs/launch/attempt before dispatch, output after。Optional unavailable advice does not force mandatory consultation or grant permission; unresolved decisions use deterministic replan/Human attention。
 
-Examples:
+## 10. Errors / concurrency / persistence
 
-```text
-Jev unavailable
-    → integration-unavailable
+Normalize external errors to domain blocked reasons: integration-unavailable, agent-infrastructure-unavailable, agent-execution-ambiguous, human-gate-unavailable, validation-infrastructure-error, operator-attention-required。Irrecoverable authority corruption alone is failed。
 
-pi-subagents infrastructure error
-    → agent-infrastructure-unavailable
+Passed Validation requires both reviewers in parallel, then complete evaluation/accepted artifacts。Dependent planning stages stay sequential。No multiple Workers/Coding Orchestrations in v1。
 
-child result ambiguous
-    → agent-execution-ambiguous
-
-Plannotator unavailable
-    → human-gate-unavailable
-
-validation process spawn failure
-    → validation-infrastructure-error
-```
-
-External SDK error classes must not escape into `core/`.
-
-ValidationRunner persists infrastructure evidence separately from ordinary check failure and applies `stopOnInfrastructureFailure` (I3): `true` blocks with `validation-infrastructure-error` before Jev/review/Worker; `false` may feed Round Decision only for deterministic Human/uncertain escalation, never automated retry or completion while unresolved. See [Validation Infrastructure Policy](./coding-orchestration.md#validation-infrastructure-policy-i3).
-
-## 10. Concurrency
-
-The Initial Scope allows concurrency only where it does not violate the single Coding Orchestration model.
-
-Allowed:
-
-- Scout and Researcher in parallel when Playbook policy requires both.
-- Correctness Reviewer and Ponytail Reviewer in parallel.
-
-Not allowed in the Initial Scope:
-
-- multiple Worker branches
-- Work Package parallel execution
-- multiple Coding Orchestrations
+Exclusive workflow/ownership mutation boundary + revision check rejects stale writers。Required intent/authority/reservation → Artifact/State persist → side effect → validated output/State → next side effect。Never hold a cached State as authority after another reservation/result update。
 
 ## 11. Third-Party Dependency Boundary
 
-Third-party libraries and packages are read-only dependencies of the pi-orchestrator Initial Scope.
-
-This includes, but is not limited to:
-
-- Pi / pi-coding-agent
-- pi-subagents
-- Plannotator
-- pi-ketch
-- pi-ask-user-question
-- `pi-typesafe` / Jev / TypeSafe client libraries
-- other npm or external dependencies
-
-Forbidden approaches include direct source edits, `node_modules` edits, required package patches, and forks that add orchestrator-specific behavior.
-
-This rule has no exception in the Initial Scope. A temporary local patch, development-only fork, or modified installed package must not become part of the implementation or test prerequisite.
-
-All adaptation must remain on the pi-orchestrator side of the integration boundary. If a public contract is insufficient and no safe wrapper is possible, the runtime must use a safe blocked/unsupported path rather than mutate the dependency.
-
-Capability gaps are handled in this order:
-
-```text
-1. published API / Tool / Event / Extension contract
-2. pi-orchestrator-side adapter or wrapper
-3. safe blocked / unsupported behavior
-4. upstream fix/release, without depending on a local fork or patch
-```
+No third-party source/node_modules/patch/fork/private API changes。Use released API → orchestrator-side adapter → blocked/unsupported → upstream release。Tool/extension capability gaps cannot be fixed by modifying dependency or weakening evidence。
 
 ## 12. Development / Test Process Boundary
 
-Herdr is not a pi-orchestrator runtime integration. It is the development/test terminal harness used when a test must start a real Pi process.
+Herdr is test/development harness only, no runtime/integrations/herdr.ts。
 
-For Integration / Smoke Tests:
-
-```text
-current Herdr workspace
-    ↓
-new tab
-    ↓
-root pane
-    ↓
-Pi
-```
-
-The test harness must create a new Herdr tab in `HERDR_WORKSPACE_ID`, use the repository as the tab working directory, obtain the root pane ID, and start Pi in that pane with Herdr's agent lifecycle command.
-
-The runtime source tree must not add `runtime/integrations/herdr.ts` for the Initial Scope. Herdr-specific automation belongs to the test/development harness only.
-
-`tmux` is not part of the supported development/test process topology.
-
+Real Pi integration/smoke: current HERDR_WORKSPACE_ID → new Herdr tab with repo cwd → returned root pane → Herdr agent lifecycle start → prompt/wait/read。No tmux/direct pi child_process spawn。Successful test closes tab; failure reports tab/pane/agent identity。#12 records exact production versions and full Git/non-Git/clarification/TDD/simplicity/deviation/Oracle/classifier/trust/launch paths after child implementation passes。

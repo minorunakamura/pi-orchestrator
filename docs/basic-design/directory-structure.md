@@ -1,138 +1,8 @@
 # Directory Structure
 
-Version: 1.1
+Version: 2.0 — v1 target contract (Issue #3)
 
-## 1. 目的
-
-pi-orchestrator package のソースコード、Agent、Test、Document、Runtime Artifact の配置と依存方向を定義する。
-
----
-
-## 2. 推奨構成
-
-```text
-pi-orchestrator/
-├── src/
-│   ├── index.ts
-│   │
-│   ├── commands/
-│   │   ├── index.ts
-│   │   ├── wf-new.ts
-│   │   ├── wf-feature.ts
-│   │   ├── wf-bugfix.ts
-│   │   ├── wf-hotfix.ts
-│   │   ├── wf-chore.ts
-│   │   ├── wf-resume.ts
-│   │   └── wf-status.ts
-│   │
-│   ├── tools/
-│   │   └── index.ts
-│   │
-│   ├── events/
-│   │   ├── index.ts
-│   │   ├── session-start.ts
-│   │   └── session-shutdown.ts
-│   │
-│   ├── ui/
-│   │   ├── index.ts
-│   │   └── workflow-status.ts
-│   │
-│   ├── runtime/
-│   │   ├── orchestrator/
-│   │   │   ├── start-workflow.ts
-│   │   │   ├── resume-workflow.ts
-│   │   │   ├── run-planning.ts
-│   │   │   ├── run-coding.ts
-│   │   │   └── advance-workflow.ts
-│   │   │
-│   │   ├── integrations/
-│   │   │   ├── subagents.ts
-│   │   │   ├── plannotator.ts
-│   │   │   ├── ask-user-question.ts
-│   │   │   └── jev.ts
-│   │   │
-│   │   ├── configuration/
-│   │   │   └── load-configuration.ts
-│   │   │
-│   │   └── persistence/
-│   │       ├── load-state.ts
-│   │       ├── save-state.ts
-│   │       └── artifacts.ts
-│   │
-│   ├── core/
-│   │   ├── workflow/
-│   │   │   ├── state.ts
-│   │   │   ├── transition.ts
-│   │   │   ├── phase.ts
-│   │   │   └── errors.ts
-│   │   │
-│   │   ├── decisions/
-│   │   │   ├── types.ts
-│   │   │   ├── confidence-policy.ts
-│   │   │   ├── execution-routing.ts
-│   │   │   ├── finding-evaluation.ts
-│   │   │   ├── round-decision.ts
-│   │   │   └── escalation-policy.ts
-│   │   │
-│   │   ├── playbooks/
-│   │   │   ├── new-project.ts
-│   │   │   ├── feature.ts
-│   │   │   ├── bugfix.ts
-│   │   │   ├── hotfix.ts
-│   │   │   └── chore.ts
-│   │   │
-│   │   ├── planning/
-│   │   │   └── policy.ts
-│   │   │
-│   │   ├── coding/
-│   │   │   ├── review-policy.ts
-│   │   │   └── finding.ts
-│   │   │
-│   │   └── artifacts/
-│   │       └── references.ts
-│   │
-│   └── types.ts
-│
-├── agents/
-│   ├── workflow-scout.md
-│   ├── planner.md
-│   └── ponytail-reviewer.md
-│
-├── skills/
-│   └── ...
-│
-├── tests/
-│   ├── core/
-│   │   ├── workflow/
-│   │   ├── decisions/
-│   │   ├── playbooks/
-│   │   └── coding/
-│   ├── runtime/
-│   ├── commands/
-│   ├── events/
-│   └── agents/
-│
-├── docs/
-│   ├── basic-design.md
-│   ├── state-machine.md
-│   ├── decision-engine.md
-│   ├── configuration.md
-│   ├── directory-structure.md
-│   ├── artifacts.md
-│   └── integrations.md
-│
-├── package.json
-├── pnpm-lock.yaml
-├── tsconfig.json
-├── README.md
-└── LICENSE
-```
-
-不要な directory は先行して作らない。
-
----
-
-## 3. 依存方向
+## 1. Ownership / dependency direction
 
 ```text
 commands / tools / events / ui
@@ -142,239 +12,87 @@ commands / tools / events / ui
              core
 ```
 
-Jev integration:
+Core is independent of Pi, filesystem/network, TypeSafe/classifier SDK, Plannotator and pi-subagents transport types。Runtime assembles evidence and persists refs; integrations normalize released public APIs; commands remain thin。
+
+Below are responsibility locations, **not a requirement to create one file per concept**。Reuse existing modules; no unused abstractions/placeholders/scaffolding。
+
+## 2. Source / Agent responsibilities
+
+| Location | Responsibility / implementing Issue |
+| --- | --- |
+| src/commands/, src/index.ts | /wf-* normal driver entry, /wf-resume reconcile + continuation, read-only status (#4) |
+| src/core/workflow/ | State/Event/schema/invariants/pure transition; sole authority contract |
+| src/core/playbooks/, src/core/decisions/ | stage matrix + conditional/mode/method policies + coding hard rules (#6/#7/#16) |
+| src/core/planning/ | strategy/Test Seams/simplicity/refinement freshness (#14) |
+| src/core/coding/ | approved strategy/local freedom/material deviation authority (#15) |
+| src/core/configuration.ts | non-secret schema / mappings / grant upper bounds (#11/#18/#19/#21) |
+| src/runtime/orchestrator/ | driveWorkflow normal lifecycle (#4); phase runners; separate reconciler / resume |
+| src/runtime/ports/ | normalized child launch, classifier, clarification, separate async Plan/sync Code contracts |
+| src/runtime/integrations/ | public subagents preflight/RPC (#21), native classifier (#19), Plannotator (#9) adapters |
+| src/runtime/planning/, src/runtime/validation/ | Plan logical parser + machine-readable Validation Contract / deterministic commands |
+| src/runtime/worker/ | Git/filesystem observation / mutation baseline / material deviation (#10/#15) |
+| src/runtime/persistence/ | immutable Artifact store / atomic State / lock / revision check |
+| host tool-call / ownership integration | active workflow Main guard; narrow clarification document exception (#5/#8) |
+| agents/ | product workflow-scout, planner, plan-simplicity-reviewer (#14), ponytail-reviewer |
+| tests/ | core / persistence / adapter / scenario / fault / host / smoke (#12) |
+
+Diagnosis may reuse a read-only evidence definition; do not create a standalone mutating role merely for a new Stage name。Architecture stays owned by Planner and embedded in Plan。Oracle uses verified pi-subagents builtin oracle。Worker/reviewer remain builtin roles under explicit Launch Policy。
+
+Builtin development-time helpers are not product custom definitions。Generic reviewer is not plan-simplicity-reviewer or ponytail-reviewer。Finding Evaluation is classifier + deterministic policy, not another Agent。
+
+TDD/grilling/domain-modeling are upstream skills selected via supported public contracts, not copied JavaScript dependencies。Read-only Codemode uses Pi's released capability under #20, not an orchestrator workflow-script engine。
+
+## 3. Runtime evidence directory
 
 ```text
-core/decisions/*
-       ↑
-normalized decision
-       │
-runtime/integrations/jev.ts
-       ↑
-TypeSafe / Jev API
+.pi/orchestrator/runs/<workflow-id>/
+  state.json
+  task.md
+  context/          Scout / Diagnosis / Research / clarification / document-write evidence
+  plans/            immutable plan-vN.md
+  plan-reviews/     exact-bound simplicity findings + async Human Plan results
+  decisions/        stage/mode/method/execution/evaluation policy + request accounting
+  agent-runs/       resolved launch projections / exact output receipts
+  advisory/         bounded Oracle attempts / outputs
+  workspace/        Git/filesystem snapshots / manifests / retained baseline content
+  implementation/   Worker intent/observations/success / material deviation
+  validation/       exact contract results
+  reviews/          correctness / ponytail / evaluation / accepted / round decisions
+  code-reviews/     local synchronous attempt / static patch / settled Human results
 ```
 
-禁止:
+The authoritative path/kind catalog is [Artifacts §2](./artifacts.md#2-runtime-paths--producer-consumer-contract)。Folders are created only for real Artifacts; no eager architecture/ directory is required。Runtime directories are excluded from workspace mutation observation under a persisted policy; source/workspace identity is not Worker text hash。
+
+State stores refs/hash/identities/counters, not output bodies。Public pi-subagents output/lifecycle paths are retained external receipt evidence, not approved Artifact authority until validated and published by Orchestrator。
+
+## 4. Documents / source of truth
 
 ```text
-core → runtime
-core → Pi API
-core → TypeSafe API SDK
-core → Plannotator API
-core → pi-subagents API
+docs/basic-design/       WHAT / WHY / authority
+  basic-design.md
+  state-machine.md
+  decision-engine.md
+  integrations.md
+  configuration.md
+  artifacts.md
+  directory-structure.md
+docs/detailed-design/    HOW / contracts / recovery / tests
+  domain-model.md
+  runtime-design.md
+  planning-orchestration.md
+  coding-orchestration.md
+  plannotator.md
+  persistence-recovery.md
+  test-strategy.md
+  detailed-design-overview.md
+docs/implementation/     Issue #13 dependency order / coverage / pending work
+docs/release/            historical verified release evidence, not target-design claims
 ```
 
----
+Issue #3 defines v1 target; #13 tracks implementation. Pi >=0.99.1 / pi-subagents >=0.74.0 / transitional pi-typesafe >=0.8.1 until #19 are platform contracts, not permission to modify package metadata in this design-only Issue。
 
-## 4. `runtime/integrations/jev.ts`
+## 5. Tests / Future Scope
 
-責務:
+Adapter/fake tests cover decision evidence, exact launch/trust/skill/tool identity, freshness, both Gate contracts, non-Git patch and persistence barriers。Real Pi processes use new Herdr tab; no runtime/integrations/herdr.ts or tmux。Herdr is test/development harness only。
 
-- Jev/System One request の構築
-- API authentication / transport
-- Noul / Choice / Score response の normalization
-- confidence の normalization
-- schema / API error normalization
-- usage metadata 取得（必要時）
-
-持たない責務:
-
-- Workflow State mutation
-- ACCEPT/REJECT policy の business rule
-- concrete State Transition
-- Human Gate decision
-
----
-
-## 5. `core/decisions/`
-
-Jev 非依存の Decision Domain。
-
-### `types.ts`
-
-- `Decision<T>`
-- execution profile types
-- finding decision types
-- round decision types
-- escalation reason types
-
-### `confidence-policy.ts`
-
-- auto decision threshold
-- uncertain threshold
-- fail-safe rule
-
-### `execution-routing.ts`
-
-Jev normalized result から logical execution profile を確定する pure logic。
-
-### `finding-evaluation.ts`
-
-Noul / Choice result を:
-
-```text
-ACCEPT
-REJECT
-ESCALATE
-```
-
-へ変換する policy。
-
-### `round-decision.ts`
-
-```text
-COMPLETE
-RETRY
-ESCALATE
-```
-
-の hard invariant / override rule。
-
-### `escalation-policy.ts`
-
-Initial Scope:
-
-```text
-reason
-→ deterministic target
-```
-
-Future Scope では Jev-selected target へ拡張可能。
-
----
-
-## 6. Configuration
-
-### `core/configuration.ts`
-
-Pi / filesystem 非依存の Configuration schema / defaults / validation を定義する。
-
-所有する値:
-
-- Jev confidence thresholds
-- logical execution tier mapping key
-- max automated Fix rounds
-- max stronger retries
-- validation execution policy
-
-### `runtime/configuration/load-configuration.ts`
-
-Pi settings / package settings / environment から runtime configuration を読み込む。
-
-Secret は domain configuration object に永続化しない。
-
-詳細は [configuration.md](./configuration.md)。
-
----
-
-## 7. Agent Definitions
-
-Initial Scope custom Agent:
-
-```text
-workflow-scout
-planner
-ponytail-reviewer
-```
-
-これらは pi-orchestrator package が提供する **product custom Agent definition** であり、実装開始前から development environment に登録済みであることを前提にしない。
-
-Development-time の repository 調査や correctness review では、その時点で利用可能な pi-subagents builtin agent を使用してよい。ただし builtin agent は上記 custom Agent の実装物ではなく、product runtime の Agent Mapping を満たしたことにはならない。
-
-特に generic reviewer を `ponytail-reviewer` と同一視してはならない。代替レビューを行った場合は、その事実を development evidence として明示する。
-
-各 custom Agent definition を導入する Story は [Implementation Plan](../implementation/implementation-plan.md) を正本とする。
-
-Finding evaluator Agent は作成しない。
-
-Finding Evaluation は Jev + core policy が担当する。
-
----
-
-## 8. Runtime Artifact Directory
-
-```text
-.pi/
-└── orchestrator/
-    └── runs/
-        └── <workflow-id>/
-            ├── state.json
-            ├── context/
-            ├── architecture/
-            ├── plans/
-            ├── plan-reviews/
-            ├── decisions/
-            │   └── execution-routing-*.json
-            ├── implementation/
-            ├── validation/
-            ├── reviews/
-            │   ├── correctness-*.json
-            │   ├── ponytail-*.json
-            │   ├── finding-evaluation-*.json
-            │   ├── accepted-findings-*.json
-            │   └── round-decision-*.json
-            └── code-reviews/
-```
-
-詳細は [artifacts.md](./artifacts.md)。
-
----
-
-## 9. Tests
-
-`tests/core/decisions/` を Initial Scope の重点 area とする。
-
-Test 対象:
-
-- Jev normalized decision → policy result
-- confidence threshold
-- hard rule override
-- validation failure で COMPLETE 禁止
-- blocking finding で COMPLETE 禁止
-- escalation reason mapping
-- stale decision detection
-
-`runtime/integrations/jev.ts` は API mock / fixture を利用して test する。
-
----
-
-## 10. Documentation
-
-```text
-basic-design.md
-    WHAT / WHY
-
-state-machine.md
-    WHEN / TRANSITION
-
-decision-engine.md
-    JEV DECISION CONTRACT
-
-configuration.md
-    CONFIG / RETRY / MODEL MAPPING
-
-directory-structure.md
-    WHERE
-
-artifacts.md
-    DATA / AUTHORITY
-
-integrations.md
-    EXTERNAL CONNECTION
-```
-
----
-
-## 11. Future Scope Directory Extension
-
-必要性が明確になった時点で追加候補:
-
-```text
-core/decisions/
-├── context-routing.ts
-├── conditional-stage.ts
-├── escalation-target.ts
-└── validation-failure.ts
-```
-
-Initial Scope では空 file / Future Scope placeholder を作成しない。
+Future Scope directories (multi-Worker/worktree scheduling, generic context routing, arbitrary escalation target, semantic validation classifier, Virtual Models authority) are not created ahead of need。v1 concepts live in existing responsibility areas wherever possible。

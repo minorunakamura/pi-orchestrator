@@ -1,46 +1,53 @@
 # Pi Orchestrator Domain Model
 
-Version: 1.2
+Version: 2.0 — v1 target contract (Issue #3)
 
-## 1. Purpose
+## 1. Purpose / compatibility
 
-This document defines the TypeScript domain model used by pi-orchestrator's Initial Scope.
+This document is the canonical domain shape for the v1 redesign, not a claim that current v0.1.0 schemas already support it。Core remains independent of Pi / pi-subagents / Plannotator / classifier SDK / filesystem / transport types。Implementation/migration belongs to the child Issues in [Implementation Plan](../implementation/implementation-plan.md)。Missing legacy execution-critical identity must fail closed, not default into permission。
 
-`core/` must remain independent of Pi, pi-subagents, Plannotator, TypeSafe/Jev SDKs, filesystem APIs, and transport-specific types.
-
-## 2. Branded Identifiers
+## 2. Identifiers
 
 ```ts
-type Brand<T, B extends string> = T & {
-  readonly __brand: B;
-};
-
-export type WorkflowId = Brand<string, "WorkflowId">;
-export type SubagentRunId = Brand<string, "SubagentRunId">;
-export type PlannotatorReviewId = Brand<string, "PlannotatorReviewId">;
+type Brand<T, B extends string> = T & { readonly __brand: B };
+type WorkflowId = Brand<string, "WorkflowId">;
+type SubagentRunId = Brand<string, "SubagentRunId">;
+type PlannotatorReviewId = Brand<string, "PlannotatorReviewId">;
+type AttemptId = Brand<string, "AttemptId">;
 ```
 
-## 3. Artifact Reference
+Code Review uses local AttemptId, **not** an external PlannotatorReviewId。Request correlation IDs, preflight placeholder IDs and actual run IDs are never interchangeable。
 
-State stores references, not long-form artifact bodies.
+## 3. Artifact Reference
 
 ```ts
 export type ArtifactKind =
   | "task"
   | "scout"
+  | "diagnosis"
   | "research"
+  | "conditional-stage"
+  | "clarification-mode"
   | "clarification"
+  | "domain-document-write"
+  | "development-method"
   | "plan"
+  | "plan-simplicity-review"
   | "plan-review"
+  | "oracle-advisory"
+  | "agent-launch"
   | "execution-routing"
   | "jev-request"
+  | "workspace-evidence"
   | "implementation"
+  | "plan-deviation"
   | "validation"
   | "correctness-review"
   | "ponytail-review"
   | "finding-evaluation"
   | "accepted-findings"
   | "round-decision"
+  | "code-review-attempt"
   | "code-review"
   | "reconciliation";
 
@@ -52,11 +59,11 @@ export interface ArtifactRef<K extends ArtifactKind = ArtifactKind> {
 }
 ```
 
-`sha256` is part of the reference so that freshness is based on content identity rather than only a path.
+The same kind catalog/path/freshness contract lives in [Artifacts](../basic-design/artifacts.md)。Exact identity includes all four fields。Schema migration must be explicit; do not reinterpret legacy kind/shape as new authority。
 
 ## 4. Workflow Phase
 
-The phase type remains identical to Basic Design (document revision 1.0).
+Identical to [State Machine §2](../basic-design/state-machine.md#2-workflow-phase)。No new mandatory Oracle/TDD/Diagnosis linear phase。
 
 ```ts
 export type WorkflowPhase =
@@ -76,164 +83,168 @@ export type WorkflowPhase =
 
 ## 5. Workflow State
 
-```ts
-export interface WorkflowState {
-  schemaVersion: 1;
+Logical contract below; exact persisted schemaVersion/migration is implementation-owned and must distinguish legacy State safely。
 
+```ts
+interface WorkflowState {
+  schemaVersion: number;
   workflowId: WorkflowId;
   stateRevision: number;
-
-  // Durable runtime scope/accounting; missing legacy values deny Jev dispatch.
-  projectRoot?: string;
-  jevUsage?: {
-    attemptsReserved: number;
-    latestRequestRef?: ArtifactRef<"jev-request">;
-    latestUsageRef?: ArtifactRef<"jev-request">;
-  };
-
-  playbook: PlaybookKind;
+  projectRoot: string;
+  playbook: "new-project" | "feature" | "bugfix" | "hotfix" | "chore";
   phase: WorkflowPhase;
-
   taskRef: ArtifactRef<"task">;
-
   planning: PlanningState;
   coding: CodingState;
-
   counters: RetryCounters;
-  external: ExternalIdentities;
-
-  block?: BlockState;
-  failure?: FailureState;
-
+  ownershipRef: ArtifactRef<"reconciliation">;
+  classifierAuthorizationRef?: ArtifactRef<"jev-request">;
+  jevUsage: { attemptsReserved: number; latestRequestRef?: ArtifactRef<"jev-request"> };
+  latestOracleRef?: ArtifactRef<"oracle-advisory">;
+  oracleAttemptsUsed: number;
+  external: Record<string, string>;
+  block?: { blockedFrom: WorkflowPhase; reason: BlockedReason; evidenceRef?: ArtifactRef };
+  failure?: { reason: FailureReason; evidenceRef?: ArtifactRef };
   createdAt: string;
   updatedAt: string;
 }
 ```
 
+Ownership projection binds active canonical workspace + root session + workflow identity and narrowly scoped write authority。A reconciliation-kind ownership record is lifecycle evidence, never a Human approval。Classifier authorization captures workflow-scoped grant/consent after workflowId creation; API credentials stay outside domain data。
+
 ## 6. Planning State
 
 ```ts
-export interface PlanningState {
+type StagePolicy = "required" | "conditional" | "skip";
+type ConditionalStage = "research" | "clarification" | "architecture";
+type ClarificationMode = "SKIP" | "GRILL_ME" | "GRILL_WITH_DOCS" | "ESCALATE";
+type DevelopmentMethod = "STANDARD" | "TDD";
+
+interface PlanningState {
   context: {
     scoutRef?: ArtifactRef<"scout">;
+    diagnosisRef?: ArtifactRef<"diagnosis">;
     researchRef?: ArtifactRef<"research">;
     clarificationRef?: ArtifactRef<"clarification">;
+    documentWriteRefs: ArtifactRef<"domain-document-write">[];
   };
-
-  // Resolved once at start and persisted before any child side effect.
-  // Optional only so legacy State can be loaded for diagnosis; runners fail closed if missing.
-  researchRequired?: boolean;
-  clarificationRequired?: boolean;
-  architectureRequired?: boolean;
-
-  // Evidence binding for the current Plan, not implementation authority.
-  planReview?: PlanReviewBinding;
-
+  stageDecisionRefs: Partial<Record<ConditionalStage, ArtifactRef<"conditional-stage">>>;
+  clarificationModeRef?: ArtifactRef<"clarification-mode">;
+  developmentMethodRef?: ArtifactRef<"development-method">;
+  agentAttempts: Record<string, AgentAttemptBinding>;
+  cycleId: string;
+  automaticRefinementsUsed: 0 | 1;
   currentPlanRef?: ArtifactRef<"plan">;
   currentPlanVersion: number;
-
+  simplicityReviewRef?: ArtifactRef<"plan-simplicity-review">;
+  planReview?: PlanReviewBinding;
+  latestPlanReviewRef?: ArtifactRef<"plan-review">;
   approvedPlanRef?: ArtifactRef<"plan">;
   approvedPlanVersion?: number;
-
-  latestPlanReviewRef?: ArtifactRef<"plan-review">;
 }
-```
 
-```ts
-export interface PlanReviewBinding {
+interface PlanReviewBinding {
   reviewId: PlannotatorReviewId;
   planRef: ArtifactRef<"plan">;
   planVersion: number;
+  simplicityReviewRef: ArtifactRef<"plan-simplicity-review">;
 }
 ```
 
-```ts
-export type ExternalIdentities = Record<string, string>;
-```
+Stage decisions are resolved sequentially against accumulated refs, not all once at start。Required/skip outcomes are deterministic, conditional is classifier-bound。Persisted old researchRequired/clarificationRequired/architectureRequired booleans cannot substitute for this evidence-driven contract。
 
-For Plan review, `external["plannotator.plan-review.vN"]` stores the reviewId for version N. The Orchestrator persists this index and `planning.planReview` together; the external index is not a separate source of approval authority.
+PLAN_CREATED updates current Plan version/ref and clears approval/current review/simplicity, but preserves same-cycle refinement consumption。PLAN_REVIEW_READY requires fresh simplicity and valid method/Test Seams; only then await Human。Plan feedback/replan/deviation starts a new cycle; history remains immutable。
 
-`planReview` must match `currentPlanRef` (kind, path, schemaVersion, and sha256), `currentPlanVersion`, and `external["plannotator.plan-review.vN"]`. An external identity string alone is not sufficient to reconstruct the binding. `PLAN_CREATED` clears the current binding; historical external identities and immutable artifacts remain evidence.
+Plan external index `plannotator.plan-review.vN` and exact durable binding must agree before result application。Duplicate identical settled result uses current State, never cached snapshot。Changed/stale result fails; explicit approval invalidation cannot be reversed by duplicate delivery。
 
-The three resolved policy flags are workflow-specific decisions, not a replacement for Configuration or a switch to bypass Human Gates. New workflows persist all three before the first child; context gathering and plan creation require them after restart / `BLOCK_RESOLVED`. Missing legacy flags remain diagnosable but must not be guessed or defaulted to skip.
-
-`latestPlanReviewRef` records the exact settled result artifact for either approval or feedback. Duplicate results compare this ref, including its digest, and return the caller's current State without mutation. It does not grant implementation authority.
-
-`approvedPlanRef` is the only implementation authority.
-
-On `REPLAN_REQUIRED`, approval authority and `latestPlanReviewRef` are cleared but historical artifacts are retained. An old approval delivered after this explicit invalidation is stale, not an ordinary duplicate no-op, and cannot restore implementation authority.
-
-## 7. Coding State
+## 7. Coding / launch / workspace binding
 
 ```ts
-export interface CodingState {
+interface CodingState {
   implementationRevision: number;
   reviewRound: number;
-
   executionRoutingRef?: ArtifactRef<"execution-routing">;
+  workerAttemptRef?: ArtifactRef<"implementation">;
   implementationRef?: ArtifactRef<"implementation">;
+  latestDeviationRef?: ArtifactRef<"plan-deviation">;
   validationRef?: ArtifactRef<"validation">;
-
   correctnessReviewRef?: ArtifactRef<"correctness-review">;
   ponytailReviewRef?: ArtifactRef<"ponytail-review">;
-
   findingEvaluationRef?: ArtifactRef<"finding-evaluation">;
   acceptedFindingsRef?: ArtifactRef<"accepted-findings">;
   roundDecisionRef?: ArtifactRef<"round-decision">;
-
-  // Lifecycle evidence; not a successful implementation result.
-  workerAttemptRef?: ArtifactRef<"implementation">;
-  codeReview?: CodeReviewBinding;
+  previousRoundDecisionRef?: ArtifactRef<"round-decision">;
+  codeReviewAttemptRef?: ArtifactRef<"code-review-attempt">;
   latestCodeReviewRef?: ArtifactRef<"code-review">;
 }
 
-export interface CodeReviewBinding {
-  reviewId: PlannotatorReviewId;
+interface CodeReviewAttemptBinding {
+  workflowId: WorkflowId;
+  attemptId: AttemptId;
   implementationRef: ArtifactRef<"implementation">;
   implementationRevision: number;
+  reviewSource:
+    | { kind: "git"; workspaceRef: ArtifactRef<"workspace-evidence">; sourceDigest: string }
+    | { kind: "patch"; path: string; sha256: string;
+        beforeRef: ArtifactRef<"workspace-evidence">; afterRef: ArtifactRef<"workspace-evidence"> };
+}
+
+interface AgentAttemptBinding {
+  attemptId: AttemptId;
+  requestId: string;
+  inputRefs: ArtifactRef[];
+  launchRef: ArtifactRef<"agent-launch">;
+  runId?: SubagentRunId;
+  receiptRef?: ArtifactRef<"agent-launch">;
+  status: "intent" | "running" | "succeeded" | "failed" | "ambiguous";
 }
 ```
 
-`codeReview` and `external["plannotator.code-review.rN"]` are persisted together before a usable review handle is returned. The exact tuple must match the current implementation ref (including digest) and revision; an external identity alone cannot reconstruct it. New implementation completion clears the current Code Review binding/result but retains historical evidence. Missing/mismatched bindings reject both direct result application and reconciliation; they never grant Completion Authority (B5).
+Code attempt is saved BEFORE synchronous public request。No code external reviewId/status index。Result binds exact local attempt / current implementation / unchanged review source; new implementation invalidates old attempt/result。Lost result or source drift cannot become approval。
 
-`workerAttemptRef` points to the latest immutable lifecycle observation defined in [Worker Attempt Evidence](./persistence-recovery.md#61-worker-attempt-evidence-i2). Pending, failed, or ambiguous records cannot populate `implementationRef` as success. Known external run IDs and request correlation survive failure; they do not themselves authorize another Worker (I2).
+Agent launch projection records physical model/thinking、explicit skills、effective callable tools/extensions、Agent definition digest、inheritance/trust expectation、package/lifecycle version、launchContractDigest/input/output binding。Receipt must match historical launch; model drift cannot silently reuse/relaunch an attempt。
 
-Current review evidence is bound to workflow, approved Plan/version, exact implementation ref/revision, and review round. Passed validation requires correctness review, ponytail review, evaluation, and accepted-findings, even when all findings arrays are empty. In the ordinary pass/fail pipeline, only a deterministic failed-validation round can omit review evidence, and it cannot complete (B1). Infrastructure-error is a separate blocked/Human-attention path under I3, never a clean review round.
+Workspace evidence has explicit git/filesystem variants and durable before/after manifests/content identity under canonical root。Missing baseline bytes needed for non-Git static patch blocks; Worker prose hash is not workspace identity。
 
-Decision artifacts carry the [mandatory freshness header](./persistence-recovery.md#7-decision-artifact-header), and durable history retains the previous round decision link across clearing current-round refs (I1/B3). No new Workflow phase, Human authority, or third-party type is introduced.
+Material deviation invalidates approvedPlanRef/version and current coding routing/review/gate authority, retains observed workspace and previous round history, then returns through Planning/simplicity/Human Gate。Local approved-strategy details do not require replan。
 
 ## 8. Retry Counters
 
 ```ts
-export interface RetryCounters {
+interface RetryCounters {
   automatedFixRoundsUsed: number;
   strongerRetriesUsed: number;
   humanCodeFeedbackRounds: number;
 }
 ```
 
-Rules:
+Initial Worker does not charge a fix。RETRY_REQUIRED / REVIEW_RETRY_REQUIRED charge automatedFixRoundsUsed; STRONGER_RETRY_REQUIRED charges both automated + stronger; CODE_FEEDBACK charges Human counter only。
 
-- Initial implementation does not increment `automatedFixRoundsUsed`.
-- `RETRY_REQUIRED` increments `automatedFixRoundsUsed`.
-- `REVIEW_RETRY_REQUIRED` increments `automatedFixRoundsUsed`.
-- `STRONGER_RETRY_REQUIRED` increments both `automatedFixRoundsUsed` and `strongerRetriesUsed`.
-- `CODE_FEEDBACK` increments only `humanCodeFeedbackRounds`.
+Planning refinement 0/1 and finite Oracle/classifier attempts are separate durable budgets, not reset by candidate version/client recreation。
 
 ## 9. Workflow Events
 
-Basic Design event names are preserved.
+These are the canonical names used by [State Machine §3](../basic-design/state-machine.md#3-event-model)。Payloads use exact ArtifactRef, not untyped path strings。
 
 ```ts
 export type WorkflowEvent =
+  | { type: "SCOUT_PERSISTED"; scoutRef: ArtifactRef<"scout"> }
+  | { type: "DIAGNOSIS_PERSISTED"; diagnosisRef: ArtifactRef<"diagnosis"> }
+  | { type: "STAGE_RESOLVED"; stage: ConditionalStage; decisionRef: ArtifactRef<"conditional-stage"> }
+  | { type: "CLARIFICATION_ROUTED"; modeRef: ArtifactRef<"clarification-mode"> }
   | { type: "CONTEXT_READY" }
-  | { type: "CLARIFICATION_REQUIRED"; reasonRef?: ArtifactRef }
+  | { type: "CLARIFICATION_REQUIRED"; reasonRef?: ArtifactRef; modeRef: ArtifactRef<"clarification-mode"> }
   | { type: "CLARIFICATION_COMPLETE"; clarificationRef: ArtifactRef<"clarification"> }
+  | { type: "DEVELOPMENT_METHOD_RESOLVED"; methodRef: ArtifactRef<"development-method"> }
   | { type: "PLAN_CREATED"; planRef: ArtifactRef<"plan">; version: number }
+  | { type: "PLAN_SIMPLICITY_REVIEWED"; reviewRef: ArtifactRef<"plan-simplicity-review"> }
+  | { type: "PLAN_REFINEMENT_REQUESTED"; reviewRef: ArtifactRef<"plan-simplicity-review"> }
+  | { type: "PLAN_REVIEW_READY"; planRef: ArtifactRef<"plan">; simplicityRef: ArtifactRef<"plan-simplicity-review"> }
   | { type: "PLAN_APPROVED"; planRef: ArtifactRef<"plan">; version: number; reviewRef: ArtifactRef<"plan-review"> }
   | { type: "PLAN_FEEDBACK"; feedbackRef: ArtifactRef<"plan-review"> }
-  | { type: "REPLAN_REQUIRED"; decisionRef: ArtifactRef<"round-decision"> }
+  | { type: "REPLAN_REQUIRED"; decisionRef: ArtifactRef<"round-decision"> | ArtifactRef<"plan-deviation"> }
   | { type: "EXECUTION_ROUTED"; decisionRef: ArtifactRef<"execution-routing"> }
+  | { type: "PLAN_DEVIATION_REPORTED"; deviationRef: ArtifactRef<"plan-deviation"> }
   | { type: "IMPLEMENTATION_COMPLETE"; resultRef: ArtifactRef<"implementation">; runId?: SubagentRunId }
   | { type: "VALIDATION_PASSED"; resultRef: ArtifactRef<"validation"> }
   | { type: "REVIEW_ARTIFACTS_PERSISTED"; correctnessReviewRef: ArtifactRef<"correctness-review">; ponytailReviewRef: ArtifactRef<"ponytail-review"> }
@@ -248,27 +259,25 @@ export type WorkflowEvent =
   | { type: "FAIL"; reason: FailureReason; evidenceRef?: ArtifactRef };
 ```
 
-## 10. Transition Contract
+Event names are not third-party API commands。Evidence-ref updates / reservations / launch receipts are guarded persisted updates, not inferred approval events。
 
-State transition is a pure function.
+## 10. Pure transition / Plan logical content
 
 ```ts
 export type TransitionResult =
   | { ok: true; state: WorkflowState }
   | { ok: false; error: TransitionError };
-
-export function transition(
-  state: WorkflowState,
-  event: WorkflowEvent,
-): TransitionResult;
+export function transition(state: WorkflowState, event: WorkflowEvent): TransitionResult;
 ```
 
-`transition()` must not access filesystem, network, Pi, shell, Jev, pi-subagents, or Plannotator.
+No I/O inside transition。Guards validate exact authority and persisted evidence before side effects。
 
-## 11. Review Finding
+Plan content is Scope / Requirements、Architecture / Design when RUN、Implementation Approach、Expected Change Surface、New Components、New Dependencies、Non-goals、Development Method、Test Seams when TDD、machine-readable Validation Contract。Strategy boundary is not a frozen implementation script。
+
+## 11. Findings / decisions
 
 ```ts
-export interface ReviewFinding {
+interface ReviewFinding {
   id: string;
   source: "correctness" | "ponytail";
   category: string;
@@ -277,76 +286,27 @@ export interface ReviewFinding {
   evidence: string;
   blocking: boolean;
 }
-```
-
-`blocking` is reviewer evidence only; it does not grant fix authority.
-
-## 12. Decision Contract
-
-```ts
-export interface Decision<T> {
-  value: T;
-  confidence: number;
-}
-
-export type DecisionResult<T> =
+interface Decision<T> { value: T; confidence: number }
+type DecisionResult<T> =
   | { status: "decided"; decision: Decision<T> }
   | { status: "uncertain"; reason: string };
-```
-
-### Execution Routing
-
-```ts
-export type ModelTier = "ECONOMY" | "STANDARD" | "STRONG";
-export type ReasoningTier = "LOW" | "MEDIUM" | "HIGH";
-
-export interface ExecutionRoutingDecision {
-  modelTier: Decision<ModelTier>;
-  reasoningTier: Decision<ReasoningTier>;
-  effectiveConfidence: number;
-}
-```
-
-### Finding Evaluation
-
-```ts
-export interface FindingEvaluation {
-  findingId: string;
-  evidenceSupported: Decision<boolean>;
-  conflictsWithApprovedPlan: Decision<boolean>;
-  conflictsWithArchitecture: Decision<boolean>;
-  inScope: Decision<boolean>;
-  requiresHumanDecision: Decision<boolean>;
-  decision: "ACCEPT" | "REJECT" | "ESCALATE";
-  reasonCode: FindingDecisionReason;
-}
-```
-
-### Round Decision
-
-```ts
-export type RoundAction = "COMPLETE" | "RETRY" | "ESCALATE";
-
-export type EscalationReason =
-  | "implementation-capability"
-  | "plan-conflict"
-  | "human-decision"
-  | "uncertain";
-
-export type NormalizedRoundDecision =
+type ModelTier = "ECONOMY" | "STANDARD" | "STRONG";
+type ReasoningTier = "LOW" | "MEDIUM" | "HIGH";
+type RoundAction = "COMPLETE" | "RETRY" | "ESCALATE";
+type EscalationReason = "implementation-capability" | "plan-conflict" | "human-decision" | "uncertain";
+type NormalizedRoundDecision =
   | { action: Decision<"COMPLETE" | "RETRY"> }
-  | {
-      action: Decision<"ESCALATE">;
-      escalationReason: Decision<EscalationReason>;
-    };
+  | { action: Decision<"ESCALATE">; escalationReason: Decision<EscalationReason> };
 ```
 
-Action and required escalation reason retain separate confidence through normalization, core policy, and persisted decision evidence. The resulting policy outcome records why it differs from the raw decision; a high action confidence cannot replace reason confidence. [Policy Precedence](./coding-orchestration.md#policy-precedence-b4) applies to RETRY and ESCALATE as well as COMPLETE (B4).
+Plan simplicity uses a separate evidence-backed strategy finding contract, exact Plan binding and repository locations; it is not accepted post-code Fix authority。Oracle evidence is also separate。Current passed-round completeness and action/reason precedence remain [Coding B1/B4](./coding-orchestration.md#policy-precedence-b4)。
 
-## 13. Blocked / Failed Reasons
+All classifier families share decision schema/classifier identity/input refs/digest/policy/config/relevant revision freshness。Deterministic required/skip and explicit method requests record no classifier call; this absence is explicit。
+
+## 12. Blocked / Failed Reasons
 
 ```ts
-export type BlockedReason =
+type BlockedReason =
   | "integration-unavailable"
   | "agent-infrastructure-unavailable"
   | "agent-execution-ambiguous"
@@ -355,8 +315,7 @@ export type BlockedReason =
   | "retry-budget-exhausted"
   | "stronger-profile-unavailable"
   | "operator-attention-required";
-
-export type FailureReason =
+type FailureReason =
   | "state-corrupt"
   | "authoritative-artifact-missing"
   | "authoritative-artifact-corrupt"
@@ -364,3 +323,5 @@ export type FailureReason =
   | "authority-inconsistent"
   | "persistence-consistency-failure";
 ```
+
+Missing launch/consent/capability or ambiguous possible mutation fails closed to blocked/explicit recovery。Failed is terminal only when safe authority reconstruction is impossible。No Human Gate inference/migration default。
