@@ -299,18 +299,6 @@ function booleanDecision(
   return { value: answer.value === "true", confidence: answer.confidence };
 }
 
-function endpointFetch(
-  endpoint: string,
-  transport: JevTransport = fetch,
-): JevTransport {
-  const base = new URL(endpoint.endsWith("/") ? endpoint : `${endpoint}/`);
-  return async (input, init) => {
-    const target = new URL(input);
-    const path = `${target.pathname.replace(/^\/+/, "")}${target.search}`;
-    return transport(new URL(path, base).toString(), init);
-  };
-}
-
 /**
  * Runtime adapter for the published pi-typesafe library API.
  *
@@ -320,8 +308,6 @@ function endpointFetch(
 export class JevIntegration implements JevDecisionClient {
   private readonly injectedClient?: JevClient;
   private readonly createClient: () => JevClient;
-  private readonly endpoint?: string;
-  private readonly transport?: JevTransport;
   private readonly timeoutMs: number;
   private readonly destination: string;
   private readonly maxTransportRetries: number;
@@ -344,11 +330,6 @@ export class JevIntegration implements JevDecisionClient {
       throw new RuntimePortError("policy", "Unsafe Jev destination");
     }
     this.injectedClient = options.client;
-    this.endpoint = options.endpoint;
-    this.transport =
-      this.endpoint === undefined
-        ? options.transport
-        : endpointFetch(this.endpoint, options.transport);
     this.timeoutMs = timeoutMs;
     this.maxTransportRetries = maxTransportRetries;
     this.createClient =
@@ -356,7 +337,9 @@ export class JevIntegration implements JevDecisionClient {
       (() =>
         createTypeSafe({
           timeoutMs,
-          ...(this.transport === undefined ? {} : { fetch: this.transport }),
+          ...(options.transport === undefined
+            ? {}
+            : { fetch: options.transport }),
         }));
   }
 

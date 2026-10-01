@@ -10,6 +10,7 @@ import { FakeSubagentRpc } from "../../fakes/subagent-rpc.ts";
 
 const input = { agent: "worker", task: "fake" };
 const completed = {
+  lifecycleArtifactVersion: 3,
   runId: "child-1",
   mode: "single",
   state: "complete",
@@ -165,6 +166,46 @@ test.each([
   );
   released(bus);
 });
+
+test.each(["stopped", "interrupted", "detached"])(
+  "%s cannot turn a successful-looking display result into completion proof",
+  async (flag) => {
+    const bus = new FakeSubagentRpc((request, rpc) => {
+      rpc.receipt(request, "child-1");
+      rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+        ...completed,
+        [flag]: true,
+      });
+    });
+    await expect(
+      new SubagentsIntegration(bus).run(input),
+    ).resolves.toMatchObject({ status: "ambiguous" });
+  },
+);
+
+test.each([undefined, "child-failed"])(
+  "single-agent failure does not require or infer workflow-only failureKind (%s)",
+  async (failureKind) => {
+    const bus = new FakeSubagentRpc((request, rpc) => {
+      rpc.receipt(request, "child-1");
+      rpc.deliver(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+        ...completed,
+        state: "failed",
+        success: false,
+        ...(failureKind ? { failureKind } : {}),
+        results: [
+          { agent: "worker", success: false, error: "single child failed" },
+        ],
+      });
+    });
+    const result = await new SubagentsIntegration(bus).run(input);
+    expect(result).toMatchObject({
+      status: "failed",
+      error: "single child failed",
+    });
+    expect(result).not.toHaveProperty("failureKind");
+  },
+);
 
 test("RPC rejection is not proof that no child was launched", async () => {
   vi.useFakeTimers();

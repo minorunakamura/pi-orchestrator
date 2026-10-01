@@ -6,7 +6,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 Commands/tools/events/UI → runtime → pure core。No core import of Pi/filesystem/network/classifier/Plannotator/pi-subagents transport types。
 
-Pi >=0.99.1 and pi-subagents >=0.74.0 are production baselines; pi-typesafe >=0.8.1 transitional only until #19。Use only released public APIs; no package modification/private API dependency。
+Pi >=0.99.1 and pi-subagents >=0.74.0 are production baselines; pi-typesafe >=0.8.1 transitional only until #19。#18 package/contract verification uses exact 0.99.1 / 0.74.0 / 0.8.1 in the lockfile; [platform smoke evidence](../implementation/platform-baseline-smoke.md) is separate from full #12 production validation。Use only released public APIs; no package modification/private API dependency。
 
 ## 2. Normal driver vs recovery
 
@@ -79,6 +79,8 @@ Persist bounded non-secret projection + attempt intent + State before spawn。Ca
 
 TDD Worker explicitly requests tdd via public skill selection; inheritSkills:false isolates inherited/extension-added skills, optional codebase-design is explicit。Oracle verifies builtin identity + read-only ceiling。Read-only Codemode (#20) initial Scout/simplicity (optional correctness/ponytail) roles require proven callable ceiling excluding mutation/nested authority plus finite child/tool/output bounds。Stock models.classify bypasses the tool list; disable the models namespace with public createCodemodeExtension({models:false}) via supported child extension loading/replacement, or keep the capability disabled until isolation is proven。denyExtensions:true also prevents Codemode registration; preflight alone cannot prove replacement behavior。Oracle/Research/Worker expansion is not part of #20。
 
+#18 current adapter passes public Agent discovery scope from the host trust decision: trusted → both, untrusted/unknown → user。This prevents project Agent definitions/settings overrides from entering a launch without duplicating Pi's trust loader。Native child resource loading still inherits parent trust through pi-subagents。No unsupported RPC projectTrusted/inheritSkills parameter is added。
+
 ### Product runtime fresh-context policy
 
 Scout/Diagnosis/Research/Planner/simplicity/Correctness/Ponytail/Oracle/initial Worker default fresh。Ordinary Fix is fresh by default; retained resume only when exact historical identity/policy is proven safe。Stronger retry always fresh, never reuse a weaker retained Worker。
@@ -109,7 +111,7 @@ Both Gate results require unchanged current authority/source on settlement。Ide
 
 #19 native target: DecisionClassifierPort → Pi classifier adapter → ctx.modelRegistry.classify, explicit default typesafe/jev-latest。Pi owns transport/provider/auth; core sees domain decisions/normalized errors。Require stopReason:stop plus complete answers; error/aborted is returned without necessarily throwing。Bool has probability only, Score no guaranteed probabilities; use Yes/No Choice for Boolean confidence。Pass maxRetries:0 and finite cancellation/deadline so each retry stays separately reserved。
 
-Until migration and live verification, pi-typesafe >=0.8.1 public library API remains transitional。Never forward TypeSafe credentials through arbitrary endpoint rewrite or keep a silent automatic second evaluator。Remove direct dependency/obsolete settings after all families migrate。
+Until migration and live verification, pi-typesafe >=0.8.1 public library API remains transitional。#18 restricts direct Jev to the default TypeSafe destination; optional legacy endpoint cannot select another host/path。Client creation and every dispatch follow destination validation/authorization; no URL rewrite or silent second evaluator exists。Remove direct dependency/obsolete settings after all families migrate。
 
 ### Product Runtime Consent and Budget (I5)
 

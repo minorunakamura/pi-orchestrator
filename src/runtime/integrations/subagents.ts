@@ -73,6 +73,8 @@ export interface SubagentsIntegrationOptions {
   artifactReader?: ArtifactReader;
   ownerRunId?: string;
   cwd?: string;
+  /** Host trust decision; unknown trust excludes project Agent definitions/overrides. */
+  projectTrusted?: boolean;
   timeoutMs?: number;
 }
 
@@ -86,6 +88,7 @@ export class SubagentsIntegration implements SubagentExecutor {
   private readonly ownerRunId: string;
   private readonly cwd: string;
   private readonly timeoutMs: number;
+  private readonly projectTrusted: boolean;
   private readonly artifactReader: ArtifactReader | undefined;
 
   constructor(
@@ -95,6 +98,7 @@ export class SubagentsIntegration implements SubagentExecutor {
     this.artifactReader = options.artifactReader;
     this.ownerRunId = options.ownerRunId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
+    this.projectTrusted = options.projectTrusted === true;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
     if (
       !Number.isSafeInteger(this.timeoutMs) ||
@@ -155,6 +159,7 @@ export class SubagentsIntegration implements SubagentExecutor {
     }
     const params = {
       agent: input.agent,
+      agentScope: this.projectTrusted ? "both" : "user",
       task,
       context: "fresh",
       cwd: input.cwd ?? this.cwd,

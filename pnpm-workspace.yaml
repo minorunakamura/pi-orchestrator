@@ -2,3 +2,6 @@ allowBuilds:
   '@google/genai': false
   esbuild: true
   protobufjs: true
+# Issue #18 explicitly targets this released version; retain all other supply-chain checks.
+minimumReleaseAgeExclude:
+  - pi-subagents@0.74.0

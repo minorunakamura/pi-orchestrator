@@ -4,7 +4,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Ownership / baseline
 
-Configuration is execution policy / threshold / mapping, not Workflow progress or authority。v1 target requires Pi >=0.99.1 and pi-subagents >=0.74.0; pi-typesafe >=0.8.1 is transitional only until #19。This document does not assert that current package metadata implements that baseline; #18 owns dependency/lockfile updates。
+Configuration is execution policy / threshold / mapping, not Workflow progress or authority。v1 target requires Pi >=0.99.1 and pi-subagents >=0.74.0; pi-typesafe >=0.8.1 is transitional only until #19。#18 updates package/lockfile verification to Pi 0.99.1 / pi-subagents 0.74.0 / pi-typesafe 0.8.1; the remaining policy groups below are target contracts, not implemented settings。
 
 Safety invariants cannot be disabled by configuration: both Human Gates, deterministic validation, freshness, intent-before-side-effect, finite budgets and active ownership are mandatory。
 
@@ -84,7 +84,7 @@ Reserve every actual request including per-finding and retries before dispatch�
 
 Target config selects native classifier provider/model via Pi registry; provider/auth plumbing belongs to Pi。Explicit maxRetries:0 disables hidden provider retries; each Orchestrator retry needs a new durable reservation。Use finite signal/deadline and require stopReason:stop plus valid complete answers (classify errors/aborts are returned results, not necessarily exceptions)。No silent classifier/LLM fallback。Classifier identity and bounded request/policy/config digests are required for freshness。
 
-Until #19 removes direct transport, pi-typesafe >=0.8.1 uses default TypeSafe backend or its validated public backend abstraction with backend-specific credential if non-default support is necessary。Never rewrite an authenticated TypeSafe fetch to arbitrary `jev.endpoint`。Do not grow a permanent backend registry; remove obsolete direct endpoint config after migration/smoke。
+#18 chooses **default TypeSafe backend only** until #19 removes direct transport。`jev.endpoint` may be omitted or set to `https://api.typesafe.ai` (trailing slash accepted); custom host/path, HTTP, credentials, query and fragment are rejected by configuration and the adapter before client creation/dispatch。Existing custom-endpoint configurations must be removed or changed to the default, with matching consent destination。No backend registry/custom credential configuration is added。Never rewrite an authenticated TypeSafe fetch to arbitrary host; remove obsolete direct endpoint config after #19 migration/smoke。
 
 ## 8. Validation / Human review / ownership
 

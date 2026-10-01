@@ -32,6 +32,40 @@ afterEach(async () => {
 });
 
 describe("SubagentsIntegration", () => {
+  test.each([undefined, false, true])(
+    "uses the public Agent discovery scope for host project trust %s",
+    async (projectTrusted) => {
+      const events = new FakeEventBus();
+      await new SubagentsIntegration(events, { projectTrusted }).run({
+        agent: "workflow-scout",
+        task: "Read only",
+      });
+      const request = childRequest(events.emitted[0].payload);
+      expect(request.agentScope).toBe(
+        projectTrusted === true ? "both" : "user",
+      );
+      expect(request).not.toHaveProperty("projectTrusted");
+      expect(request).not.toHaveProperty("inheritSkills");
+      expect(request).not.toHaveProperty("workflowScript");
+      expect(request).not.toHaveProperty("workflowScriptPath");
+    },
+  );
+  test.each([false, true])(
+    "workflow composition passes host trust to children (%s)",
+    async (projectTrusted) => {
+      const events = new FakeEventBus();
+      const runtime = createWorkflowCommandRuntime(
+        events,
+        await temporaryRoot(),
+        { projectTrusted },
+      );
+      await runtime.start({ task: "Read-only scout probe", playbook: "chore" });
+      expect(childRequest(events.emitted[0].payload).agentScope).toBe(
+        projectTrusted ? "both" : "user",
+      );
+    },
+  );
+
   test("runs reviewer requests in parallel with a fresh context", async () => {
     const events = new FakeEventBus();
     const integration = new SubagentsIntegration(events, {
