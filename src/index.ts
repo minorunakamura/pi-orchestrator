@@ -25,6 +25,7 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
   registerWorkflowCommands(pi, {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
+        projectTrusted: context.isProjectTrusted(),
         configuration: loadProductionConfiguration(context.cwd, {
           projectTrusted: context.isProjectTrusted(),
         }),

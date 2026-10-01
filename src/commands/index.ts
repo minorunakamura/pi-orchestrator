@@ -67,6 +67,7 @@ export interface WorkflowCommandRuntime {
 }
 
 export interface WorkflowCommandRuntimeOptions {
+  projectTrusted?: boolean;
   configuration?: OrchestratorConfiguration;
   jevDecisionClient?: JevDecisionClient;
   validationExecutor?: ValidationExecutor;
@@ -254,6 +255,7 @@ export function createWorkflowCommandRuntime(
           artifactStore,
           subagentExecutor: new SubagentsIntegration(events, {
             cwd,
+            projectTrusted: options.projectTrusted,
             ownerRunId: workflowId,
             artifactReader: artifactStore,
           }),
@@ -267,6 +269,7 @@ export function createWorkflowCommandRuntime(
         artifactStore,
         subagentExecutor: new SubagentsIntegration(events, {
           cwd,
+          projectTrusted: options.projectTrusted,
           ownerRunId: workflowId,
           artifactReader: artifactStore,
         }),

@@ -20,7 +20,7 @@ Inspected sources before design revision:
 
 | Current code / fact | Target owner |
 | --- | --- |
-| package dev Pi ^0.87.1, direct pi-typesafe ^0.7.4 | #18 Pi >=0.99.1 / transitional pi-typesafe >=0.8.1 |
+| #18 package/lockfile: Pi 0.99.1, pi-subagents 0.74.0 (contract-test dev), direct pi-typesafe 0.8.1 | native classifier/direct dependency removal #19; launch policy #21; [platform verification](./platform-baseline-smoke.md) |
 | commands start only startWorkflow/gatherContext; resume/Reconciler does phase work | #4 normal driveWorkflow; resume reconciliation + same-driver continuation |
 | core playbook flags resolved at start from transient hints; hotfix/chore Research skip; no Diagnosis | #6 sequential conditional evidence / #7 required Diagnosis |
 | ClarificationPort exists but production command composition lacks root Human bridge | #8 GRILL_ME / GRILL_WITH_DOCS / narrow docs intent |

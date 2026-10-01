@@ -33,7 +33,7 @@ function validConfiguration(): OrchestratorConfiguration {
       stopOnInfrastructureFailure: true,
     },
     jev: {
-      endpoint: "https://jev.example.test",
+      endpoint: "https://api.typesafe.ai",
       timeoutMs: 30_000,
       maxTransportRetries: 1,
     },
@@ -49,6 +49,17 @@ test("validates the v1 configuration and resolves logical tiers", () => {
     model: "model-medium",
     thinking: "high",
   });
+});
+
+test.each([
+  "https://jev.example.test",
+  "https://api.typesafe.ai/custom",
+  "http://api.typesafe.ai",
+])("rejects unsupported direct-Jev endpoint configuration: %s", (endpoint) => {
+  const configuration = validConfiguration();
+  expect(() =>
+    parseConfiguration({ ...configuration, jev: { endpoint } }),
+  ).toThrow(SchemaValidationError);
 });
 
 test("rejects invalid retry limits and missing execution profile mappings", () => {

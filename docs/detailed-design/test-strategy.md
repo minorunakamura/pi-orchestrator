@@ -56,6 +56,8 @@ Existing stale/dead-owner workflow lock fails closed; PID/age alone cannot auto-
 
 ## 5. Platform / launch contract tests (#18/#21)
 
+#18 implementation adds released preflight compatibility tests (`tests/platform/preflight.test.ts`), trust-aware RPC scope regressions and an opt-in real native-child Herdr harness (`tests/platform/smoke-extension.ts`)。Exact versions/results/reproduction and offline-model limitations are recorded in [Platform baseline smoke](../implementation/platform-baseline-smoke.md)。#21 still owns product launch policy/durable freshness; #20 still owns Codemode enablement。
+
 Use released 0.74.0 public preflight/RPC fixtures, not main/Unreleased shapes。Cover:
 
 - all production roles use explicit Launch Policy

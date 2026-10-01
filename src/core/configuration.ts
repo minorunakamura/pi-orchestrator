@@ -65,7 +65,10 @@ export function jevDestination(
     throw new Error(
       "Jev destination must not contain credentials, query or fragment",
     );
-  return url.href.replace(/\/$/u, "");
+  const destination = url.href.replace(/\/$/u, "");
+  if (destination !== DEFAULT_JEV_DESTINATION)
+    throw new Error("Direct Jev supports only the default TypeSafe backend");
+  return destination;
 }
 export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
   if (
@@ -105,6 +108,7 @@ export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
 }
 export interface JevConfiguration {
   runtimePolicy?: JevRuntimePolicy;
+  /** Transitional: only https://api.typesafe.ai is supported until #19. */
   endpoint?: string;
   timeoutMs?: number;
   maxTransportRetries?: number;

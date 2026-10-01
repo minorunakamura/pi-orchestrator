@@ -412,55 +412,85 @@ describe("JevIntegration", () => {
     });
   });
 
-  test("rewrites the configured endpoint through the public transport option", async () => {
-    const transport = vi.fn(async (input: string, init?: RequestInit) => {
-      expect(init?.signal).toBeInstanceOf(AbortSignal);
-      return new Response(
-        JSON.stringify({
-          model: "jev-latest",
-          answers: {
-            modelTier: {
-              type: "choice",
-              choice: "STANDARD",
-              confidence: 0.91,
-              probabilities: { ECONOMY: 0, STANDARD: 0.91, STRONG: 0 },
+  test.each([undefined, "https://api.typesafe.ai/"])(
+    "uses pi-typesafe 0.8.1 default backend without URL rewriting (%s)",
+    async (endpoint) => {
+      const transport = vi.fn(async (input: string, init?: RequestInit) => {
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+        expect(init?.headers).toMatchObject({
+          Authorization: "Bearer fixture-key",
+        });
+        return new Response(
+          JSON.stringify({
+            model: "jev-latest",
+            answers: {
+              modelTier: {
+                type: "choice",
+                choice: "STANDARD",
+                confidence: 0.91,
+                probabilities: { ECONOMY: 0, STANDARD: 0.91, STRONG: 0 },
+              },
+              reasoningTier: {
+                type: "choice",
+                choice: "HIGH",
+                confidence: 0.91,
+                probabilities: { LOW: 0, MEDIUM: 0, HIGH: 0.91 },
+              },
             },
-            reasoningTier: {
-              type: "choice",
-              choice: "HIGH",
-              confidence: 0.91,
-              probabilities: { LOW: 0, MEDIUM: 0, HIGH: 0.91 },
-            },
-          },
-          usage: { input_tokens: 12, output_tokens: 0 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    });
-    const previousKey = process.env.TYPESAFE_API_KEY;
-    process.env.TYPESAFE_API_KEY = "fixture-key";
-    try {
-      await expect(
-        new JevIntegration({
-          endpoint: "https://jev.example.test/base",
-          transport,
-          timeoutMs: 100,
-        }).routeExecution(
-          routingInput({ contextRefs: [], contextEvidence: [] }),
-        ),
-      ).resolves.toMatchObject({
-        modelTier: { value: "STANDARD" },
-        reasoningTier: { value: "HIGH" },
+            usage: { input_tokens: 12, output_tokens: 0 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
       });
-    } finally {
-      if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = previousKey;
-    }
-    expect(transport).toHaveBeenCalledTimes(1);
-    expect(transport.mock.calls[0]?.[0]).toBe(
-      "https://jev.example.test/base/v1/systemone",
-    );
-  });
+      const previousKey = process.env.TYPESAFE_API_KEY;
+      process.env.TYPESAFE_API_KEY = "fixture-key";
+      try {
+        await expect(
+          new JevIntegration({
+            endpoint,
+            transport,
+            timeoutMs: 100,
+          }).routeExecution(
+            routingInput({ contextRefs: [], contextEvidence: [] }),
+          ),
+        ).resolves.toMatchObject({
+          modelTier: { value: "STANDARD" },
+          reasoningTier: { value: "HIGH" },
+        });
+      } finally {
+        if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+        else process.env.TYPESAFE_API_KEY = previousKey;
+      }
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(transport.mock.calls[0]?.[0]).toBe(
+        "https://api.typesafe.ai/v1/systemone",
+      );
+    },
+  );
+
+  test.each([
+    "https://arbitrary.example.test",
+    "https://api.typesafe.ai.attacker.test",
+    "https://api.typesafe.ai/custom",
+    "http://api.typesafe.ai",
+    "https://key@api.typesafe.ai",
+    "https://api.typesafe.ai?key=secret",
+    "https://api.typesafe.ai#fragment",
+  ])(
+    "rejects custom direct-Jev destinations before client creation: %s",
+    (endpoint) => {
+      const transport = vi.fn();
+      const createClient = vi.fn();
+      expect(
+        () => new JevIntegration({ endpoint, transport, createClient }),
+      ).toThrow();
+      expect(createClient).not.toHaveBeenCalled();
+      expect(transport).not.toHaveBeenCalled();
+      expect(
+        () => new JevIntegration({ endpoint, client: new FakeJevClient([]) }),
+      ).toThrow();
+    },
+  );
 
   test("retries only transport failures up to the configured bound", async () => {
     const client = new FakeJevClient([

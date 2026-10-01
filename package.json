@@ -43,14 +43,16 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@earendil-works/pi-ai": "0.99.1",
+    "@earendil-works/pi-coding-agent": "^0.99.1",
     "@types/node": "26.6.2",
     "oxlint": "^1.85.0",
     "oxlint-tsgolint": "^7.0.2003",
+    "pi-subagents": "0.74.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   },
   "dependencies": {
-    "pi-typesafe": "^0.7.4"
+    "pi-typesafe": "^0.8.1"
   }
 }

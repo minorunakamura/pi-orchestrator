@@ -31,16 +31,18 @@ Pi loader は `pi.extensions: ./src/index.ts` の TypeScript source を読み込
 
 | Component | v1 contract |
 | --- | --- |
-| Pi / @earendil-works/pi-coding-agent | **>=0.99.1**、host peer dependency |
+| Pi / @earendil-works/pi-coding-agent | **>=0.99.1**、host peer dependency の range は Pi package 契約に従い `"*"` |
 | pi-subagents | **>=0.74.0**、released public single-agent RPC / preflight / lifecycle v3 |
 | pi-typesafe | **>=0.8.1 transitional only until #19**、native classifier 移行後は direct dependency 削除 |
 | @plannotator/pi-extension | mandatory Human Plan/Code UI、Plan async / Code synchronous public contract |
 | [minorunakamura/pi-ketch](https://github.com/minorunakamura/pi-ketch) | conditional Research、pi-ketch.researcher。Same-name npm package は別契約 |
 | [minorunakamura/pi-ask-user-question](https://github.com/minorunakamura/pi-ask-user-question) | root/Main の Human clarification。Same-name npm askUserQuestion は代替ではない |
 
-#18 が package/lockfile/platform を更新し、#19 が Jev decision transport を Pi native classifiers（default `typesafe/jev-latest`）へ移行します。現行コードは旧 platform/direct adapter を含み、この設計更新だけで baseline 適用済みとはしません。
+#18 の package/lockfile は Pi **0.99.1** / pi-subagents **0.74.0** / pi-typesafe **0.8.1** で検証します。Pi は host peer のまま、pi-subagents は contract/smoke 用 dev dependency（実行 host に別途 install が必要）です。#19 が Jev decision transport を Pi native classifiers（default `typesafe/jev-latest`）へ移行します。現行 direct adapter は default TypeSafe backend のみ対応し、`jev.endpoint` は未指定または `https://api.typesafe.ai` のみ許可します。任意 host への credential 転送は行いません。
 
-All child roles use explicit orchestrator Agent Launch Policy (#21): public preflight で resolved physical model/thinking、explicit skills、effective callable tools、Agent definition digest、inheritance/trust、package/lifecycle/launch digest を検証・保存します。ambient capabilities を仮定せず、changed model/skill/tool/definition を同じ attempt と扱いません。
+Platform の検証範囲・再現手順は [#18 platform smoke evidence](./docs/implementation/platform-baseline-smoke.md) を参照してください。後続 Issue の runtime 実装や v1 全体の production PASS を意味しません。
+
+v1 target: all child roles use explicit orchestrator Agent Launch Policy (#21): public preflight で resolved physical model/thinking、explicit skills、effective callable tools、Agent definition digest、inheritance/trust、package/lifecycle/launch digest を検証・保存します。ambient capabilities を仮定せず、changed model/skill/tool/definition を同じ attempt と扱いません。
 
 Third-party package の変更/patch/fork/private API 利用は禁止。released contract で安全に実現できない経路は blocked/unsupported。Virtual Models は v1 execution authority ではなく Future Scope。Codemode (#20) は verified bounded read-only child capability のみで、lifecycle/approval を所有しません。
 
@@ -123,7 +125,7 @@ Git と filesystem non-Git は first-class workspace。before/after manifests/co
 
 ## Configuration / consent / persistence
 
-Pi trusted settings の piOrchestrator を読みます。global settings を trusted project settings が host precedence で override; untrusted project injection を独自実装で許可しません。Child trust は Pi/pi-subagents の public contract を継承します。
+Pi trusted settings の piOrchestrator を読みます。global settings を trusted project settings が host precedence で override; untrusted project injection を独自実装で許可しません。Child trust は Pi/pi-subagents の public contract を継承します。Agent discovery は host の `isProjectTrusted()` に基づき trusted → public `agentScope: "both"`、untrusted/unknown → `"user"` とし、project Agent definitions/overrides の混入も除外します。Orchestrator は trust loader を再実装しません。
 
 Operator/project grant upper bounds → generated workflowId に bindした durable workflow consent。Classifier/project/destination/evidence scope と finite budget を検証し、毎 outbound attempt/per-finding/retry を **reservation → State persist → request** で計上します。API credentials/model availability、typesafe enable、Plan approval は consent ではありません。Timeout stays charged、restart で budget を resetしません。
 
