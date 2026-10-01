@@ -1,238 +1,99 @@
 # Orchestrator Configuration
 
-Version: 1.0
+Version: 2.0 — v1 target contract (Issue #3)
 
-## 1. 目的
+## 1. Ownership / baseline
 
-本書は pi-orchestrator Initial Scope の configurable policy と、その ownership / default / persistence boundary を定義する。
+Configuration is execution policy / threshold / mapping, not Workflow progress or authority。v1 target requires Pi >=0.99.1 and pi-subagents >=0.74.0; pi-typesafe >=0.8.1 is transitional only until #19。This document does not assert that current package metadata implements that baseline; #18 owns dependency/lockfile updates。
 
-Configuration は Workflow State ではない。
+Safety invariants cannot be disabled by configuration: both Human Gates, deterministic validation, freshness, intent-before-side-effect, finite budgets and active ownership are mandatory。
 
-```text
-Configuration
-    = 実行ポリシー・threshold・mapping
+## 2. Source / trust
 
-State
-    = 現在の Workflow progress / authority
-```
-
----
-
-## 2. 基本原則
-
-### CFG-001
-
-State Machine の安全 invariant を Configuration で無効化できない。
-
-例:
-
-- Human Plan Gate を bypass しない
-- Human Code Gate を bypass しない
-- validation failure で COMPLETE を許可しない
-
-### CFG-002
-
-Secret を Workflow State / Artifact に保存しない。
-
-### CFG-003
-
-具体的 provider/model 名は Decision Engine の logical tier から Configuration が解決する。
-
-### CFG-004
-
-Automated retry は必ず上限を持つ。
-
----
-
-## 3. Initial Scope Configuration
-
-概念例:
-
-```ts
-export interface OrchestratorConfiguration {
-  decision: {
-    autoDecisionThreshold: number;
-    escalationThreshold: number;
-  };
-
-  executionProfiles: {
-    ECONOMY: ExecutionProfile;
-    STANDARD: ExecutionProfile;
-    STRONG: ExecutionProfile;
-  };
-
-  retries: {
-    maxAutomatedFixRounds: number;
-    maxStrongerRetries: number;
-  };
-
-  validation: {
-    stopOnInfrastructureFailure: boolean;
-  };
-
-  jev: {
-    endpoint?: string;
-  };
-}
-```
-
-API key 等の secret はこの object を durable artifact として保存しない。
-
-### Product Runtime の source と precedence
-
-標準 package entry は Pi の既存 `SettingsManager` boundary を読み取り、次の
-`piOrchestrator` object を `loadConfiguration()` へ渡す。
+Read Pi's public settings boundary:
 
 ```text
-<agent-dir>/settings.json  →  piOrchestrator
-<project>/.pi/settings.json →  piOrchestrator
+<agent-dir>/settings.json      piOrchestrator
+<project>/.pi/settings.json    piOrchestrator (trusted project only)
 ```
 
-Project settings は Pi の既存 precedence（trusted project の project settings が
-user settings を deep override）に従う。Project が untrusted の場合は Pi の
-既存挙動どおり project settings を読み込まない。object が欠落または invalid
-の場合、Product Runtime は fail-closed し、secret は domain configuration に
-含めない。
+Use host precedence (trusted project deep override), not a custom trust loader。Unknown/invalid required settings fail closed; untrusted trust-gated settings/.pi prompts/skills/extensions cannot inject child policy。Pi reads sessionDir before trust and loads AGENTS.md/CLAUDE.md context independently of trust; exclude context via explicit inheritProjectContext policy when required, not a fictitious trust guarantee。
 
----
+Do not persist credentials/raw host settings。Effective non-secret policy snapshot/digest is required for workflow authority/decision/launch freshness。
 
-## 4. Recommended Initial Scope Defaults
+## 3. v1 policy groups (logical contract)
+
+These groups define ownership, not an already-implemented JSON schema。Child Issues finalize minimal runtime field shapes without weakening these boundaries。
+
+| Group | Required policy |
+| --- | --- |
+| decision | autoDecisionThreshold / escalationThreshold, evidence size limits, schema/policy identity |
+| classifier | explicit provider/model, default typesafe/jev-latest; Pi native transport (#19) |
+| executionProfiles | ECONOMY / STANDARD / STRONG → concrete provider/model |
+| reasoningMapping | LOW / MEDIUM / HIGH → supported thinking |
+| agentLaunch | evidence/review/advisory role-profile policy, explicit skills/tools/forbidden ceiling/inheritance; public preflight (#21) |
+| stage policy | canonical required/conditional/skip matrix; sequential evidence-driven conditional evaluation |
+| development method | explicit Human TDD precedence; deterministic behavior-free STANDARD; bounded eligible routing |
+| plan simplicity | required for every candidate review-ready Plan, max automatic refinement = 1 per cycle |
+| oracle | rare explicit triggers, finite attempt budget/deadline and read-only ceiling |
+| read-only Codemode | permitted roles, verified effective callable tools, finite execution/output limits; disabled if unverifiable |
+| retries | maxAutomatedFixRounds / maxStrongerRetries |
+| validation | stopOnInfrastructureFailure; task-specific WHAT remains Approved Plan |
+| workspace | canonical root, Git/filesystem observation policy, exclusions/unsupported entries/finite limits |
+| authorization | operator/project grant upper bounds → durable workflow consent and finite request reservations |
+
+Human Gates are not configurable conditional stages。Stage matrix is fixed by [Basic Design §5](./basic-design.md#5-playbook-baseline); do not silently override required/skip with Jev。Stage decisions bind policy digest and accumulated evidence; changes require explicit reconciliation, not recomputation to skip。
+
+## 4. Execution profile / launch identity
+
+```text
+Jev STANDARD + HIGH
+ -> configuration provider/model/thinking
+ -> Agent Launch Policy
+ -> public preflight / exact physical launch evidence
+```
+
+All child roles have explicit execution-relevant policy。Ambient default model change (including Pi's Codex default), selected skills/tools or Agent definition drift invalidates equivalent-attempt reuse even if task/refs are unchanged。Only resolved non-secret projection is durable; no credential or unbounded prompt dump。
+
+Worker uses current approved Execution Profile; stronger retries cannot be downgraded。TDD Worker explicitly selects tdd through public skill selection with inheritSkills:false; optional codebase-design must be explicitly selected if required, never assumed inherited。
+
+## 5. Budgets / confidence
+
+Recommended coding defaults:
 
 ```text
 maxAutomatedFixRounds = 3
 maxStrongerRetries    = 1
 ```
 
-Confidence threshold の具体値は、Jev の評価データ / project eval に基づいて確定する。
+Human Code Feedback has a separate counter。Automatic refinement hard cap is one per planning cycle; automatic Plan versions cannot reset it。Oracle and classifier have separate finite budgets。All cap exhaustion stops automatic continuation for Human/operator attention。
 
-評価なしに threshold を設計上の固定値として hard-code しない。
+Confidence thresholds require project eval; do not treat arbitrary numeric confidence as permission。Low conditional/mode/method confidence never silently skips or invents a Human choice。Execution routing may select an explicitly configured safe stronger fallback profile, not another evaluator transport。
 
----
+## 6. Operator/project grant vs workflow consent (#11)
 
-## 5. Execution Profile Mapping
+Operator authorizes a trusted canonical project, explicit classifier/destination, permitted evidence categories and finite allowance。After workflowId generation, Orchestrator binds a workflow-scoped consent no broader than that active grant。
 
-Jev は logical tier を返す。
+Durable consent/accounting includes grant ID / consent ID / policy version、workflowId、projectRoot、classifier provider/model/destination、allowed evidence categories、finite maxRequests、attemptsReserved、predecessor reservation refs。Mode families need task/scout/diagnosis/research/clarification/design evidence categories where transmitted; allow only explicitly permitted categories, not a wildcard expansion from old consent。
 
-```text
-ECONOMY
-STANDARD
-STRONG
-```
+No requirement to configure a not-yet-generated exact workflowId in project settings。The durable workflow binding still requires exact identity on every call。New/revoked/narrower grant is revalidated; absence, scope mismatch, unknown/exhausted budget or reservation failure makes zero outbound calls and blocks。
 
-Configuration が concrete model へ変換する。
+Reserve every actual request including per-finding and retries before dispatch。Timeout remains charged; restart/client recreation cannot refund/reset allowance。API key/model availability, Plan approval and `/typesafe enable` are not Product Runtime consent。
 
-例:
+## 7. Native classifier and transitional endpoint
 
-```text
-STANDARD + HIGH
-      ↓
-Configuration
-      ↓
-provider / model / thinking
-```
+Target config selects native classifier provider/model via Pi registry; provider/auth plumbing belongs to Pi。Explicit maxRetries:0 disables hidden provider retries; each Orchestrator retry needs a new durable reservation。Use finite signal/deadline and require stopReason:stop plus valid complete answers (classify errors/aborts are returned results, not necessarily exceptions)。No silent classifier/LLM fallback。Classifier identity and bounded request/policy/config digests are required for freshness。
 
-これにより model catalog 変更を Decision Contract から分離する。
+Until #19 removes direct transport, pi-typesafe >=0.8.1 uses default TypeSafe backend or its validated public backend abstraction with backend-specific credential if non-default support is necessary。Never rewrite an authenticated TypeSafe fetch to arbitrary `jev.endpoint`。Do not grow a permanent backend registry; remove obsolete direct endpoint config after migration/smoke。
 
----
+## 8. Validation / Human review / ownership
 
-## 6. Retry Policy
+Approved Plan owns commands/cwd/required checks/timeout/Test Seams, configuration only infrastructure HOW。No silent task-specific requirement addition/removal。TDD does not imply Validation pass。
 
-Automated Coding loop:
+Plan Gate async request acquisition may have a finite infrastructure deadline。Code Gate is synchronous Human interaction: Human review duration is not an integration timeout, no five-second cap or invented polling。Persist exact local Code attempt/source before request and verify source still current on settlement。
 
-```text
-Implementation
-→ Validation
-→ Review
-→ Decision
-→ Fix
-→ ...
-```
+Active workspace ownership guard cannot be disabled。GRILL_WITH_DOCS allowlist is restricted to exact authorized CONTEXT/ADR paths with clarification-bound before/after evidence, not configurable source access。
 
-は `maxAutomatedFixRounds` を超えてはならない。
+## 9. Future Scope
 
-Stronger execution profile への escalation は `maxStrongerRetries` を超えてはならない。
-
-上限到達時:
-
-```text
-retry budget exhausted
-      ↓
-BLOCK
-      ↓
-blocked
-```
-
-Human attention または明示的 policy change が必要。
-
-silent infinite loop を禁止する。
-
----
-
-## 7. Validation Contract と Configuration
-
-「何を検証するか」は Approved Plan の Validation Contract が所有する。
-
-Configuration は「Validation の共通実行ポリシー」を所有する。
-
-```text
-Approved Plan
-    → WHAT to validate
-
-Configuration
-    → HOW validation infrastructure behaves
-```
-
-Configuration が task-specific test requirement を勝手に追加・削除しない。
-
----
-
-## 8. Jev Configuration
-
-Initial Scope Jev use:
-
-- Coding Entry Routing
-- Finding Evaluation
-- Round Decision
-
-Configuration が所有するもの:
-
-- endpoint / transport option
-- confidence policy
-- timeout / retry transport policy（実装時に確定）
-- logical tier mapping
-
-Jev unavailable は automatic LLM fallback しない。
-
-```text
-Jev unavailable
-→ blocked
-```
-
----
-
-## 9. Persistence
-
-Effective non-secret configuration の snapshot / digest を Workflow evidence に保存することを検討できる。
-
-ただし secret は保存しない。
-
-Decision artifact には policy version / configuration digest を持たせ、resume 時に stale decision 判定へ利用できる。
-
----
-
-## 10. Future Scope
-
-Future Scope:
-
-- Context Routing policy
-- Conditional Stage policy
-- Escalation Target allowlist
-- Validation Failure classifier policy
-
-複数 Coding Orchestration 導入時:
-
-- global concurrency
-- per-Coding concurrency
-- Work Package scheduling policy
-
-を追加可能。
+Generic Context Routing、arbitrary escalation target allowlist、semantic validation classifier、multiple coding concurrency / work package scheduling、Virtual Models authority remain deferred。Conditional Stage / mode / method / read-only Codemode policy are v1, with no speculative placeholder settings。

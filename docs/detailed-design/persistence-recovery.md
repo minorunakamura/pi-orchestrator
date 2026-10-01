@@ -1,10 +1,12 @@
 # Persistence and Recovery Detailed Design
 
-Version: 1.2
+Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Purpose
 
-This document defines State / Artifact persistence, resume, reconciliation, blocked handling, and failed handling for pi-orchestrator's Initial Scope.
+This document defines v1 target persistence/recovery. Pi >=0.99.1 / pi-subagents >=0.74.0 public contracts apply; pi-typesafe >=0.8.1 is transitional until #19. Current v0.1.0 schemas/receipts are not automatically compatible authority.
+
+Normal driveWorkflow() and recovery are separate: /wf-* and accepted Human/child results use the normal driver until genuine wait/block/failure/completion. /wf-resume reconciles first, then continues that same driver; it is not normal phase-stepping.
 
 ## 2. Runtime Directory
 
@@ -18,6 +20,9 @@ This document defines State / Artifact persistence, resume, reconciliation, bloc
             ├── plans/
             ├── plan-reviews/
             ├── decisions/
+            ├── agent-runs/
+            ├── advisory/
+            ├── workspace/
             ├── implementation/
             ├── validation/
             ├── reviews/
@@ -75,27 +80,30 @@ The State must contain `stateRevision`, incremented for every successful mutatio
 Mandatory ordering:
 
 ```text
-1. validate input artifact(s)
-2. perform external execution / Jev decision
-3. validate output
-4. persist output artifact
-5. update State references in memory
-6. persist State
-7. begin next side effect
+1. validate current ownership / authority / input artifacts / launch or request policy
+2. persist required intent / launch projection / baseline / consent reservation / local gate attempt
+3. persist State references and counters under lock + revision check
+4. perform external or mutating side effect
+5. validate exact output / receipt / current source identity
+6. persist immutable output Artifact
+7. apply normal Event / guarded reference update and persist State
+8. begin next side effect / normal driver continuation
 ```
+
+This pre-side-effect barrier applies to child/Oracle/Worker dispatch, each classifier request, GRILL_WITH_DOCS write and synchronous Code Review. Plan open intent precedes public open, returned exact external binding precedes handle/result use. Output-before-State alone is insufficient for possibly mutating/external work.
 
 The next stage must never begin before State persistence succeeds.
 
 ### 6.1 Worker Attempt Evidence (I2)
 
-Phase C must leave a durable, append-only attempt history under `implementation/`, using the existing implementation evidence kind with schema-validated lifecycle records. Intent/failure records are not successful implementation results and must never be used as `coding.implementationRef` or emit `IMPLEMENTATION_COMPLETE`. `coding.workerAttemptRef` points to the latest lifecycle record; each later record links its predecessor.
+The normal runtime must leave a durable append-only attempt history under implementation/, with verified agent-launch projection and schema-valid lifecycle records. All attempts bind public preflight policy/actual receipt (physical model/thinking/skills/effective tools/Agent definition/inheritance/package/lifecycle/launch digest). Intent/failure records are not successful implementation results and must never be used as `coding.implementationRef` or emit `IMPLEMENTATION_COMPLETE`. `coding.workerAttemptRef` points to the latest lifecycle record; each later record links its predecessor.
 
 Required contract:
 
 | Evidence | Required data |
 |---|---|
 | Pre-dispatch intent | workflowId, unique attemptId, input/target implementation revisions, exact approved Plan/version, input implementation ref when present, routing/accepted-findings/Human feedback refs, resolved profile, public request correlation identity, timestamp and deadline |
-| Repository baseline | canonical repository/worktree location, HEAD/base identity where applicable, index/worktree diff digest and untracked-file content manifest (or an equivalent content identity); pre-existing changes must remain distinguishable |
+| Workspace baseline | explicit git/filesystem provider identity, canonical root/cwd, observation policy/exclusions, manifest/content identity and baseline contents; HEAD/base/index/worktree/untracked data when Git; pre-existing changes remain distinguishable; baseline bytes needed for non-Git static patch are retained |
 | External observation | request/owner/node identities where supported, actual runId when exposed, explicit launch/run status including unknown; never label requestId as runId |
 | Terminal or ambiguous observation | succeeded/failed/timed-out/ambiguous status, known run identity, available result/error refs, post-run repository identity and baseline comparison, explicit unavailable observations |
 
@@ -105,13 +113,13 @@ Failure, timeout, and ambiguous completion retain identity/evidence and block fu
 
 The runtime persists a received-result observation (still `ambiguous` for Workflow completion purposes) as soon as a response exposes its runId, before any post-run repository scan or successful implementation Artifact write. This received record uses `after.status = pending`; a later observation records observed or unavailable repository evidence. It then persists the final success observation linked to that implementation Artifact. If result/State publication fails, the received observation or at least the intent remains a dispatch barrier; reconstructable outcomes are blocked for reconciliation, not declared completed or blindly retried. Observations use distinct immutable filenames and predecessor refs.
 
-Repository observation records canonical cwd/root, HEAD (explicitly null for an unborn repository), index/worktree diff digests, and an untracked content manifest. Runtime Artifact directories are excluded from the observed workload. Two matching observations detect intervening changes but do not claim filesystem atomicity; unavailable/unstable observation fails closed. Tracked gitlinks/submodules are unsupported and rejected before dispatch rather than pretending that a parent-repository dirty marker identifies their content. Observations distinguish `launchStatus` unknown/observed/not-started; only an explicit adapter guarantee that no request was emitted may establish not-started. Public request correlation is fixed before the Worker call, and requestId is never substituted for runId.
+Git observation records canonical cwd/root, HEAD (explicitly null for an unborn repository), index/worktree diff digests and an untracked content manifest. Filesystem observation binds normalized relative paths/types/modes/content hashes or symlink targets without escaping root, retained baseline bytes and added/modified/deleted-file evidence. Non-Git is first-class, not absence of authority. Runtime Artifact directories are excluded from the observed workload. Two matching observations detect intervening changes but do not claim filesystem atomicity; unavailable/unstable observation fails closed. Tracked gitlinks/submodules are unsupported and rejected before dispatch rather than pretending that a parent-repository dirty marker identifies their content. Observations distinguish `launchStatus` unknown/observed/not-started; only an explicit adapter guarantee that no request was emitted may establish not-started. Public request correlation is fixed before the Worker call, and requestId is never substituted for runId.
 
-Phase C defines and produces this evidence and refuses blind duplicate dispatch. ORCH-018 owns status queries, orphan matching, evidence reconstruction, and normal recovery transitions; this section does not move the full resume controller into Phase C.
+Normal runtime produces this evidence and refuses blind duplicate dispatch. Separate recovery owns exact status/receipt/output reconciliation and orphan matching before normal continuation. Public lifecycle v3 identities and full output are validated; truncated/display text, issued stop and timeout are not terminal proof. Upstream background survival/revival grants no recovery authority; failureKind is used only in public modes that expose it.
 
 ## 7. Decision Artifact Header
 
-All Jev decision artifacts must include:
+Coding decision artifacts carry the following header; all families share the same schema/input/policy/configuration/classifier identity principles:
 
 ```ts
 export interface DecisionArtifactHeader {
@@ -128,9 +136,11 @@ export interface DecisionArtifactHeader {
   configurationDigest: string;
   inputDigest: string;
 
-  jevModel?: string;
+  classifier?: { provider: string; modelId: string };
 }
 ```
+
+This is the coding decision header. Pre-plan conditional-stage/clarification-mode/development-method evidence additionally binds family/stage/policy/accumulated input identity and explicitly absent Plan authority; it must not fabricate an approved Plan version. Native classifier identity is mandatory when called, while deterministic required/skip/explicit method decisions record no call.
 
 ## 8. Decision Freshness
 
@@ -141,15 +151,16 @@ A persisted Jev decision is reusable only when all relevant fields match current
 - input implementation revision (0 before initial implementation) and exact implementation ref when present
 - exact input artifact references / hashes and `inputDigest`
 - policy version and `policyDigest`
-- relevant non-secret `configurationDigest`
+- relevant non-secret configurationDigest and classifier provider/model identity
+- accumulated stage/clarification/document/method evidence and execution-relevant launch identity where applicable
 
 `inputDigest` is computed from a deterministic serialization of the assembled bounded request, including branch, excerpts/provenance, retry counters, previous decision identity, and other relevant State inputs. Policy/configuration digests include the evidence-bounding rules and execution/decision policies; secret values are never included or persisted.
 
-These checks apply to execution-routing as well as finding/round decisions, on normal reuse paths as well as ORCH-018 resume. Missing fields, changed context/counts/profile constraints, or a changed input implementation revision make a decision stale. Do not copy an old outcome under a new header to manufacture freshness. Runtime re-evaluates under current authority or blocks before Worker launch; a new decision Artifact and State must persist first. Re-evaluation cannot downgrade a required stronger retry.
+These checks apply to execution-routing as well as finding/round decisions, on normal reuse paths as well as recovery reconciliation. Missing fields, changed context/counts/profile constraints, or a changed input implementation revision make a decision stale. Do not copy an old outcome under a new header to manufacture freshness. Runtime re-evaluates under current authority or blocks before Worker launch; a new decision Artifact and State must persist first. Re-evaluation cannot downgrade a required stronger retry.
 
 Previous round decision evidence remains linked in durable history when current-round State refs are cleared. Historical decisions may inform a new request but cannot authorize it merely by being referenced. A deterministic stronger-routing record also binds its source round decision and current input identity.
 
-Freshness production and normal-path rejection are Phase C requirements. Full discovery/reuse/re-evaluation control during resume remains ORCH-018.
+Normal runners produce and reject stale evidence; separate recovery discovers/reconciles historical evidence before normal driver continuation.
 
 ## 9. Workflow Lock
 
@@ -207,11 +218,11 @@ persist State
 
 ### gathering-context / planning / reviewing
 
-These are non-mutating child-agent stages.
+Read-only child output is reconciled against exact historical request/run/launch/receipt identity. All conditional decisions are sequential accumulated-evidence artifacts; missing legacy flags/identity cannot default to skip. Reuse Scout/Diagnosis/Research/simplicity output only when provenance/hash/policy inputs remain valid.
 
-Resolved planning policy (`researchRequired`, `clarificationRequired`, `architectureRequired`) is durable State and survives `BLOCK_RESOLVED`. Resume must not recompute it from absent transient hints. Missing legacy policy requires explicit recovery; phase runners fail closed rather than treating it as skip. Persisted scout/research refs are reused.
+Missing output alone is not permission to relaunch. Reconcile public status first: running means wait, completed means recover exact full output, ambiguous means block. A safe new read-only attempt is allowed only when prior dispatch is resolved/excluded, current launch policy verified and new intent persisted. Changed model/skills/tools/Agent definition must not silently replace historical identity.
 
-If the required output artifact is missing, a safe rerun is allowed.
+Planning preserves same-cycle one-shot refinement consumption, requires exact fresh simplicity review after any Plan change and method/Test Seam readiness before Human Gate.
 
 ### implementing / fixing
 
@@ -231,7 +242,7 @@ Otherwise deterministic validation may be rerun.
 
 ### awaiting-plan-review
 
-Reconcile the persisted Plannotator review identity plus its exact `planning.planReview` binding (`reviewId`, `planRef`, `planVersion`). Check both against the current Plan and versioned external identity before polling or applying a result. A legacy identity without the exact binding is insufficient; do not attach its result to the current Plan.
+Reconcile the persisted Plannotator review identity plus its exact `planning.planReview` binding (reviewId, exact planRef, planVersion, simplicityReviewRef). Require the current Plan's exact fresh simplicity and review readiness as well as Human identity. Check both against the current Plan and versioned external identity before polling or applying a result. A legacy identity without the exact binding is insufficient; do not attach its result to the current Plan.
 
 If an authoritative settled review result is available, persist it and emit the normal Plan event. Persist `latestPlanReviewRef` for both approval and feedback. An identical already-applied result returns the current State unchanged after ordinary phase advancement or blocking, while its settled ref remains current; in-memory State snapshots cannot restore authority. Explicit authority invalidation is an exception: `REPLAN_REQUIRED` clears the settled ref, so the old approval is rejected as stale even before the next Plan is created. It must never restore `approvedPlanRef`.
 
@@ -241,9 +252,17 @@ Never infer approval from disappearance or UI state.
 
 ### awaiting-code-review
 
-Require the persisted `coding.codeReview` tuple (`reviewId`, exact implementationRef, implementationRevision), matching external index and current implementation, before polling or applying a result. Identity-only State is insufficient. Neither fresh adapter memory nor current State may be used to rebind an unbound historical result.
+Code Review is synchronous and has no external reviewId/status polling. Require the pre-persisted local code-review-attempt binding (workflowId/local attemptId/exact implementationRef/revision/review source) before applying any settled result. Verify unchanged current source/patch; legacy external code identities cannot be translated into local authority.
 
-An existing identity/binding must be reconciled without automatic reopen/overwrite, even when status is unknown. Missing/conflicting bindings fail closed for explicit recovery. A new open is allowed only for a current revision without a prior identity/binding or unresolved review ambiguity. Settled-result persistence, duplicate behavior, and invalidation follow [Human Code Gate](./coding-orchestration.md#15-human-code-gate). Full orphan recovery remains ORCH-018.
+A valid durable settled result can resume normal CODE_APPROVED/CODE_FEEDBACK application with idempotency. Pending local intent after a lost response stays blocked for explicit recovery, never inferred approval or automatic reopen/fake review-status. A new Gate is allowed only after prior ambiguity is safely resolved and current source verified. Human review duration is not a five-second timeout. See [Plannotator](./plannotator.md).
+
+### clarifying / document writes / advisory / deviation
+
+Root clarification requests and confirmed Human answers bind exact mode/source State/input refs. GRILL_WITH_DOCS before/intent/after records are mutation evidence: incomplete outcome blocks blind repeat, path grant remains narrow, source mutation never permitted. Missing answer/document refs cannot be reconstructed from file existence.
+
+Oracle attempts bind trigger/budget/input/launch/output and remain advisory-only on restart. Timeout/uncertain advice never grants authority or refunds an unknown attempt. Reuse only exact valid evidence; no mandatory consultation loop.
+
+Material deviation retains stopped Worker/workspace evidence, invalidates active approval/routing/review/gate authority and continues Planning -> simplicity -> Human Gate. Never resurrect old approval or infer a rollback.
 
 ### blocked
 
@@ -305,9 +324,9 @@ during Plan review
 during Code review
 ```
 
-Phase B must already test the planning-specific subset: missing/stale review binding after adapter restart, duplicate settled results after State advancement, durable resolved planning policy after `BLOCK_RESOLVED`, existing-identity reconciliation without reopen, Plan State save failure before gate open, and identity save failure after external open. These tests exercise the ORCH-007–009 contracts without requiring the full ORCH-018 resume controller. See [Phase B acceptance criteria](../implementation/implementation-plan.md#phase-b--planning-orchestration).
+Each child Issue tests its producer-side persistence barriers before final recovery/smoke integration. Cover missing/stale async Plan binding after restart, duplicate results against current State, sequential durable routing after BLOCK_RESOLVED, fresh simplicity/refinement cap, gate intent/binding save failure, exact launch/model/skill/tool drift, classifier consent reservation failure, clarification document partial writes and local synchronous Code attempt/result/source failures.
 
-Phase C must already test producer-side persistence barriers, normal decision freshness reuse, exact Code Review binding after adapter restart, and timeout/failure evidence retention. Tests must demonstrate that a failed routing/intent/identity State write prevents the next side effect. These are not the full ORCH-018 phase-specific resume/fault suite.
+A failed routing/intent/launch/reservation/local-gate State write starts zero downstream calls. Failure after possible Worker/document mutation or lost Human Code response blocks instead of relaunch/reopen. Final #12 recovery/fault/host tests integrate these contracts; no third-party modification is permitted.
 
 Primary safety assertions:
 

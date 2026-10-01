@@ -1,12 +1,12 @@
 # Coding Orchestration Detailed Design
 
-Version: 1.2
+Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Purpose
 
-This document defines Coding Orchestration for pi-orchestrator's Initial Scope.
+This document defines the v1 target Coding Orchestration; existing v0.1.0 behavior is not proof of redesign completion. v1 contains exactly one Coding Orchestration.
 
-The Initial Scope contains exactly one Coding Orchestration.
+Production baseline: Pi >=0.99.1 / pi-subagents >=0.74.0; pi-typesafe >=0.8.1 is transitional only until #19 migrates every Jev path to Pi native classifiers. All child execution uses the orchestrator-owned Agent Launch Policy / public preflight (#21).
 
 ## 2. Pipeline
 
@@ -93,7 +93,7 @@ interface ExecutionRoutingInput {
 
 Before every reuse, including ordinary Fix and restart, runtime validates the complete [decision freshness header](./persistence-recovery.md#8-decision-freshness): schema / decision schema, Plan version, input implementation revision, exact input refs and input digest, policy digest, and configuration digest. Matching only the approved Plan is insufficient. Missing fields are stale, not legacy defaults.
 
-A changed implementation revision, context, retry count, or relevant configuration requires a new immutable decision for the new input, followed by State persistence before Worker dispatch. Re-evaluation must not downgrade an already-required stronger profile; deterministic stronger-retry authority remains a lower bound. Full resume orchestration remains ORCH-018; this check already applies to Phase C's normal reuse paths.
+A changed implementation revision, context, retry count, or relevant configuration requires a new immutable decision for the new input, followed by State persistence before Worker dispatch. Re-evaluation must not downgrade an already-required stronger profile; deterministic stronger-retry authority remains a lower bound. Separate recovery reconciles before same-driver continuation; this freshness check also applies to every normal reuse path.
 
 ## 4. Execution Routing Confidence
 
@@ -113,7 +113,17 @@ export interface WorkerInput {
 }
 ```
 
-Worker must not make unapproved Product / Architecture / Scope decisions.
+Worker is the automated implementation executor only after exact Human Plan Approval. Approved Plan is an implementation strategy/boundary, not a frozen execution recipe. Worker may choose local internal details preserving approved approach/scope/design; unapproved Product / Architecture / Scope decisions remain forbidden.
+
+### Development Method / explicit skills
+
+Worker input also carries the approved Development Method and Test Seams when TDD, verified from the exact approved Plan, not supplied by ambient hints. Launch Policy explicitly selects `tdd` through public pi-subagents skill selection with `inheritSkills: false`; supporting `codebase-design` is optional and explicitly selected when required. Missing required skill blocks before dispatch. TDD uses vertical RED -> minimal GREEN slices and does not replace deterministic Validation.
+
+### Material Plan deviation (#15)
+
+New unauthorized component/dependency, public API change, architecture boundary change, scope broadening or Development Method/Test Seam/Validation change is material. Worker stops before knowingly implementing it; persist deviation Artifact bound to exact Plan/attempt/input and observed workspace changes, then State before any next effect. `PLAN_DEVIATION_REPORTED` invalidates approval/current routing/review/gate authority and returns to Planning.
+
+Optional bounded read-only builtin Oracle advice may analyze deviation, but core stop/replan must work without it. New Planner -> deterministic Plan validation -> fresh Plan Simplicity Review -> optional one-shot refinement -> Human Plan Gate is required before continuation. Existing local mutation remains historical evidence; no blind relaunch/rollback or stale authority reuse.
 
 ## 6. Implementation Artifact
 
@@ -125,19 +135,19 @@ The artifact should include at least:
 - subagent run ID when available
 - approved Plan reference
 - accepted findings reference when fixing
-- resolved concrete execution profile
-- repository / diff identity sufficient for reconciliation
+- resolved concrete execution profile and exact Agent Launch Policy/preflight/actual receipt identity (physical model/thinking/skills/effective tools/Agent definition/package/lifecycle/launch digest)
+- Git or filesystem workspace before/after content identity sufficient for reconciliation and review; non-Git is first-class
 - exact input implementationRef / revision, routing ref, Human Code Feedback ref when present, and the durable Worker attempt identity
 
 ### Worker Lifecycle Evidence (I2)
 
-Success output alone is insufficient. Before dispatch, persist an immutable attempt intent and its State reference, binding the workflow/attempt, approved Plan, input and target implementation revisions, input refs, resolved profile, repository identity, pre-run mutation baseline, and public request correlation identity. Persist routing Artifact and State first, then attempt intent and State, then dispatch.
+Success output alone is insufficient. Before dispatch, persist a verified public preflight projection, immutable attempt intent and State references, binding the workflow/attempt, approved strategy/method/seams, input and target implementation revisions, input refs, resolved launch/profile, Git/filesystem workspace identity, pre-run mutation baseline, and public request correlation identity. Persist routing Artifact and State first, then attempt intent and State, then dispatch.
 
 Persist the exact external runId as soon as the public integration exposes it. A requestId is not a runId. If runId is only returned at completion, keep the pre-dispatch correlation identity and explicit `unknown` launch/run status; do not invent an early run handle or require a third-party API change.
 
 Persist success, failure, timeout, and ambiguous completion evidence, including known runId and observable repository changes, before the next stage. Worker prose hashes do not identify repository contents. An unresolved attempt prevents another Worker dispatch; ambiguity produces `BLOCK`, not guessed success or automatic relaunch. See [durable attempt contract](./persistence-recovery.md#61-worker-attempt-evidence-i2).
 
-Phase C produces evidence and enforces these barriers. Exact external-status reconciliation, orphan discovery, and recovery decisions remain ORCH-018.
+The normal driver produces evidence and enforces these barriers. Separate recovery reconciles exact historical launch/receipt/status/output before normal continuation; changed model/thinking/skills/tools/definition/digest cannot silently become an equivalent attempt. Truncated/display output, timeout and stop request are not terminal success proof. Workflow-specific failureKind is used only where the selected public mode exposes it; it is not required for single-agent completion.
 
 ## 7. Validation
 
@@ -296,7 +306,7 @@ Required evidence that is unavailable or cannot fit without dropping decision-cr
 
 ## 10. Accepted Findings
 
-Only `accepted-findings-N.json` is Fix Authority.
+Only the exact current accepted-findings Artifact is automated Finding Fix Authority under the currently approved strategy. Plan Simplicity findings are pre-code strategy evidence, not this post-code Fix set; Oracle advice is never Fix Authority.
 
 Raw findings and Jev raw output are not Fix Authority.
 
@@ -350,7 +360,7 @@ Human Code Approval is outside Round Decision and remains mandatory.
 
 ## 12. Escalation Mapping
 
-The Initial Scope uses deterministic mapping:
+v1 uses deterministic mapping; hard escalation may additionally request bounded read-only builtin Oracle advice without changing authority:
 
 ```text
 implementation-capability
@@ -418,34 +428,22 @@ No silent extra loop is allowed.
 
 ## 15. Human Code Gate
 
-`COMPLETE` means the automated coding stage is clean, not workflow completion.
-
-```text
-REVIEW_COMPLETE
-→ awaiting-code-review
-→ Plannotator Code Review
-```
-
-Human feedback:
-
-```text
-CODE_FEEDBACK
-→ fixing
-```
-
-Human approval:
-
-```text
-CODE_APPROVED
-→ completed
-```
+COMPLETE means automated coding is clean, not workflow completion. Every playbook requires REVIEW_COMPLETE -> awaiting-code-review -> synchronous Plannotator Code Review -> durable CODE_APPROVED -> completed. Exact-bound CODE_FEEDBACK returns to fixing with only the Human feedback counter charged.
 
 ### Durable Code Review Binding (B5)
 
-Code Review identity is `reviewId + exact implementationRef + implementationRevision`. Exact ref equality includes kind, path, schemaVersion, and sha256. Persist `coding.codeReview` and `external["plannotator.code-review.rN"]` together after open and before returning a usable handle or polling/applying a result. Identity persistence failure stops processing; adapter memory is not durable authority.
+Code Review public contract is synchronous `{ approved, feedback?, annotations? }`, with cwd/VCS options or static patchFile inputs. It has **no external reviewId/status-polling contract**; Human review duration is not a five-second integration timeout. Plan Gate remains async. See [Plannotator Detailed Design](./plannotator.md).
 
-Both direct apply and reconciliation validate the stored tuple, external index, and current implementation. Missing binding (including identity-only legacy State), mismatched ID/ref/hash/revision, or an externally supplied conflicting binding fails closed. Never attach an old/unbound result to the current implementation, even with a fresh adapter. A public result that omits implementation metadata is usable only through the exact previously persisted binding, not one synthesized from current State.
+BEFORE request, persist immutable code-review-attempt binding `workflowId + local attemptId + exact implementationRef + implementationRevision + review source`, then State. Exact ref includes kind/path/schemaVersion/sha256. Git source binds pinned mode/base and current workspace identity; non-Git binds generated static patch path/hash and before/after filesystem snapshots with retained baseline contents.
 
-Existing identity/binding is reconciled, not blindly reopened/overwritten; unknown status does not imply approval or permission to reopen. Persist the settled artifact before `CODE_APPROVED` / `CODE_FEEDBACK`, then State before the next side effect. Identical already-applied results are no-ops against current persisted State; changed results for the same settled identity are rejected. A new implementation revision clears the current binding and settled ref, retains history, and requires a new Human Code Gate.
+Call the actual public payload; don't send private implementation metadata or require third-party response fields. Bind settled result to that original durable local attempt, validate current implementation and unchanged source/patch before result Artifact -> CODE_APPROVED/CODE_FEEDBACK -> State -> continuation. Save failure starts no request/result application; adapter memory cannot replace binding.
 
-This is an orchestrator-owned binding, not a change to the third-party Plannotator contract. Full orphan-review recovery remains ORCH-018.
+Missing/mismatched local attempt, old revision/different digest, source drift, legacy external Code identity or lost synchronous result fails closed. No fabricated review-status queries, inferred approval or automatic reopen on restart. An unresolved local attempt is a recovery barrier. Identical durable settled duplicates preserve current State without events/writes; changed results reject. New implementation invalidates current attempt/result and requires a new Code Gate.
+
+These are orchestrator-owned safety contracts, not third-party changes. Worker local freedom never bypasses exact Human Code Approval.
+
+## 16. Optional Oracle escalation / normal continuation
+
+Oracle is builtin, bounded, rare and read-only; save trigger/finite budget/input/launch intent before dispatch and advisory output before reuse. Difficult diagnosis/design/deviation/post-code questions may use advice, but Oracle cannot mutate State/files, approve Plan/Code, grant implementation/Fix authority or bypass any deterministic hard rule. Missing/uncertain advice follows existing replan/Human attention paths.
+
+Normal coding transitions continue through driveWorkflow() until genuine Human/external wait, blocked, failed or completed. /wf-resume performs reconciliation then calls the same driver; it is not ordinary phase-stepping.

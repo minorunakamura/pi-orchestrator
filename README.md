@@ -1,198 +1,148 @@
 # pi-orchestrator
 
-Pi 上で開発作業を安全な workflow として実行する v0.1.0 Extension です。
-State / Artifact / Decision / Human Gate を分離し、Planning から Coding、Validation、Review、Resume までを一つの bounded な Coding Orchestration として扱います。
+Pi 上の開発 workflow を State / Artifact / Decision / Human Gate に分離して安全に実行する Extension です。Orchestrator が lifecycle と authority を所有し、Human-approved strategy の範囲内で Worker が実装します。
 
-Initial Scope は **Release Candidate PASS** 済みです。実装範囲と検証結果は [v0.1.0 release evidence](./docs/release/v0.1.0.md)、利用者向け変更点は [CHANGELOG](./CHANGELOG.md) を参照してください。
+## Design status / release status
+
+この README と canonical design は [Issue #3](https://github.com/minorunakamura/pi-orchestrator/issues/3) の **v1 target runtime** を記述します。文書更新は redesigned runtime の実装・production 検証完了を意味しません。
+
+現在の package/release は v0.1.0。過去の Release Candidate PASS は [v0.1.0 release evidence](./docs/release/v0.1.0.md) / [CHANGELOG](./CHANGELOG.md) の範囲だけです。v1 の実装順・未完了作業は [Issue #13](https://github.com/minorunakamura/pi-orchestrator/issues/13) / [Implementation Plan](./docs/implementation/implementation-plan.md) を参照してください。release evidence / CHANGELOG は後続実装と production-path validation 合格後だけ更新します。
 
 ## Installation
 
-GitHub の release tag から Pi に追加する場合:
+既存 release:
 
 ```sh
 pi install git:github.com/minorunakamura/pi-orchestrator@v0.1.0
 ```
 
-ローカル checkout を使う場合:
+ローカル checkout:
 
 ```sh
 pi install ./path/to/pi-orchestrator
 ```
 
-Package は `pi.extensions` の `./src/index.ts` を Extension entry として読み込み、`pi-subagents.agents` の `./agents` から次の product custom Agents を公開します。
+Pi loader は `pi.extensions: ./src/index.ts` の TypeScript source を読み込みます。別の compiled output は同梱しません。package の product custom Agents は agents/ に配置します。
 
-- `workflow-scout` — repository-local evidence gathering
-- `planner` — Plan / Architecture / Validation Contract の作成
-- `ponytail-reviewer` — structured simplicity findings
+## v1 production requirements / public integrations
 
-`src/` は Pi の package loader が読み込む TypeScript source です。この package は別の compiled output を同梱しません。
+- Node.js >=22.19.0
+- pnpm >=11.22.0 <12
 
-## Requirements and integrations
+| Component | v1 contract |
+| --- | --- |
+| Pi / @earendil-works/pi-coding-agent | **>=0.99.1**、host peer dependency |
+| pi-subagents | **>=0.74.0**、released public single-agent RPC / preflight / lifecycle v3 |
+| pi-typesafe | **>=0.8.1 transitional only until #19**、native classifier 移行後は direct dependency 削除 |
+| @plannotator/pi-extension | mandatory Human Plan/Code UI、Plan async / Code synchronous public contract |
+| [minorunakamura/pi-ketch](https://github.com/minorunakamura/pi-ketch) | conditional Research、pi-ketch.researcher。Same-name npm package は別契約 |
+| [minorunakamura/pi-ask-user-question](https://github.com/minorunakamura/pi-ask-user-question) | root/Main の Human clarification。Same-name npm askUserQuestion は代替ではない |
 
-- Node.js `>=22.19.0`
-- pnpm `>=11.22.0 <12`（CI / `mise.toml` は `11.22.0`、この checkout の lockfile 解決値は `11.28.0`）
+#18 が package/lockfile/platform を更新し、#19 が Jev decision transport を Pi native classifiers（default `typesafe/jev-latest`）へ移行します。現行コードは旧 platform/direct adapter を含み、この設計更新だけで baseline 適用済みとはしません。
 
-Pi / external component:
+All child roles use explicit orchestrator Agent Launch Policy (#21): public preflight で resolved physical model/thinking、explicit skills、effective callable tools、Agent definition digest、inheritance/trust、package/lifecycle/launch digest を検証・保存します。ambient capabilities を仮定せず、changed model/skill/tool/definition を同じ attempt と扱いません。
 
-| Component | 必要度 | 備考 |
-| --- | --- | --- |
-| [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi) | 必須 | `0.87.1` で smoke 検証済み |
-| [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | 必須 | Agent 実行環境 |
-| [`@plannotator/pi-extension`](https://github.com/backnotprop/plannotator/tree/main/apps/pi-extension) | 完了に必須 | Plan Gate / Code Gate |
-| [`pi-typesafe`](https://github.com/DevMortimer/pi-typesafe) | Jev 利用に必須 | API credentials は supported credential source で設定 |
-| [`pi-ketch`](https://github.com/minorunakamura/pi-ketch) | Research 時のみ | `pi-ketch.researcher` |
-| [`pi-ask-user-question`](https://github.com/minorunakamura/pi-ask-user-question) | Clarification 時のみ | Main Pi Agent の `ask_user_question` |
+Third-party package の変更/patch/fork/private API 利用は禁止。released contract で安全に実現できない経路は blocked/unsupported。Virtual Models は v1 execution authority ではなく Future Scope。Codemode (#20) は verified bounded read-only child capability のみで、lifecycle/approval を所有しません。
 
-CodeGraph CLI は package dependency ではなく、任意の開発・調査用 local tool です。
+## Skills / roles
 
-Skills:
+| Capability | Role |
+| --- | --- |
+| grilling | GRILL_ME / GRILL_WITH_DOCS の root/Main Human interaction |
+| domain-modeling | **GRILL_WITH_DOCS のみ**、narrowly authorized CONTEXT/ADR writes。standalone Stage ではない |
+| tdd | selected TDD Worker が public skill selection で明示取得。builtin inheritance を仮定しない |
+| codebase-design | optional supporting Test Seam/interface vocabulary |
+| ponytail-reviewer | post-code actual implementation simplicity findings |
+| plan-simplicity-reviewer | required pre-Human strategy review、repository evidence 必須 (#14) |
+| builtin oracle | rare bounded read-only advisory、approval/Fix/State authority なし (#17) |
 
-| Skill | 必要度 | 備考 |
-| --- | --- | --- |
-| [`ponytail`](https://github.com/DietrichGebert/ponytail) | Workflow review 時 | `ponytail-reviewer` の simplicity / over-engineering policy。custom Agent に反映 |
-| [`grilling`](https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling) | Clarification 時 | Main Pi Agent の Human clarification |
-| [`domain-modeling`](https://github.com/mattpocock/skills/tree/main/skills/engineering/domain-modeling) | 任意（開発・設計用） | product workflow では自動ロードしない |
-| [`tdd`](https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd) | 任意（開発用） | product workflow では自動ロードしない |
+Skills は JavaScript runtime dependencies ではありません。wrapper grill-me/grill-with-docs が unsupported/disabled の場合、underlying grilling/domain-modeling skills を直接使えます。CodeGraph は任意の開発調査 tool、Herdr は real Pi test harness のみです。
 
-`grilling` は Clarification の workflow で Main Pi Agent が利用します。`ponytail` の review role は package の custom `ponytail-reviewer` が担当します。`domain-modeling` と `tdd` は開発・設計用です。これらは JavaScript runtime dependency ではありません。
-
-## Commands
-
-```text
-/wf-new <task>       # new-project workflow
-/wf-feature <task>   # feature workflow
-/wf-bugfix <task>    # bugfix workflow
-/wf-hotfix <task>    # hotfix workflow
-/wf-chore <task>     # chore workflow
-/wf-resume <id>      # reconcile して安全に再開
-/wf-status <id>      # read-only status
-```
-
-Workflow は通常 `.pi/orchestrator/runs/<workflow-id>/` に State と immutable Artifacts を保存します。`/wf-status` は State と安全に公開できる identity / Artifact refs の projection のみを表示し、State を変更しません。
-
-## Workflow lifecycle
+## Commands / normal lifecycle
 
 ```text
-/wf-*
-  → Context Gathering
-  → Clarification（必要時、Human）
-  → Planning
-  → Human Plan Gate（Plannotator）
-  → Jev Execution Routing
-  → Worker
-  → Deterministic Validation
-  → Correctness / Ponytail Review
-  → Jev Finding Evaluation / Round Decision
-  → bounded retry / escalation
-  → Human Code Gate（Plannotator）
-  → completed
+/wf-new <task>       # new-project
+/wf-feature <task>
+/wf-bugfix <task>
+/wf-hotfix <task>
+/wf-chore <task>
+/wf-resume <id>      # recovery reconciliation + normal continuation
+/wf-status <id>      # read-only
 ```
 
-### Human Plan Gate
+v1 normal driver は pi-orchestrator の driveWorkflow() が所有します。single /wf-* invocation は genuine Human/external wait、blocked、failed、completed まで進み、accepted Human/child result は同じ driver で continuation します。繰り返し /wf-resume を使う phase-stepping は通常 progress ではなく、pi-subagents workflow scripts に control plane を移しません。
 
-Planner の Plan Artifact は、Human が Plannotator で承認するまで Implementation Authority になりません。Feedback は immutable な `plan-vN+1.md` を作り、旧 Plan の approval を再利用しません。
-
-### Coding / Validation / Review
-
-Approved Plan の Validation Contract が実行対象の正本です。Validation の pass/fail は deterministic executor が判定し、Jev が代替することはありません。Validation が通った round では Correctness Reviewer と `ponytail-reviewer` が structured findings を生成し、accepted findings だけが Worker Fix Authority になります。
-
-### Jev decision policy
-
-Jev は Initial Scope で次だけに使います。
-
-- Coding Entry Routing
-- Finding Evaluation
-- Post-Implementation Round Decision
-
-Jev の output は State を直接変更しません。typed decision を deterministic policy で検証してから transition に変換します。Jev unavailable / invalid response / budget denial は automatic LLM fallback せず `blocked` にします。
-
-### Human Code Gate
-
-Round が完了しても `completed` にはなりません。Plannotator の Code Review identity を exact implementation Artifact / revision に bind し、Human の Code Approval を永続化してから `completed` へ進みます。
-
-## Resume and reconciliation
-
-`/wf-resume <workflow-id>` は現在の phase を盲目的に再実行する command ではありません。Persisted State、authoritative Artifacts、decision freshness、外部 review / Worker identity を検証し、再開可能な次の action を reconcile します。
-
-- State / Artifact の永続化成功前に次の side effect を開始しません。
-- Worker の dispatch が曖昧な場合は duplicate mutation を避けて `blocked` にします。
-- Jev / Plannotator / pi-subagents の一時的な利用不能は `blocked` とし、復旧後に再度 `/wf-resume` します。
-- State / authority / artifact を安全に再構成できない場合だけ terminal `failed` になります。
-- stale Jev decision、stale Plan / implementation / review binding は再利用しません。
-
-## Configuration
-
-Pi の既存 settings boundary を使います。
-
-- global: `<agent-dir>/settings.json`
-- project: `<project>/.pi/settings.json`（project trust 後のみ）
-- project settings は Pi の既存 precedence に従い、global settings を deep override します。
-
-`piOrchestrator` は non-secret configuration のみを受け取ります。必須の decision / execution profile / reasoning mapping が欠ける、または未知の Future Scope setting を含む場合は fail-closed します。retry の既定値は automated fix 3 回、stronger retry 1 回です。
-
-最小構成の形:
-
-```json
-{
-  "piOrchestrator": {
-    "decision": {
-      "autoDecisionThreshold": 0.8,
-      "escalationThreshold": 0.5
-    },
-    "executionProfiles": {
-      "ECONOMY": { "provider": "<provider>", "model": "<model>" },
-      "STANDARD": { "provider": "<provider>", "model": "<model>" },
-      "STRONG": { "provider": "<provider>", "model": "<model>" }
-    },
-    "reasoningMapping": {
-      "LOW": "low",
-      "MEDIUM": "medium",
-      "HIGH": "high"
-    },
-    "retries": {
-      "maxAutomatedFixRounds": 3,
-      "maxStrongerRetries": 1
-    },
-    "validation": {
-      "stopOnInfrastructureFailure": true
-    },
-    "jev": {
-      "endpoint": "https://api.typesafe.ai"
-    }
-  }
-}
+```text
+Task -> Scout -> Diagnosis? (bugfix/hotfix required)
+ -> conditional Research
+ -> Clarification: SKIP | GRILL_ME | GRILL_WITH_DOCS | ESCALATE
+ -> conditional Architecture -> Development Method STANDARD | TDD
+ -> Planner -> deterministic Plan validation
+ -> Plan Simplicity Review -> optional one-shot refinement/fresh review
+ -> Human Plan Gate (all playbooks required)
+ -> Jev Execution Routing -> Worker
+      -> material deviation: stop/evidence -> replan/simplicity/Human approval
+ -> deterministic Validation -> Correctness + Ponytail
+ -> Finding Evaluation / Round Decision -> bounded retry/escalation
+ -> Human Code Gate (all playbooks required) -> completed
 ```
 
-Live Jev を使うには、さらに `jev.runtimePolicy` に有限の `maxRequests` と、次の scope に一致する operator consent が必要です。
+Oracle は difficult Diagnosis/Architecture/strategy disagreement/deviation/post-code escalation の optional advisory で、mandatory stage ではありません。
 
-- exact `workflowId`
-- exact absolute `projectRoot`
-- exact `destination`
-- `policyVersion` / consent identity
-- 送信を許可する evidence categories
+## Sequential evidence / Human clarification
 
-`runtimePolicy` の欠落、失効、scope 不一致、budget exhaustion、reservation の永続化失敗は network request を行わず `blocked` にします。`/typesafe enable`、API key の存在、Plan approval、Jev confidence はこの Product Runtime consent の代わりになりません。API key、auth header、secret URL を State / Artifact / task text に保存しないでください。
+required → RUN、skip → SKIP は deterministic。Jev は conditional → RUN/SKIP/ESCALATE のみ route し、low confidence を silent skip にしません。Research/Clarification/Architecture は accumulated durable Scout/Diagnosis/Research/Human evidence を sequential に使います。
 
-## Initial Scope and known constraints
+GRILL_ME は root/Main + grilling + ask_user_question。GRILL_WITH_DOCS はさらに domain-modeling。Jev は mode を選べても Human-facing question/answer は生成しません。
 
-Initial Scope は次を含みません。
+Allowed document candidates: CONTEXT.md、CONTEXT-MAP.md、nested CONTEXT.md、docs/adr/*.md / nested docs/adr/*.md。Orchestrator が active clarification に bind した **exact path scope / intent / before identity を write 前に**保存し、after identity/diff/answer evidence を保存します。source/config/implementation mutation は Main に許可されず、docs exception も implementation authority ではありません。
 
-- 複数 Worker branch / Work Package の並列実行
-- 複数 Coding Orchestration の同時実行
-- Future Scope の Context Routing、Jev による Conditional Stage 判定、任意の Escalation Target 選択
-- Validation Failure の semantic classifier
-- 外部 package の patch / fork / private API modification
+## Plan strategy / simplicity / TDD / Worker boundary
 
-Agent は `pi-subagents` の公開 async RPC (`subagents:rpc:v1:request` の `spawn`) で起動し、返された exact run ID に対応する `subagent:async-complete` で完了を確認します。永続化対象の planning Agent は指定した出力ファイルを通常完了・復旧の共通の正本として読みます（通知の `results[].output` に付く保存先案内を成果物へ取り込まない）。それ以外は `results[].output` を使用します。ArtifactStore で検証した入力本文を渡し、Supervisor 質問中は同じ run の完了を待ちます。表示用 summary は成果物に使用せず、timeout は終了・取消の証拠として扱いません。待機は既定で5分の deadline に含まれます。
+Plan は frozen editing recipe ではなく approved implementation strategy/boundary。必須 content:
 
-scout / researcher / planner は、起動前に `planning.agentAttempts` へ stage・dispatch identity・入力 refs/hash を保存し、起動後に exact run ID・session identity・launch digest・公開 async directory・出力先を保存します。`/wf-resume` は公開 `status.json`（lifecycle artifact version 3）を照合し、実行中は `pending`、成功完了なら同じ run の出力を回収します。最終出力先は公開 `output` パラメータで指定した Workflow directory 内の `agent-runs/<requestId>.md` です。このファイル自体は Workflow の承認・authority ではなく、検証後の immutable artifact と State transition が authority を持ちます。
+- Scope / Requirements、Architecture / Design when required
+- Implementation Approach、Expected Change Surface
+- New Components、New Dependencies、Non-goals
+- Development Method STANDARD/TDD、Test Seams when TDD
+- machine-readable Validation Contract
 
-identity 保存前の中断、旧 State の未記録 run、artifact 欠落・改変・対応外の lifecycle version は推測で再起動せず `blocked` にします。公開ファイルが保持されていることが復旧条件です。Supervisor 返信の宛先は元の Pi session のままで、別 session への引き継ぎは行いません。Worker / reviewer の中断復旧は今回の planning receipt 対応に含めず、retained child や orphan Worker を推測して再利用しません。State 書き込み中のクラッシュで残る Workflow lock や、孤児の Human Gate も自動解除・再作成しません。Human Plan Gate と Human Code Gate は常に Human interaction が必要で、Jev や Agent が代替することはありません。
+Exact Plan hash/version が authority。required read-only Plan Simplicity Review は不要な abstractions/flexibility/dependencies、ignored repository patterns、過大な surface を evidence-backed findings として提示し、自動 refinement は1回まで。Any Plan change は simplicity/approval を stale にし、残る findings は Human-visible。
 
-Herdr は real Pi smoke 用の開発・検証 harness であり、pi-orchestrator の runtime dependency ではありません。real Pi smoke は Herdr の新しい tab で実行し、`tmux` はサポート topology ではありません。
+Explicit Human TDD request → deterministic TDD。Clearly inapplicable behavior-free work → STANDARD。それ以外の eligible ambiguity は bounded Jev; low confidence で Human decision を捏造しません。TDD approval は exact Test Seams に bindし、Worker が明示 tdd skill で vertical RED → minimal GREEN を実行します。TDD は deterministic Validation を置き換えません。
+
+Worker は local internal choice を行えますが、unauthorized component/dependency/API/boundary/scope/method/seam/Validation change は実装前に止まり、durable deviation evidence → new Plan/simplicity/Human Gate を必要とします。Oracle/classifier/reviewer advice は permission ではありません。
+
+## Validation / Human Gates / workspace
+
+Approved Plan の Validation Contract が sole WHAT authority。exit code/test/build/lint/typecheck pass/fail は deterministic tools、Jev は bounded decisionsのみ。passed round は両 reviewers/evaluation/accepted findings の exact-bound evidence（空配列も明示）が必須。Raw findings は Fix Authority ではありません。
+
+Plan Gate は async external reviewId + exact review-ready Plan binding。Code Gate は synchronous public approved/feedback result で、external reviewId/status polling を仮定しません。**local attempt + exact implementation/revision + review source を request 前に**保存し、Human settlement 時も source が unchanged であることを確認します。Human duration を五秒 timeout にしません。
+
+Git と filesystem non-Git は first-class workspace。before/after manifests/content/baseline を durable に記録し、non-Git Code Review は generated static patch を Plannotator patchFile に渡します。Worker prose hash は workspace identity ではありません。
+
+## Configuration / consent / persistence
+
+Pi trusted settings の piOrchestrator を読みます。global settings を trusted project settings が host precedence で override; untrusted project injection を独自実装で許可しません。Child trust は Pi/pi-subagents の public contract を継承します。
+
+Operator/project grant upper bounds → generated workflowId に bindした durable workflow consent。Classifier/project/destination/evidence scope と finite budget を検証し、毎 outbound attempt/per-finding/retry を **reservation → State persist → request** で計上します。API credentials/model availability、typesafe enable、Plan approval は consent ではありません。Timeout stays charged、restart で budget を resetしません。
+
+Default coding retry は automated fix 3 / stronger retry 1、Human feedback は別 counter。詳しい target config は [Configuration](./docs/basic-design/configuration.md)。現行 JSON schemaとの差分は後続 Issue が実装し、未対応 settings を先行追加しません。
+
+Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/metadata、Artifacts are immutable/content-bound。Required intent/authority/evidence と State 保存後だけ next side effect を開始します。
+
+/wf-resume は exact State/Artifact/historical launch/review/decision を reconcile後、normal driverへ continuation。Ambiguous Worker/document mutation、lost synchronous Human result、unknown ownership は blocked、blind relaunch/reopen/approval inference をしません。Failed は safely unreconstructable authority/stateのみ。
+
+## Scope / verification limits
+
+v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
+
+Normal driver/root clarification/native classifier/launch policy/TDD/simplicity/Oracle/deviation/ownership/non-Git/synchronous Code corrections は未完了 child workです。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 
-- [Design and implementation docs](./docs/README.md)
-- [v0.1.0 release evidence](./docs/release/v0.1.0.md)
-- [v0.1.0 release notes](./CHANGELOG.md)
+- [Documentation index](./docs/README.md)
+- [Canonical Basic Design](./docs/basic-design/basic-design.md)
+- [Implementation/dependency map](./docs/implementation/implementation-plan.md)
+- [Dependency public-contract review](./docs/implementation/dependency-contract-review.md) — 指定 release の根拠・条件・未解決の publication/runtime 検証。GitHub Ketch/Question package の compatible published source は未確定で、moving main を production 保証にしません
+- [Historical v0.1.0 release evidence](./docs/release/v0.1.0.md)
