@@ -13,7 +13,7 @@ import type {
   AgentRunStatus,
   SubagentExecutor,
 } from "../../../src/runtime/ports/index.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "../../fakes/planning.ts";
 import { subagentRunId, type SubagentRunId } from "../../../src/types.ts";
 
 const roots: string[] = [];
@@ -115,11 +115,11 @@ describe("startWorkflow", () => {
     expect(await exists(join(result.runDirectory, "state.json"))).toBe(true);
   });
 
-  test("runs explicit research policy after scout state reference persistence without Jev routing", async () => {
+  test("runs classifier-selected research after scout and decision persistence", async () => {
     const runsDirectory = await makeRoot();
     const executor = new RecordingExecutor("evidence", async (request) => {
       if (request.agent === "pi-ketch.researcher") {
-        expect(request.inputRefs).toHaveLength(2);
+        expect(request.inputRefs).toHaveLength(3);
         expect(request.inputRefs?.[1]?.kind).toBe("scout");
         const state = parseWorkflowState(
           JSON.parse(
@@ -217,13 +217,13 @@ describe("startWorkflow", () => {
     expect(executor.calls).toHaveLength(1);
   });
 
-  test("applies the resolved playbook policy before entering clarification", async () => {
+  test("allows classifier-selected clarification even for chore", async () => {
     const runsDirectory = await makeRoot();
     const executor = new RecordingExecutor("local evidence");
 
     const result = await startWorkflow(
       {
-        task: "A chore with an ignored clarification hint",
+        task: "A chore with an unresolved Human choice",
         playbook: "chore",
         context: { requiresClarification: true },
         cwd: runsDirectory,
@@ -235,7 +235,7 @@ describe("startWorkflow", () => {
       },
     );
 
-    expect(result.state.phase).toBe("planning");
+    expect(result.state.phase).toBe("clarifying");
   });
 
   test("does not infer planning authority from agent output and routes explicit clarification policy", async () => {

@@ -1,3 +1,4 @@
+import { PlanningRoutingStoppedError } from "./planning-routing.ts";
 import { randomUUID } from "node:crypto";
 import { PlanningAgentPendingError } from "./planning-agent-run.ts";
 import { readFile } from "node:fs/promises";
@@ -8,7 +9,6 @@ import type {
 } from "../../core/artifacts/references.ts";
 import { isArtifactRef } from "../../core/artifacts/references.ts";
 import { isRecord } from "../../core/schema.ts";
-import { parsePlan } from "../planning/plan-parser.ts";
 import type { OrchestratorConfiguration } from "../../core/configuration.ts";
 import {
   parseAcceptedFindingsArtifact,
@@ -424,10 +424,6 @@ async function discoverArtifact<K extends ArtifactKind>(
   }
 }
 
-function planFileName(version: number): string {
-  return `plan-v${version}.md`;
-}
-
 function reviewFileName(
   kind: "correctness-review" | "ponytail-review",
   round: number,
@@ -613,8 +609,14 @@ export class WorkflowReconciler {
   private async reconcileContext(
     state: WorkflowState,
   ): Promise<ReconciliationResult> {
-    let current = state;
-    const store = this.deps.artifactStore;
+    const current = state;
+    if (!state.planning.stageDecisionRefs || !state.planning.agentAttempts)
+      return this.block(
+        state,
+        "operator-attention-required",
+        undefined,
+        "Legacy planning policy cannot establish conditional authority",
+      );
     const stage = state.planning.context.scoutRef ? "research" : "scout";
     const attempt =
       stage === "research" &&
@@ -631,55 +633,11 @@ export class WorkflowReconciler {
           "Planning launch identity is not yet durable; do not redispatch",
       };
     }
-    if (!current.planning.agentAttempts && !current.planning.context.scoutRef) {
-      const ref = await discoverArtifact(store, "scout", "scout.md");
-      if (ref) {
-        current = await advanceWorkflow(
-          current,
-          { type: "CONTEXT_EVIDENCE_PERSISTED", scoutRef: ref },
-          this.deps.stateStore,
-        );
-      }
-    }
-    if (
-      !current.planning.agentAttempts &&
-      current.planning.researchRequired &&
-      !current.planning.context.researchRef
-    ) {
-      const ref = await discoverArtifact(store, "research", "research.md");
-      if (ref) {
-        current = await advanceWorkflow(
-          current,
-          { type: "CONTEXT_EVIDENCE_PERSISTED", researchRef: ref },
-          this.deps.stateStore,
-        );
-      }
-    }
-    if (
-      current.planning.context.scoutRef &&
-      (!current.planning.researchRequired ||
-        current.planning.context.researchRef)
-    ) {
-      return this.transition(
-        current,
-        current.planning.clarificationRequired
-          ? { type: "CLARIFICATION_REQUIRED" }
-          : { type: "CONTEXT_READY" },
-        [
-          current.planning.context.scoutRef,
-          ...(current.planning.context.researchRef
-            ? [current.planning.context.researchRef]
-            : []),
-        ],
-      );
-    }
     if (!attempt || attempt.notDispatched)
       return { status: "advanced", state: current, phase: current.phase };
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: store,
-      stateStore: this.deps.stateStore,
-      subagentExecutor: this.deps.subagentExecutor,
-      clarificationPort: this.deps.clarificationPort,
+      ...this.deps,
+      plannotatorGate: undefined,
     });
     try {
       const result = await orchestrator.gatherContext({
@@ -697,6 +655,12 @@ export class WorkflowReconciler {
         phase: result.state.phase,
       };
     } catch (error) {
+      if (error instanceof PlanningRoutingStoppedError)
+        return {
+          status: "blocked",
+          state: error.state,
+          phase: error.state.phase,
+        };
       if (error instanceof Error && /planning policy/iu.test(error.message))
         return this.block(
           current,
@@ -728,7 +692,13 @@ export class WorkflowReconciler {
   private async reconcilePlanning(
     state: WorkflowState,
   ): Promise<ReconciliationResult> {
-    const store = this.deps.artifactStore;
+    if (!state.planning.stageDecisionRefs || !state.planning.agentAttempts)
+      return this.block(
+        state,
+        "operator-attention-required",
+        undefined,
+        "Legacy planning policy cannot establish conditional authority",
+      );
     const version = state.planning.currentPlanVersion + 1;
     const attempt = state.planning.agentAttempts?.[`plan-v${version}`];
     if (attempt && !attempt.receipt && !attempt.notDispatched) {
@@ -740,38 +710,11 @@ export class WorkflowReconciler {
           "Planning launch identity is not yet durable; do not redispatch",
       };
     }
-    const existing = state.planning.agentAttempts
-      ? undefined
-      : await discoverArtifact(store, "plan", planFileName(version));
-    if (existing) {
-      try {
-        const content = await readAuthoritativeText(store, existing, "plan");
-        parsePlan(content, {
-          architectureRequired: state.planning.architectureRequired !== false,
-        });
-        return this.transition(
-          state,
-          { type: "PLAN_CREATED", planRef: existing, version },
-          [existing],
-        );
-      } catch (error) {
-        return this.block(
-          state,
-          "operator-attention-required",
-          existing,
-          error instanceof Error
-            ? error.message
-            : "Malformed orphan Plan artifact",
-        );
-      }
-    }
     if (!attempt || attempt.notDispatched)
       return { status: "advanced", state, phase: state.phase };
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: store,
-      stateStore: this.deps.stateStore,
-      subagentExecutor: this.deps.subagentExecutor,
-      // Recovered Plan publication is evidence; opening its Human Gate is normal driver work.
+      ...this.deps,
+      plannotatorGate: undefined,
     });
     try {
       const result = await orchestrator.createPlan({
@@ -784,6 +727,12 @@ export class WorkflowReconciler {
         phase: result.state.phase,
       };
     } catch (error) {
+      if (error instanceof PlanningRoutingStoppedError)
+        return {
+          status: "blocked",
+          state: error.state,
+          phase: error.state.phase,
+        };
       if (error instanceof PlanningAgentPendingError)
         return {
           status: "pending",
@@ -838,12 +787,9 @@ export class WorkflowReconciler {
       );
     }
     try {
-      const outcome = await new PlanningOrchestrator({
-        artifactStore: this.deps.artifactStore,
-        stateStore: this.deps.stateStore,
-        subagentExecutor: this.deps.subagentExecutor,
-        plannotatorGate: gate,
-      }).reconcilePlanReview({ state, reviewId: binding.reviewId });
+      const outcome = await new PlanningOrchestrator(
+        this.deps,
+      ).reconcilePlanReview({ state, reviewId: binding.reviewId });
       if (outcome.status === "approved" || outcome.status === "feedback") {
         return {
           status: "advanced",
@@ -864,6 +810,12 @@ export class WorkflowReconciler {
         reason: outcome.status === "unknown" ? outcome.reason : undefined,
       };
     } catch (error) {
+      if (error instanceof PlanningRoutingStoppedError)
+        return {
+          status: "blocked",
+          state: error.state,
+          phase: error.state.phase,
+        };
       if (error instanceof RuntimePortError || error instanceof Error) {
         return this.block(
           state,

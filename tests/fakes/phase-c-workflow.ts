@@ -1,3 +1,4 @@
+import { safeWorkflowId } from "../../src/types.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -29,6 +30,8 @@ import {
 import { PlannotatorIntegration } from "../../src/runtime/integrations/plannotator.ts";
 import { SubagentsIntegration } from "./agent-launch.ts";
 import { startWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
+import { planningDependencies } from "./planning.ts";
+import { PlanningRouting } from "../../src/runtime/orchestrator/planning-routing.ts";
 import {
   driveWorkflow,
   type WorkflowDriverDependencies,
@@ -61,6 +64,7 @@ export interface RoundReply {
   reasonConfidence?: number;
 }
 export interface WorkflowScript {
+  clarification?: boolean;
   rounds?: RoundReply[];
   routes?: { model: ModelTier; reasoning: ReasoningTier }[];
   reviews?: ReviewFinding[][];
@@ -149,7 +153,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   configuration.jev =
     script.consent === false
       ? {}
-      : jevPolicy(workflowId, repositoryCwd, script.maxRequests ?? 100);
+      : jevPolicy(workflowId, repositoryCwd, (script.maxRequests ?? 100) + 3);
   configuration.jev.maxTransportRetries = script.transportRetries ?? 0;
   configuration.validation.stopOnInfrastructureFailure =
     script.stopOnInfrastructureFailure ?? true;
@@ -372,13 +376,28 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     });
   const jevRequests: ClassifierContext[] = [];
   let roundCalls = 0,
-    routeCalls = 0;
+    routeCalls = 0,
+    planningCalls = 3;
   const client: PiClassifierRuntime = nativeRuntime(async (_model, request) => {
+    if (
+      request.questions.decision?.criteria &&
+      "SKIP" in request.questions.decision.criteria
+    ) {
+      planningCalls++;
+      return classification({
+        decision: {
+          type: "choice",
+          choice: "SKIP",
+          confidence: 0.99,
+          probabilities: { RUN: 0.005, SKIP: 0.99, ESCALATE: 0.005 },
+        },
+      });
+    }
     jevRequests.push(request);
     const durable = await stateStore.loadState();
     if (
       !durable.jevUsage?.latestRequestRef ||
-      durable.jevUsage.attemptsReserved !== jevRequests.length
+      durable.jevUsage.attemptsReserved !== jevRequests.length + planningCalls
     )
       throw Error("Jev called before durable reservation");
     await artifactStore.readText(durable.jevUsage.latestRequestRef);
@@ -508,8 +527,19 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       ...(freshGate ? { plannotatorGate: newGate() } : {}),
     });
   let validation: ValidationRunResult | undefined;
+  // This coding fixture enters with completed planning decisions; #6 driver tests start at createWorkflow.
+  const planningDeps = planningDependencies(
+    { workflowId: safeWorkflowId(workflowId), projectRoot: repositoryCwd },
+    { requiresClarification: script.clarification },
+  );
+  planningDeps.configuration = {
+    ...configuration,
+    jev: jevPolicy(workflowId, repositoryCwd, (script.maxRequests ?? 100) + 3),
+  };
+  planningDeps.configuration.jev.maxTransportRetries =
+    configuration.jev.maxTransportRetries;
   try {
-    await startWorkflow(
+    const started = await startWorkflow(
       {
         task: "Implement the approved feature",
         playbook: "feature",
@@ -521,8 +551,14 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         artifactStore,
         stateStore: stateWriter,
         subagentExecutor,
+        ...planningDeps,
       },
     );
+    if (started.state.phase === "planning")
+      await new PlanningRouting({ ...deps, ...planningDeps }).stage(
+        started.state,
+        "architecture",
+      );
   } catch (error) {
     await rm(root, { recursive: true, force: true });
     throw error;

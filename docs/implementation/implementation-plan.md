@@ -35,6 +35,8 @@ Subsequent #19 update: all six classifier port families use Pi native typesafe/j
 
 Subsequent #4 update: commands now use createWorkflow → driveWorkflow over existing runners, and /wf-resume reconciles historical authority before the same driver. Plan result notifications wake normal continuation; Validation/review/Fix loops no longer require phase-by-phase resume. See [driver foundation coverage and limits](./normal-workflow-driver.md). Later stage implementation and driver integration remain owned by #6/#7/#8/#16/#14/#17/#15; synchronous Code Gate correction remains #9. Missing required target stages are not success/SKIP/approval, and foundation tests do not establish full v1 readiness。
 
+Subsequent #6 update: Research/Clarification/Architecture は Scout 後に accumulated durable evidence から逐次解決し、stage/mode decision の immutable persistence / freshness / conservative escalation を normal driver に接続した。旧 transient hints は authority にしない。Diagnosis ref を消費するが、bugfix/hotfix の missing producer は block し、実行は #7。root bridge は #8、consent capture は #11。Research は operator 指定の GitHub-only source / commit `e49fd9e` と実 Pi child を検証し、Ketch-only tools / context inheritance の policy 不整合を修正した。詳細は [#6 implementation / coverage / limitations](./conditional-stage-routing.md)。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order
@@ -109,7 +111,7 @@ Add strategy simplicity freshness/refinement cap, TDD seam approval, docs-write 
 
 ## 6. Development / validation rules
 
-The [Dependency Contract Review](./dependency-contract-review.md) records released API evidence separately from internal documentation checks. #19 must disable hidden native retries and validate returned stopReason; #21 cannot treat preflight as complete runtime attestation; #17 must narrow builtin Oracle bash; #20 must isolate the separate Codemode models namespace and prove official child replacement. Intended GitHub Ketch/Question packages are not same-name npm packages; their immutable supported publication/source must be confirmed before production use (#8 / Research integration). These are existing child-contract prerequisites, not permission to patch third parties or silently choose another dependency.
+The [Dependency Contract Review](./dependency-contract-review.md) records released API evidence separately from internal documentation checks. #19 must disable hidden native retries and validate returned stopReason; #21 cannot treat preflight as complete runtime attestation; #17 must narrow builtin Oracle bash; #20 must isolate the separate Codemode models namespace and prove official child replacement. Intended GitHub Ketch/Question packages are not same-name npm packages. Ketch の operator-approved Git source / pinned revision は [#6](./conditional-stage-routing.md#real-pi--research-integration) で検証済み（npm 配布なし）。Question source / root integration verification は #8。 These are existing child-contract prerequisites, not permission to patch third parties or silently choose another dependency.
 
 - Read target Issue/comments, #13, prerequisites and canonical docs before code changes。
 - Smallest Issue-scoped diff; reuse existing helpers/ports before new abstractions。

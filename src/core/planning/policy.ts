@@ -22,6 +22,10 @@ export interface PlanParserPolicy {
 export interface PlannerInput {
   taskRef: ArtifactRef<"task">;
   scoutRef: ArtifactRef<"scout">;
+  diagnosisRef?: ArtifactRef<"diagnosis">;
+  decisionRefs?: readonly ArtifactRef<
+    "conditional-stage" | "clarification-mode"
+  >[];
   researchRef?: ArtifactRef<"research">;
   clarificationRef?: ArtifactRef<"clarification">;
   previousPlanRef?: ArtifactRef<"plan">;
@@ -45,6 +49,8 @@ export function plannerInputRefs(input: PlannerInput): readonly ArtifactRef[] {
   return [
     input.taskRef,
     input.scoutRef,
+    ...(input.diagnosisRef ? [input.diagnosisRef] : []),
+    ...(input.decisionRefs ?? []),
     ...(input.researchRef ? [input.researchRef] : []),
     ...(input.clarificationRef ? [input.clarificationRef] : []),
     ...(input.previousPlanRef ? [input.previousPlanRef] : []),

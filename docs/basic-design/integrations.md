@@ -10,7 +10,7 @@ Use released public APIs only。Do not edit/fork/patch third-party packages or d
 
 Reviewed released references: Pi/pi-ai 0.99.1、pi-subagents 0.74.0、pi-typesafe 0.8.1、Plannotator 0.27.23、mattpocock/skills v1.2.3。Later installed/main docs are not baseline proof。Exact source/contract findings and unresolved publication gaps are recorded in [Dependency Contract Review](../implementation/dependency-contract-review.md); source review is not runtime validation。
 
-The intended optional packages are **git:github.com/minorunakamura/pi-ketch** and **git:github.com/minorunakamura/pi-ask-user-question**, not same-name npm packages from other repositories。Their inspected public Git snapshots have no published tag/release confirmed at review time; do not silently use moving main or a different npm package as a released production baseline。Select/verify a supported immutable published source before #8/Research production dispatch, otherwise blocked/unsupported。This design review does not change dependency selection or package metadata。
+The intended optional packages are **git:github.com/minorunakamura/pi-ketch** and **git:github.com/minorunakamura/pi-ask-user-question**, not same-name npm packages from other repositories。pi-ketch は operator が指定した GitHub-only distribution を使用し、#6 で commit `e49fd9ea48b675eef2ede729c9f13f7e12d44c20` の公開 package Agent / child tools / actual Research execution を検証した（[記録](../implementation/conditional-stage-routing.md#real-pi--research-integration)）。npm publication や新規 tag は必須ではない。Pi の公開 Git package contract により固定 revision を選択し、moving main の未検証変更を同等と扱わない。Question package の supported immutable source / root UI verification は #8 に残る。
 
 ## 2. Pi host / classifier
 

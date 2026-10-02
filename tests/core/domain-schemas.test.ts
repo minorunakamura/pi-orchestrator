@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { transition } from "../../src/core/workflow/transition.ts";
 import {
   isArtifactRef,
   parseArtifactRef,
@@ -147,6 +148,80 @@ test("validates durable planning policy and exact review binding", () => {
       isWorkflowState({ ...state, planning: { ...planning, planReview } }),
     ).toBe(false);
   }
+});
+
+test("validates stage/mode/Diagnosis references and rejects incomplete or deterministic-policy-bypassing transitions", () => {
+  const decisionRef = {
+    ...taskRef,
+    kind: "conditional-stage",
+    path: "decisions/stage.json",
+  } as const;
+  const planning = {
+    context: {
+      ...state.planning.context,
+      diagnosisRef: { ...taskRef, kind: "diagnosis" },
+    },
+    stageDecisionRefs: { research: decisionRef },
+    clarificationModeRef: { ...decisionRef, kind: "clarification-mode" },
+    currentPlanVersion: 0,
+  };
+  const current = parseWorkflowState({
+    ...state,
+    phase: "gathering-context",
+    planning,
+  });
+  expect(transition(current, { type: "CONTEXT_READY" }).ok).toBe(false);
+  expect(
+    isWorkflowState({
+      ...current,
+      planning: { ...planning, stageDecisionRefs: { research: planRef } },
+    }),
+  ).toBe(false);
+  expect(
+    isWorkflowState({
+      ...current,
+      planning: { ...planning, stageDecisionRefs: { oracle: decisionRef } },
+    }),
+  ).toBe(false);
+  expect(
+    isWorkflowEvent({
+      type: "STAGE_RESOLVED",
+      stage: "research",
+      decisionRef,
+      required: true,
+    }),
+  ).toBe(true);
+  expect(
+    isWorkflowEvent({
+      type: "CLARIFICATION_MODE_RESOLVED",
+      decisionRef: planning.clarificationModeRef,
+    }),
+  ).toBe(true);
+  expect(
+    isWorkflowEvent({
+      type: "STAGE_RESOLVED",
+      stage: "plan-review",
+      decisionRef,
+      required: false,
+    }),
+  ).toBe(false);
+  expect(
+    transition(
+      { ...current, playbook: "new-project", phase: "planning" },
+      {
+        type: "STAGE_RESOLVED",
+        stage: "architecture",
+        decisionRef,
+        required: false,
+      },
+    ).ok,
+  ).toBe(false);
+  expect(
+    transition(
+      { ...current, phase: "planning" },
+      { type: "PLAN_CREATED", planRef, version: 1 },
+    ).ok,
+  ).toBe(false);
 });
 
 test("validates structured findings independently from fix authority", () => {

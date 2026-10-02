@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
   playbookKinds,
-  resolvePlaybookPolicy,
   type PlaybookContext,
 } from "../../core/playbooks/policy.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
@@ -19,6 +18,7 @@ import {
   type ContextGatheringResult,
   type WorkflowArtifactWriter,
 } from "./planning-orchestrator.ts";
+import type { PlanningRoutingDependencies } from "./planning-routing.ts";
 import type { WorkflowStateWriter } from "./advance-workflow.ts";
 
 export interface StartWorkflowInput {
@@ -28,7 +28,11 @@ export interface StartWorkflowInput {
   cwd?: string;
 }
 
-export interface StartWorkflowOptions {
+export interface StartWorkflowOptions
+  extends Pick<
+    PlanningRoutingDependencies,
+    "configuration" | "jevDecisionClient"
+  > {
   runsDirectory: string;
   subagentExecutor: SubagentExecutor;
   workflowIdFactory?: () => string | WorkflowId;
@@ -86,7 +90,6 @@ export async function createWorkflow(
 
   const taskRef = await artifactStore.writeText("task", "task.md", input.task);
   const timestamp = now();
-  const policy = resolvePlaybookPolicy(input.playbook, input.context);
   const initialState: WorkflowState = {
     schemaVersion: 1,
     workflowId,
@@ -99,9 +102,7 @@ export async function createWorkflow(
     planning: {
       agentAttempts: {},
       context: {},
-      researchRequired: policy.research === "required",
-      clarificationRequired: policy.clarification === "required",
-      architectureRequired: policy.architecture === "required",
+      stageDecisionRefs: {},
       currentPlanVersion: 0,
     },
     coding: {
@@ -143,6 +144,8 @@ export async function startWorkflow(
     artifactStore: created.artifactStore,
     stateStore: created.stateStore,
     subagentExecutor: options.subagentExecutor,
+    configuration: options.configuration,
+    jevDecisionClient: options.jevDecisionClient,
   }).gatherContext({ state: created.state, cwd: input.cwd });
   return { ...created, state: context.state, context };
 }

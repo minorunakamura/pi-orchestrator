@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "../../fakes/planning.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import {
   FakeClarificationPort,
@@ -108,8 +108,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
       },
     });
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
       clarificationPort: clarification,
     });
@@ -358,8 +357,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
       },
     });
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
       clarificationPort: clarification,
     });
@@ -381,7 +379,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     ).resolves.toEqual(["scout.md", "task.md"]);
   });
 
-  test("does not silently drop an architecture requirement persisted at workflow start", async () => {
+  test("does not silently drop an evidence-routed architecture requirement", async () => {
     const runsDirectory = await makeRoot();
     const executor = new FakeSubagentExecutor({
       run: [
@@ -401,8 +399,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
       requiresArchitecture: true,
     });
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     });
 
@@ -424,8 +421,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     });
     const started = await makeStarted(runsDirectory, executor);
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     });
 
@@ -438,6 +434,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     expect(executor.calls.run[1]?.inputRefs).toEqual([
       started.taskRef,
       started.state.planning.context.scoutRef,
+      ...result.plannerInput.decisionRefs!,
     ]);
     expect(executor.calls.run[1]?.task).toMatch(/target version.*1/iu);
     await expect(
@@ -464,8 +461,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     });
     const started = await makeStarted(runsDirectory, executor);
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     });
 
@@ -497,8 +493,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     });
     const started = await makeStarted(runsDirectory, executor);
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     });
     const first = await orchestrator.createPlan({ state: started.state });
@@ -521,6 +516,7 @@ describe("PlanningOrchestrator ORCH-008", () => {
     expect(executor.calls.run[2]?.inputRefs).toEqual([
       started.taskRef,
       started.state.planning.context.scoutRef,
+      ...second.plannerInput.decisionRefs!,
       first.planRef,
       feedbackRef,
     ]);

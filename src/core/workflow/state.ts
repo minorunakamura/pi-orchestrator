@@ -6,6 +6,10 @@ import {
   type SubagentRunId,
   type WorkflowId,
 } from "../../types.ts";
+import {
+  conditionalStages,
+  type ConditionalStage,
+} from "../decisions/planning-routing.ts";
 import type { ArtifactRef } from "../artifacts/references.ts";
 import { isArtifactRef } from "../artifacts/references.ts";
 import {
@@ -82,10 +86,16 @@ export interface PlanningState {
   agentAttempts?: Record<string, PlanningAgentAttempt>;
   context: {
     scoutRef?: ArtifactRef<"scout">;
+    diagnosisRef?: ArtifactRef<"diagnosis">;
     researchRef?: ArtifactRef<"research">;
     clarificationRef?: ArtifactRef<"clarification">;
   };
-  /** Resolved and persisted before the first child. Missing legacy policy fails closed. */
+  /** Missing in legacy State; legacy flags cannot establish routing authority. */
+  stageDecisionRefs?: Partial<
+    Record<ConditionalStage, ArtifactRef<"conditional-stage">>
+  >;
+  clarificationModeRef?: ArtifactRef<"clarification-mode">;
+  /** Derived projections for Plan parsing, never conditional decision authority. */
   researchRequired?: boolean;
   clarificationRequired?: boolean;
   architectureRequired?: boolean;
@@ -203,6 +213,16 @@ export interface WorkflowState {
 
 export type WorkflowEvent =
   | {
+      type: "STAGE_RESOLVED";
+      stage: ConditionalStage;
+      decisionRef: ArtifactRef<"conditional-stage">;
+      required: boolean;
+    }
+  | {
+      type: "CLARIFICATION_MODE_RESOLVED";
+      decisionRef: ArtifactRef<"clarification-mode">;
+    }
+  | {
       type: "CONTEXT_EVIDENCE_PERSISTED";
       scoutRef?: ArtifactRef<"scout">;
       researchRef?: ArtifactRef<"research">;
@@ -316,6 +336,8 @@ function isPlanningState(value: unknown): value is PlanningState {
     !hasOnlyKeys(value, [
       "context",
       "agentAttempts",
+      "stageDecisionRefs",
+      "clarificationModeRef",
       "architectureRequired",
       "researchRequired",
       "clarificationRequired",
@@ -332,6 +354,19 @@ function isPlanningState(value: unknown): value is PlanningState {
       "clarificationRequired",
     ].every((key) =>
       optional(value, key, (candidate) => typeof candidate === "boolean"),
+    ) ||
+    !optional(
+      value,
+      "stageDecisionRefs",
+      (refs) =>
+        isRecord(refs) &&
+        hasOnlyKeys(refs, conditionalStages) &&
+        Object.values(refs).every((ref) =>
+          isArtifactOfKind(ref, "conditional-stage"),
+        ),
+    ) ||
+    !optional(value, "clarificationModeRef", (ref) =>
+      isArtifactOfKind(ref, "clarification-mode"),
     ) ||
     !optional(value, "agentAttempts", isPlanningAgentAttempts) ||
     !optional(value, "planReview", isPlanReviewBinding) ||
@@ -352,7 +387,12 @@ function isPlanningState(value: unknown): value is PlanningState {
 
   if (
     !isRecord(value.context) ||
-    !hasOnlyKeys(value.context, ["scoutRef", "researchRef", "clarificationRef"])
+    !hasOnlyKeys(value.context, [
+      "scoutRef",
+      "diagnosisRef",
+      "researchRef",
+      "clarificationRef",
+    ])
   ) {
     return false;
   }
@@ -360,6 +400,9 @@ function isPlanningState(value: unknown): value is PlanningState {
   return (
     optional(value.context, "scoutRef", (candidate) =>
       isArtifactOfKind(candidate, "scout"),
+    ) &&
+    optional(value.context, "diagnosisRef", (candidate) =>
+      isArtifactOfKind(candidate, "diagnosis"),
     ) &&
     optional(value.context, "researchRef", (candidate) =>
       isArtifactOfKind(candidate, "research"),
@@ -505,6 +548,18 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
   }
 
   switch (value.type) {
+    case "STAGE_RESOLVED":
+      return (
+        isEvent(value, ["type", "stage", "decisionRef", "required"]) &&
+        isOneOf(conditionalStages, value.stage) &&
+        isArtifactOfKind(value.decisionRef, "conditional-stage") &&
+        typeof value.required === "boolean"
+      );
+    case "CLARIFICATION_MODE_RESOLVED":
+      return (
+        isEvent(value, ["type", "decisionRef"]) &&
+        isArtifactOfKind(value.decisionRef, "clarification-mode")
+      );
     case "CONTEXT_EVIDENCE_PERSISTED":
       return (
         isEvent(value, ["type", "scoutRef", "researchRef"]) &&

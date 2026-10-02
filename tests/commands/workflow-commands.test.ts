@@ -15,7 +15,9 @@ import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
 import { workflowId } from "../../src/types.ts";
 import { StateNotFoundError } from "../../src/runtime/persistence/state-store.ts";
 import { phaseCWorkflow } from "../fakes/phase-c-workflow.ts";
-import { plan } from "../fakes/coding-scenario.ts";
+import { plan, configuration as defaults } from "../fakes/coding-scenario.ts";
+import { jevPolicy } from "../fakes/jev-policy.ts";
+import { FakeJevDecisionClient } from "../fakes/index.ts";
 import type { EventBus } from "../../src/runtime/integrations/subagents.ts";
 import { FakeSubagentRpc } from "../fakes/subagent-rpc.ts";
 import { PLANNOTATOR_REQUEST_CHANNEL } from "../../src/runtime/integrations/plannotator.ts";
@@ -365,7 +367,15 @@ describe("ORCH-019 workflow commands", () => {
     );
     const childRequests: Record<string, unknown>[] = [];
     let statusReads = 0;
+    const configuration = {
+      ...defaults,
+      jev: jevPolicy("pending-test-id", root),
+    };
     const rpc = new FakeSubagentRpc((request, bus) => {
+      // Test-only exact grant after observing the durable workflow ID; product grant capture is #11.
+      configuration.jev.runtimePolicy!.consent.workflowId = String(
+        request.ownerRunId,
+      );
       childRequests.push(request);
       const runId = `${String(request.agent)}-1`;
       bus.receipt(request, runId);
@@ -414,6 +424,8 @@ describe("ORCH-019 workflow commands", () => {
     try {
       const runtime = createWorkflowCommandRuntime(events, root, {
         launchResolver: fakeLaunchResolver,
+        configuration,
+        jevDecisionClient: new FakeJevDecisionClient(),
       });
       const started = await runtime.start({ task: "smoke", playbook: "chore" });
       expect(started.state.phase).toBe("awaiting-plan-review");

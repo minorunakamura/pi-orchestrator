@@ -1,6 +1,6 @@
 # Dependency Public Contract Review
 
-対象: Issue #3 の v1 target design。これは **依存仕様の静的レビュー結果**であり、release evidence / runtime contract test / real Pi smoke の PASS ではない。
+対象: Issue #3 の v1 target design。§1–5 は **当時の依存仕様の静的レビュー結果**であり、release evidence / runtime contract test / real Pi smoke の PASS ではない。後続 #6 による Ketch source 選定・実行検証は §6 に記録する。
 
 ## 1. Method / exact sources
 
@@ -96,3 +96,11 @@ Release-specific sources (not moving main):
 - [M grilling](https://github.com/mattpocock/skills/blob/v1.2.3/skills/productivity/grilling/SKILL.md), [M TDD](https://github.com/mattpocock/skills/blob/v1.2.3/skills/engineering/tdd/SKILL.md), [M domain-modeling](https://github.com/mattpocock/skills/blob/v1.2.3/skills/engineering/domain-modeling/SKILL.md)
 
 `npm view <package>@<version> dist --json` provides tarball/integrity metadata; `gh api repos/<owner>/<repo>/tags` and `.../releases` establish publication rather than inferring it from package.json version。Paths in npm contents above are review citations, not permission to import private subpaths; runtime imports use published package exports only。
+
+## 6. Subsequent #6 — Ketch source / C25 resolved
+
+Operator が正規配布元を **https://github.com/minorunakamura/pi-ketch（npm 配布なし）** と明示した。npm publication や新規 tag/release を必要条件としない。Pi 0.99.1 の公開 Git package contract に沿い、commit `e49fd9ea48b675eef2ede729c9f13f7e12d44c20` を検証対象に固定した。インストール済み origin/HEAD と GitHub commit が一致し、tracked changes はなかった。検証用にはその commit の clean archive を使用し、元の package や operator settings は変更していない。
+
+**C25 の source uncertainty と Research integration 検証は解消**。実定義との比較で発見した Orchestrator policy の `read` 必須／project context 継承を修正し、公開 package discovery/preflight の positive/negative tests と新しい Herdr tab での実 Scout/Research/Ketch scrape、durable output、receipt/recovery、fresh decision reuse が PASS。詳細・再現手順・正確な検証範囲は [#6 record](./conditional-stage-routing.md#real-pi--research-integration)。CLI/backend configuration は deployment prerequisite であり、全 search/docs/code backend の authentication を smoke が保証するものではない。
+
+§1–5 の K/Q 未確定という記述は #3 実施時点の履歴。K については本追記が現在の状態を示す。Q / root Human bridge は #8、full lifecycle/Human Gates は #12 のまま。Third-party package/private API の変更・利用や、新たな npm dependency はない。

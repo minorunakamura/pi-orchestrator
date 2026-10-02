@@ -114,7 +114,7 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
   });
 
   test("clarification is a genuine wait; only a confirmed durable answer continues to Planning", async () => {
-    const h = await setup();
+    const h = await setup({ clarification: true });
     const state = await h.load();
     await h.stateStore.saveState(
       { ...state, phase: "clarifying" },

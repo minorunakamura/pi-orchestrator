@@ -200,6 +200,23 @@ describe("PiClassifierDecisionClient", () => {
     }
     expect(registry.calls).toHaveLength(0);
   });
+  test.each(["plan-review", "code-review", "unknown"])(
+    "stage routing rejects %s before dispatch",
+    async (stage) => {
+      const registry = new FakeClassifierRuntime([]);
+      await expect(
+        new JevIntegration({ modelRegistry: registry }).routeStage(
+          makeInvalidPayload<ConditionalStageRoutingInput>({
+            ...planningInput,
+            stage,
+            policy: "conditional",
+          }),
+          adapterAuthorization,
+        ),
+      ).rejects.toMatchObject({ kind: "policy" });
+      expect(registry.calls).toHaveLength(0);
+    },
+  );
   test("low confidence and separate escalation reason confidence stay under core policy", async () => {
     const registry = new FakeClassifierRuntime([
       routeResult,

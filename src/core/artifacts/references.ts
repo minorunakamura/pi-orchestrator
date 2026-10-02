@@ -10,6 +10,9 @@ import {
 export const artifactKinds = [
   "task",
   "scout",
+  "diagnosis",
+  "conditional-stage",
+  "clarification-mode",
   "research",
   "clarification",
   "plan",

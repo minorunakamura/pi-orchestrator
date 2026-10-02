@@ -10,7 +10,7 @@ import {
   parseImplementationArtifact,
 } from "../../../src/runtime/orchestrator/coding-orchestrator.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "../../fakes/planning.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import {
   ArtifactStore,
@@ -97,8 +97,7 @@ async function makeAwaitingCodeReview() {
     },
   );
   const created = await new PlanningOrchestrator({
-    artifactStore: started.artifactStore,
-    stateStore: started.stateStore,
+    ...started,
     subagentExecutor: executor,
   }).createPlan({ state: started.state });
   const planReviewRef = await started.artifactStore.writeText(

@@ -19,6 +19,12 @@ export interface AgentLaunchPolicy {
 }
 
 const repositoryTools = ["read", "grep", "find", "ls"];
+const researchTools = [
+  "ketch_search",
+  "ketch_scrape",
+  "ketch_docs",
+  "ketch_code",
+];
 export function agentLaunchPolicy(
   agent: string,
   executionProfile?: ResolvedExecutionProfile,
@@ -52,22 +58,23 @@ export function agentLaunchPolicy(
     modelPolicy: "resolved-physical",
     ...(executionProfile ? { executionProfile } : {}),
     skills: [...skills],
-    requiredTools: implementation
-      ? ["read", "bash", "edit", "write"]
-      : ["read"],
-    allowedTools: [
-      ...repositoryTools,
-      ...(implementation
-        ? ["bash", "edit", "write", "contact_supervisor"]
-        : []),
-      ...(research
-        ? ["ketch_search", "ketch_scrape", "ketch_docs", "ketch_code"]
-        : []),
-    ],
+    requiredTools: research
+      ? researchTools
+      : implementation
+        ? ["read", "bash", "edit", "write"]
+        : ["read"],
+    allowedTools: research
+      ? researchTools
+      : [
+          ...repositoryTools,
+          ...(implementation
+            ? ["bash", "edit", "write", "contact_supervisor"]
+            : []),
+        ],
     forbiddenTools: implementation
       ? ["subagent", "subagents_enable", "codemode"]
       : ["bash", "edit", "write", "subagent", "subagents_enable", "codemode"],
-    inheritProjectContext: true,
+    inheritProjectContext: !research,
     inheritSkills: false,
     ...(implementation || advisory || agent === "reviewer"
       ? { builtin: true as const }

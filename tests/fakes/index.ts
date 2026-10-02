@@ -1,3 +1,13 @@
+import type {
+  ConditionalStage,
+  StageOutcome,
+  ClarificationMode,
+} from "../../src/core/decisions/planning-routing.ts";
+import type {
+  ConditionalStageRoutingInput,
+  PlanningClassifierInput,
+} from "../../src/runtime/ports/jev-decision-client.ts";
+import { calculateSha256 } from "../../src/runtime/persistence/artifact-store.ts";
 import { fakeLaunchResolver } from "./agent-launch.ts";
 import type {
   ClarificationPort,
@@ -167,6 +177,8 @@ export class FakeSubagentExecutor implements SubagentExecutor {
 }
 
 export interface FakeJevDecisionClientOptions {
+  stages?: Partial<Record<ConditionalStage, StageOutcome>>;
+  mode?: ClarificationMode;
   routeExecution?: FakeSequence<ExecutionRoutingRawDecision>;
   evaluateFindings?: FakeSequence<FindingEvaluationRawDecision[]>;
   decideRound?: FakeSequence<RoundDecisionRawDecision>;
@@ -174,12 +186,48 @@ export interface FakeJevDecisionClientOptions {
 
 export class FakeJevDecisionClient implements JevDecisionClient {
   readonly calls = {
+    routeStage: [] as ConditionalStageRoutingInput[],
+    routeClarification: [] as PlanningClassifierInput[],
     routeExecution: [] as ExecutionRoutingInput[],
     evaluateFindings: [] as FindingEvaluationInput[],
     decideRound: [] as RoundDecisionInput[],
   };
 
   constructor(private readonly outcomes: FakeJevDecisionClientOptions = {}) {}
+
+  async routeStage(
+    input: ConditionalStageRoutingInput,
+    authorization?: JevCallAuthorization,
+  ) {
+    await authorization?.authorizeAttempt({
+      family: "stage",
+      requestDigest: calculateSha256(JSON.stringify(input)),
+      configurationDigest: "b".repeat(64),
+      decisionSchemaVersion: 1,
+      destination: authorization.destination,
+      retryIndex: 0,
+    });
+    this.calls.routeStage.push(input);
+    return {
+      value: this.outcomes.stages?.[input.stage] ?? "SKIP",
+      confidence: 0.99,
+    };
+  }
+  async routeClarification(
+    input: PlanningClassifierInput,
+    authorization?: JevCallAuthorization,
+  ) {
+    await authorization?.authorizeAttempt({
+      family: "clarification",
+      requestDigest: calculateSha256(JSON.stringify(input)),
+      configurationDigest: "b".repeat(64),
+      decisionSchemaVersion: 1,
+      destination: authorization.destination,
+      retryIndex: 0,
+    });
+    this.calls.routeClarification.push(input);
+    return { value: this.outcomes.mode ?? "GRILL_ME", confidence: 0.99 };
+  }
 
   async routeExecution(
     input: ExecutionRoutingInput,

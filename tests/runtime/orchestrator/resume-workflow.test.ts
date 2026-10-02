@@ -8,7 +8,7 @@ import {
   createArtifactRef,
 } from "../../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "../../fakes/planning.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { resumeWorkflow } from "../../../src/runtime/orchestrator/resume-workflow.ts";
 import type { WorkflowState } from "../../../src/core/workflow/state.ts";
@@ -77,8 +77,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       },
     });
     const planning = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
       plannotatorGate: firstGate,
     });
@@ -93,9 +92,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       },
     });
     const result = await resumeWorkflow("workflow-1", {
-      runDirectory: started.runDirectory,
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: new FakeSubagentExecutor(),
       plannotatorGate: freshGate,
     });
@@ -123,8 +120,7 @@ describe("ORCH-018 resumeWorkflow", () => {
       },
     );
     const created = await new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     }).createPlan({ state: started.state });
     const gate = new FakePlannotatorGate({
@@ -132,9 +128,7 @@ describe("ORCH-018 resumeWorkflow", () => {
     });
 
     const result = await resumeWorkflow("workflow-1", {
-      runDirectory: started.runDirectory,
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: new FakeSubagentExecutor(),
       plannotatorGate: gate,
     });

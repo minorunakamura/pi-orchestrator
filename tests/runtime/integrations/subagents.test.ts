@@ -7,6 +7,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { startWorkflow } from "../../fakes/planning.ts";
+import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { createWorkflowCommandRuntime } from "../../../src/commands/index.ts";
 import {
   ArtifactStore,
@@ -315,27 +317,34 @@ describe("SubagentsIntegration", () => {
       if (request.agent === "pi-ketch.researcher") signalResearch?.(request);
       else rpc.complete(request, id, "complete", "local facts");
     });
-    const runtime = createWorkflowCommandRuntime(events, root, {
-      launchResolver: fakeLaunchResolver,
-    });
+    const runDirectory = join(root, "research-wait");
     let settled = false;
-    const start = runtime
-      .start({
+    const start = startWorkflow(
+      {
         task: "Reversi",
         playbook: "new-project",
-        context: { requiresClarification: true },
-      })
-      .then((result) => {
-        settled = true;
-        return result;
-      });
+        cwd: root,
+        context: { requiresResearch: true, requiresClarification: true },
+      },
+      {
+        runsDirectory: root,
+        workflowIdFactory: () => "research-wait",
+        subagentExecutor: new SubagentsIntegration(events, {
+          cwd: root,
+          artifactReader: new ArtifactStore(runDirectory),
+        }),
+      },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
     const research = await researchStarted;
-    const id = String(research.ownerRunId);
+    const states = new StateStore(runDirectory);
     events.deliver("subagent:control-intercom", {
       runId: "pi-ketch.researcher-1",
       reason: "need_decision",
     });
-    const waiting = await runtime.loadState(id);
+    const waiting = await states.loadState();
     expect(waiting.phase).toBe("gathering-context");
     expect(waiting.block).toBeUndefined();
     expect(waiting.planning.context.researchRef).toBeUndefined();
@@ -354,13 +363,13 @@ describe("SubagentsIntegration", () => {
       await store.readText(result.state.planning.context.researchRef!),
     ).toBe("research after supervisor reply");
     events.complete(research, "pi-ketch.researcher-1", "complete", "duplicate");
-    expect((await runtime.loadState(id)).stateRevision).toBe(
+    expect((await states.loadState()).stateRevision).toBe(
       result.state.stateRevision,
     );
     expect(events.emitted).toHaveLength(2);
   });
 
-  test("new-project commands supply task and scout contents and isolate concurrent workflows", async () => {
+  test("new-project commands isolate workflows and stop after Scout without workflow-scoped classifier consent", async () => {
     const root = await temporaryRoot();
     const events = new FakeEventBus();
     const runtime = createWorkflowCommandRuntime(events, root, {
@@ -377,15 +386,15 @@ describe("SubagentsIntegration", () => {
       ),
     );
     const requests = events.emitted.map(({ payload }) => childRequest(payload));
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(2);
     for (const [index, workflow] of started.entries()) {
-      expect(workflow.state.phase).toBe("clarifying");
+      expect(workflow.state.phase).toBe("blocked");
+      expect(workflow.state.block?.reason).toBe("operator-attention-required");
       const children = requests.filter(
         (request) => request.ownerRunId === workflow.workflowId,
       );
       expect(children.map((request) => request.agent)).toEqual([
         "workflow-scout",
-        "pi-ketch.researcher",
       ]);
       for (const child of children) {
         expect(child.cwd).toBe(root);
@@ -394,12 +403,8 @@ describe("SubagentsIntegration", () => {
         expect(child.task).not.toContain(tasks[1 - index]);
         expect(child.task).toContain(JSON.stringify(workflow.taskRef));
       }
-      expect(children[1]?.task).toContain(
-        JSON.stringify({
-          ref: workflow.state.planning.context.scoutRef,
-          content: "implemented",
-        }),
-      );
+      expect(workflow.state.planning.context.scoutRef).toBeDefined();
+      expect(workflow.state.planning.stageDecisionRefs).toEqual({});
     }
   });
 });

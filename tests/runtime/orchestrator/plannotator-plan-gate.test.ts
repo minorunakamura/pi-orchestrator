@@ -8,7 +8,7 @@ import type { WorkflowState } from "../../../src/core/workflow/state.ts";
 import type { AgentRunResult } from "../../../src/runtime/ports/index.ts";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "../../fakes/planning.ts";
 import { createArtifactRef } from "../../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import {
@@ -94,8 +94,7 @@ async function createPlanWithGate(
 ) {
   const started = await makeStarted(runsDirectory, executor);
   const orchestrator = new PlanningOrchestrator({
-    artifactStore: started.artifactStore,
-    stateStore: started.stateStore,
+    ...started,
     subagentExecutor: executor,
     plannotatorGate: gate,
   });
@@ -208,7 +207,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
       },
     };
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
+      ...started,
       stateStore,
       subagentExecutor: new FakeSubagentExecutor(),
       plannotatorGate: gate,
@@ -299,8 +298,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
     });
     const started = await makeStarted(root, executor);
     const firstOrchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     });
     const first = await firstOrchestrator.createPlan({ state: started.state });
@@ -338,8 +336,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
       },
     });
     const orchestrator = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
       plannotatorGate: gate,
     });
@@ -460,8 +457,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
       },
     });
     const fresh = new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: new FakeSubagentExecutor(),
       plannotatorGate: secondGate,
     });
@@ -494,8 +490,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
     });
     const started = await makeStarted(root, executor);
     const created = await new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
     }).createPlan({ state: started.state });
     const expectedRef = planRef();
@@ -515,12 +510,12 @@ describe("ORCH-009 Plannotator plan gate", () => {
       },
     });
     const opened = await new PlanningOrchestrator({
-      artifactStore: started.artifactStore,
-      stateStore: started.stateStore,
+      ...started,
       subagentExecutor: executor,
       plannotatorGate: gate,
     }).openPlanReview({ state: created.state });
     const orchestrator = new PlanningOrchestrator({
+      ...started,
       artifactStore: {
         readText: started.artifactStore.readText!.bind(started.artifactStore),
         writeText: async () => {

@@ -15,7 +15,13 @@ import type {
   JevCallAuthorization,
   JevRequestFamily,
 } from "../ports/jev-decision-client.ts";
-import { isConfidence, isRecord, hasOnlyKeys } from "../../core/schema.ts";
+import {
+  isConfidence,
+  isRecord,
+  hasOnlyKeys,
+  isOneOf,
+} from "../../core/schema.ts";
+import { conditionalStages } from "../../core/decisions/planning-routing.ts";
 import type { ReviewFinding } from "../../core/coding/finding.ts";
 import type {
   ExecutionRoutingInput,
@@ -334,7 +340,10 @@ export class PiClassifierDecisionClient implements DecisionClassifierPort {
     input: ConditionalStageRoutingInput,
     authorization?: JevCallAuthorization,
   ) {
-    if (input.policy !== "conditional")
+    if (
+      input.policy !== "conditional" ||
+      !isOneOf(conditionalStages, input.stage)
+    )
       throw new RuntimePortError(
         "policy",
         "Required/skip stage policy must remain deterministic",
