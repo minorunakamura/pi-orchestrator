@@ -26,6 +26,7 @@ import {
   optional,
   parseSchema,
 } from "../schema.ts";
+import { isOracleState, type OracleState } from "../oracle.ts";
 import type { WorkflowPhase } from "./phase.ts";
 import { isWorkflowPhase } from "./phase.ts";
 
@@ -195,6 +196,7 @@ export interface WorkflowState {
   /** Missing legacy scope/accounting is diagnosable, never permission to send. */
   projectRoot?: string;
   jevUsage?: JevUsageState;
+  oracle?: OracleState;
   schemaVersion: 1;
   workflowId: WorkflowId;
   stateRevision: number;
@@ -500,6 +502,7 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
       "stateRevision",
       "projectRoot",
       "jevUsage",
+      "oracle",
       "playbook",
       "phase",
       "taskRef",
@@ -517,6 +520,7 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
     isNonNegativeInteger(value.stateRevision) &&
     optional(value, "projectRoot", isNonEmptyString) &&
     optional(value, "jevUsage", isJevUsage) &&
+    optional(value, "oracle", isOracleState) &&
     isPlaybookKind(value.playbook) &&
     isWorkflowPhase(value.phase) &&
     isArtifactOfKind(value.taskRef, "task") &&

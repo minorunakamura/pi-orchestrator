@@ -1,4 +1,6 @@
 import { join, resolve } from "node:path";
+import { runOracleAdvice } from "./oracle-advisory.ts";
+import { PlanningAgentPendingError } from "./planning-agent-run.ts";
 import { driveWorkflow } from "./drive-workflow.ts";
 import type { WorkflowId } from "../../types.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
@@ -117,6 +119,11 @@ async function runReconciliation(
         "Persisted Workflow State identity does not match resume input",
       );
     }
+    if (
+      state.oracle?.pendingRef &&
+      !["completed", "failed"].includes(state.phase)
+    )
+      return { planning: state };
     const phase =
       state.phase === "blocked" ? state.block?.blockedFrom : state.phase;
     if (
@@ -130,7 +137,26 @@ async function runReconciliation(
     ? await stateStore.withLock(execute)
     : await execute();
   if ("result" in selected) return selected.result;
-  const snapshot = selected.planning;
+  let snapshot = selected.planning;
+  if (snapshot.oracle?.pendingRef) {
+    try {
+      snapshot = await runOracleAdvice(snapshot, { ...deps, stateStore });
+    } catch (error) {
+      if (!(error instanceof PlanningAgentPendingError)) throw error;
+      return {
+        state: error.state,
+        phase: error.state.phase,
+        status: "pending",
+      };
+    }
+    if (snapshot.phase === "blocked")
+      return {
+        state: snapshot,
+        phase: snapshot.phase,
+        status: "blocked",
+        reason: snapshot.block?.reason,
+      };
+  }
   // Planning dispatch is guarded by a durable CAS intent, not a lock held across a child wait.
   return new WorkflowReconciler({
     ...deps,

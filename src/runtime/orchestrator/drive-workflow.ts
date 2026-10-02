@@ -1,3 +1,4 @@
+import { runOracleAdvice } from "./oracle-advisory.ts";
 import { assertStateInvariants } from "../../core/workflow/invariants.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import { parseValidationResult } from "../../core/decisions/types.ts";
@@ -49,6 +50,13 @@ async function advance(
   state: WorkflowState,
   deps: WorkflowDriverDependencies,
 ): Promise<ReconciliationResult> {
+  if (
+    state.oracle?.pendingRef &&
+    !["completed", "failed"].includes(state.phase)
+  ) {
+    const next = await runOracleAdvice(state, deps);
+    return result(next);
+  }
   const planning = new PlanningOrchestrator({
     ...deps,
     plannotatorGate: undefined,
@@ -220,7 +228,11 @@ export async function driveWorkflow(
             "Continuation stopped; in-flight work may require reconciliation",
         };
       // Planning children use durable CAS dispatch intents, without a lock across their wait.
-      if (state.phase === "gathering-context" || state.phase === "planning")
+      if (
+        state.oracle?.pendingRef ||
+        state.phase === "gathering-context" ||
+        state.phase === "planning"
+      )
         return state;
       return advance(
         state,

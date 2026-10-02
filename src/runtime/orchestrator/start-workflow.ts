@@ -95,6 +95,7 @@ export async function createWorkflow(
     workflowId,
     projectRoot: resolve(input.cwd ?? process.cwd()),
     jevUsage: { attemptsReserved: 0 },
+    oracle: { attemptsUsed: 0 },
     stateRevision: 0,
     playbook: input.playbook,
     phase: "gathering-context",

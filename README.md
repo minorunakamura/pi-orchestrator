@@ -91,7 +91,7 @@ Task -> Scout -> Diagnosis? (bugfix/hotfix required)
  -> Human Code Gate (all playbooks required) -> completed
 ```
 
-Oracle は difficult Diagnosis/Architecture/strategy disagreement/deviation/post-code escalation の optional advisory で、mandatory stage ではありません。
+Oracle は difficult Diagnosis/Architecture/strategy disagreement/deviation/post-code escalation の optional advisory で、mandatory stage ではありません。#17 の explicit request / durable budget / builtin read-only launch / normal continuation / recovery は [実装・検証記録](docs/implementation/oracle-advisory.md) を参照してください。
 
 ## Sequential evidence / Human clarification
 
