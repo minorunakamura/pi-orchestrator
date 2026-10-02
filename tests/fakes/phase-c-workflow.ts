@@ -3,8 +3,8 @@ import { promisify } from "node:util";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Evaluation, Questions, SystemOneRequest } from "pi-typesafe";
-import { TypeSafeIntegrationError } from "pi-typesafe";
+import type { ClassifierContext } from "@earendil-works/pi-ai";
+import { nativeRuntime, classification } from "./classifier.ts";
 import type { ReviewFinding } from "../../src/core/coding/finding.ts";
 import type {
   ModelTier,
@@ -24,7 +24,7 @@ import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../src/runtime/persistence/state-store.ts";
 import {
   JevIntegration,
-  type JevClient,
+  type PiClassifierRuntime,
 } from "../../src/runtime/integrations/jev.ts";
 import { PlannotatorIntegration } from "../../src/runtime/integrations/plannotator.ts";
 import { SubagentsIntegration } from "./agent-launch.ts";
@@ -48,7 +48,6 @@ import type {
 } from "../../src/runtime/ports/index.ts";
 import { configuration as defaults, plan } from "./coding-scenario.ts";
 import { jevPolicy } from "./jev-policy.ts";
-import { makeEvaluation } from "./typed-boundaries.ts";
 import { FakeSubagentRpc } from "./subagent-rpc.ts";
 
 export interface RoundReply {
@@ -367,103 +366,97 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       planReader: artifactStore,
       timeoutMs: 5000,
     });
-  const jevRequests: SystemOneRequest[] = [];
+  const jevRequests: ClassifierContext[] = [];
   let roundCalls = 0,
     routeCalls = 0;
-  const client: JevClient = {
-    evaluate: async <Q extends Questions>(
-      request: SystemOneRequest<Q>,
-    ): Promise<Evaluation<Q>> => {
-      jevRequests.push(request);
-      const durable = await stateStore.loadState();
-      if (
-        !durable.jevUsage?.latestRequestRef ||
-        durable.jevUsage.attemptsReserved !== jevRequests.length
-      )
-        throw Error("Jev called before durable reservation");
-      await artifactStore.readText(durable.jevUsage.latestRequestRef);
-      if (jevRequests.length <= (script.jevFailures ?? 0))
-        throw new TypeSafeIntegrationError("connection", "scripted Jev outage");
-      if (!isRecord(request.state)) throw Error("Invalid Jev request state");
-      const state = request.state;
-      const kind =
-        "modelTier" in request.questions
-          ? "routing"
-          : "decision" in request.questions
-            ? "round"
-            : "finding";
-      const route =
-        kind === "routing"
-          ? (script.routes?.[routeCalls++] ?? {
-              model: "STANDARD",
-              reasoning: "MEDIUM",
-            })
-          : undefined;
-      const round =
-        kind === "round"
-          ? (script.rounds?.[roundCalls++] ?? { action: "COMPLETE" })
-          : undefined;
-      const findingState = state.finding;
-      const findingId =
-        isRecord(findingState) && typeof findingState.id === "string"
-          ? findingState.id
-          : undefined;
-      const finding =
-        kind === "finding" && findingId
-          ? script.findings?.[findingId]
-          : undefined;
-      const values: Record<string, string> = {
-        modelTier: route?.model ?? "STANDARD",
-        reasoningTier: route?.reasoning ?? "MEDIUM",
-        decision: round?.action ?? "COMPLETE",
-        escalationReason: round?.reason ?? "implementation-capability",
-        evidenceSupported: "true",
-        conflictsWithApprovedPlan: String(finding?.planConflict ?? false),
-        conflictsWithArchitecture: "false",
-        inScope: "true",
-        requiresHumanDecision: String(finding?.human ?? false),
-      };
-      const answers = Object.fromEntries(
-        Object.entries(request.questions).map(([key, question]) => {
-          const options = Object.keys(question.criteria ?? {});
-          const choice = values[key];
-          if (!choice || !options.includes(choice))
-            throw Error("Unexpected Jev Choice contract");
-          const confidence =
-            kind === "finding"
-              ? (finding?.confidence ?? 0.99)
-              : key === "escalationReason"
-                ? (round?.reasonConfidence ?? 0.99)
-                : (round?.confidence ?? 0.99);
-          return [
-            key,
-            {
-              type: "choice",
-              choice,
-              confidence,
-              probabilities: Object.fromEntries(
-                options.map((option) => [
-                  option,
-                  option === choice
-                    ? confidence
-                    : (1 - confidence) / (options.length - 1),
-                ]),
-              ),
-            },
-          ];
-        }),
+  const client: PiClassifierRuntime = nativeRuntime(async (_model, request) => {
+    jevRequests.push(request);
+    const durable = await stateStore.loadState();
+    if (
+      !durable.jevUsage?.latestRequestRef ||
+      durable.jevUsage.attemptsReserved !== jevRequests.length
+    )
+      throw Error("Jev called before durable reservation");
+    await artifactStore.readText(durable.jevUsage.latestRequestRef);
+    if (jevRequests.length <= (script.jevFailures ?? 0))
+      return classification(
+        {},
+        { stopReason: "aborted", errorMessage: "scripted Jev timeout" },
       );
-      return makeEvaluation<Q>({
-        answers,
-        model: "fake-jev",
-        usage: { input_tokens: 10, output_tokens: 1 },
-        elapsedMs: 1,
-      });
-    },
-  };
+    if (!isRecord(request.state)) throw Error("Invalid Jev request state");
+    const state = request.state;
+    const kind =
+      "modelTier" in request.questions
+        ? "routing"
+        : "decision" in request.questions
+          ? "round"
+          : "finding";
+    const route =
+      kind === "routing"
+        ? (script.routes?.[routeCalls++] ?? {
+            model: "STANDARD",
+            reasoning: "MEDIUM",
+          })
+        : undefined;
+    const round =
+      kind === "round"
+        ? (script.rounds?.[roundCalls++] ?? { action: "COMPLETE" })
+        : undefined;
+    const findingState = state.finding;
+    const findingId =
+      isRecord(findingState) && typeof findingState.id === "string"
+        ? findingState.id
+        : undefined;
+    const finding =
+      kind === "finding" && findingId
+        ? script.findings?.[findingId]
+        : undefined;
+    const values: Record<string, string> = {
+      modelTier: route?.model ?? "STANDARD",
+      reasoningTier: route?.reasoning ?? "MEDIUM",
+      decision: round?.action ?? "COMPLETE",
+      escalationReason: round?.reason ?? "implementation-capability",
+      evidenceSupported: "true",
+      conflictsWithApprovedPlan: String(finding?.planConflict ?? false),
+      conflictsWithArchitecture: "false",
+      inScope: "true",
+      requiresHumanDecision: String(finding?.human ?? false),
+    };
+    const answers = Object.fromEntries(
+      Object.entries(request.questions).map(([key, question]) => {
+        const options = Object.keys(question.criteria ?? {});
+        const choice = values[key];
+        if (!choice || !options.includes(choice))
+          throw Error("Unexpected Jev Choice contract");
+        const confidence =
+          kind === "finding"
+            ? (finding?.confidence ?? 0.99)
+            : key === "escalationReason"
+              ? (round?.reasonConfidence ?? 0.99)
+              : (round?.confidence ?? 0.99);
+        return [
+          key,
+          {
+            type: "choice",
+            choice,
+            confidence,
+            probabilities: Object.fromEntries(
+              options.map((option) => [
+                option,
+                option === choice
+                  ? confidence
+                  : (1 - confidence) / (options.length - 1),
+              ]),
+            ),
+          },
+        ];
+      }),
+    );
+    return classification(answers);
+  });
   const jevDecisionClient = new JevIntegration({
     ...configuration.jev,
-    client,
+    modelRegistry: client,
   });
   const validations: ValidationContract[] = [];
   const validationExecutor: ValidationExecutor = {

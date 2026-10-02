@@ -455,7 +455,12 @@ export class FindingEvaluationRunner {
         ...reviewRefs(input.state),
         ...(evidence.previousDecision ? [evidence.previousDecision.ref] : []),
       ],
-      this.dependencies.configuration.decision,
+      {
+        decision: this.dependencies.configuration.decision,
+        ...(this.dependencies.configuration.jev
+          ? { jev: this.dependencies.configuration.jev }
+          : {}),
+      },
     );
     const authorization = new JevAuthorization(
       input.state,

@@ -1,544 +1,379 @@
 import { describe, expect, test, vi } from "vitest";
 import {
-  TypeSafeIntegrationError,
-  type Evaluation,
-  type EvaluationOptions,
-  type Questions,
-  type SystemOneRequest,
-} from "pi-typesafe";
-import type { ArtifactRef } from "../../../src/core/artifacts/references.ts";
-import type { FindingEvaluation } from "../../../src/core/decisions/types.ts";
-import {
-  JevIntegration as ProductJevIntegration,
-  type JevClient,
+  JevIntegration,
+  PiClassifierDecisionClient,
 } from "../../../src/runtime/integrations/jev.ts";
-import type { ExecutionRoutingInput } from "../../../src/runtime/ports/jev-decision-client.ts";
-
+import {
+  classification,
+  FakeClassifierRuntime,
+  nativeRuntime,
+  firstChoices,
+} from "../../fakes/classifier.ts";
+import { adapterAuthorization } from "../../fakes/jev-policy.ts";
+import { makeInvalidPayload } from "../../fakes/typed-boundaries.ts";
 import {
   decisionEvidence,
   roundEvidence,
   reviewRefs,
 } from "../../fakes/coding-scenario.ts";
-import { adapterAuthorization } from "../../fakes/jev-policy.ts";
-import { makeEvaluation } from "../../fakes/typed-boundaries.ts";
-class JevIntegration extends ProductJevIntegration {
-  override routeExecution(
-    input: Parameters<ProductJevIntegration["routeExecution"]>[0],
-  ) {
-    return super.routeExecution(input, adapterAuthorization);
-  }
-  override evaluateFindings(
-    input: Parameters<ProductJevIntegration["evaluateFindings"]>[0],
-  ) {
-    return super.evaluateFindings(input, adapterAuthorization);
-  }
-  override decideRound(
-    input: Parameters<ProductJevIntegration["decideRound"]>[0],
-  ) {
-    return super.decideRound(input, adapterAuthorization);
-  }
-}
-const planRef: ArtifactRef<"plan"> = {
-  kind: "plan",
-  path: "plans/plan-v1.md",
-  schemaVersion: 1,
-  sha256: "a".repeat(64),
-};
-const contextRef: ArtifactRef<"scout"> = {
-  kind: "scout",
-  path: "context/scout-v1.json",
-  schemaVersion: 1,
-  sha256: "b".repeat(64),
-};
-const planEvidence = {
-  summary: "A small feature with a bounded implementation scope.",
-  relevantSections: [
-    {
-      title: "Scope / Requirements" as const,
-      content:
-        "Add the requested feature without changing the public contract.",
-    },
-    {
-      title: "Architecture / Design" as const,
-      content: "Keep the runtime adapter behind the existing port.",
-    },
-  ],
-};
-const contextEvidence = [
-  {
-    ref: contextRef,
-    content: "The repository uses TypeScript and Vitest for runtime tests.",
-  },
-];
+import type { ClassifierResult } from "@earendil-works/pi-ai";
+import type {
+  ExecutionRoutingInput,
+  ConditionalStageRoutingInput,
+} from "../../../src/runtime/ports/jev-decision-client.ts";
 
-function routingInput(
-  overrides: Partial<ExecutionRoutingInput> = {},
-): ExecutionRoutingInput {
-  return {
-    approvedPlanRef: planRef,
-    planEvidence,
-    playbook: "feature",
-    changeScope: "scope",
-    contextRefs: [contextRef],
-    contextEvidence,
-    priorRetryCount: 0,
-    ...overrides,
-  };
-}
-const finding = {
-  id: "C1",
-  source: "correctness" as const,
-  category: "regression",
-  location: "src/example.ts:10",
-  summary: "The changed path regresses error handling.",
-  evidence: "The error branch is no longer reached.",
-  blocking: true,
+const routingInput: ExecutionRoutingInput = {
+  approvedPlanRef: decisionEvidence.plan.ref,
+  planEvidence: { summary: "approved scope", relevantSections: [] },
+  playbook: "feature",
+  changeScope: "scope",
+  contextRefs: [],
+  contextEvidence: [],
+  priorRetryCount: 0,
 };
-const validation = {
-  schemaVersion: 1 as const,
-  implementationRevision: 1,
-  status: "passed" as const,
-  checks: [{ id: "tests", status: "passed" as const }],
+const planningInput = {
+  playbook: "feature" as const,
+  inputRefs: [decisionEvidence.plan.ref],
+  evidence: { facts: "bounded facts" },
 };
-const evaluatedFinding: FindingEvaluation = {
-  findingId: "C1",
-  evidenceSupported: { value: true, confidence: 0.91 },
-  conflictsWithApprovedPlan: { value: false, confidence: 0.91 },
-  conflictsWithArchitecture: { value: false, confidence: 0.91 },
-  inScope: { value: true, confidence: 0.91 },
-  requiresHumanDecision: { value: false, confidence: 0.91 },
-  decision: "ACCEPT",
-  reasonCode: "accepted",
-};
-
-function choiceAnswer(
-  choice: string,
-  confidence = 0.91,
-): Record<string, unknown> {
-  const options = [
-    ["ECONOMY", "STANDARD", "STRONG"],
-    ["LOW", "MEDIUM", "HIGH"],
-    ["true", "false"],
-    ["COMPLETE", "RETRY", "ESCALATE"],
-    [
-      "implementation-capability",
-      "plan-conflict",
-      "human-decision",
-      "uncertain",
-    ],
-  ].find((candidate) => candidate.includes(choice)) ?? [choice];
+function answer(choice: string, allowed: string[], confidence = 0.91) {
   return {
     type: "choice",
     choice,
     confidence,
     probabilities: Object.fromEntries(
-      options.map((option) => [option, option === choice ? confidence : 0]),
+      allowed.map((value) => [
+        value,
+        value === choice ? confidence : (1 - confidence) / (allowed.length - 1),
+      ]),
     ),
   };
 }
+const routeResult = classification({
+  modelTier: answer("STANDARD", ["ECONOMY", "STANDARD", "STRONG"]),
+  reasoningTier: answer("HIGH", ["LOW", "MEDIUM", "HIGH"], 0.84),
+});
+const finding = {
+  id: "C1",
+  source: "correctness" as const,
+  category: "regression",
+  summary: "bug",
+  evidence: "proof",
+  blocking: true,
+};
+const findingInput = {
+  evidence: decisionEvidence,
+  reviewRefs,
+  approvedPlanRef: decisionEvidence.plan.ref,
+  implementationRevision: 1,
+  findings: [finding],
+};
+const roundInput = {
+  ...roundEvidence,
+  approvedPlanRef: decisionEvidence.plan.ref,
+  implementationRevision: 1,
+  findings: [],
+  validation: {
+    schemaVersion: 1 as const,
+    implementationRevision: 1,
+    status: "passed" as const,
+    checks: [],
+  },
+};
 
-function evaluation(answers: Record<string, unknown>): Evaluation<Questions> {
-  return makeEvaluation({
-    answers,
-    model: "jev-latest",
-    usage: { input_tokens: 12, output_tokens: 0 },
-    elapsedMs: 1,
-  });
-}
-
-class FakeJevClient implements JevClient {
-  readonly calls: Array<{
-    request: SystemOneRequest;
-    options?: EvaluationOptions;
-  }> = [];
-
-  constructor(
-    private readonly outcomes: readonly (Evaluation<Questions> | Error)[],
-  ) {}
-
-  async evaluate<Q extends Questions>(
-    request: SystemOneRequest<Q>,
-    options?: EvaluationOptions,
-  ): Promise<Evaluation<Q>> {
-    this.calls.push({ request, options });
-    const outcome = this.outcomes[this.calls.length - 1];
-    if (!outcome) throw new Error("No fake Jev outcome configured");
-    if (outcome instanceof Error) throw outcome;
-    return makeEvaluation<Q>(outcome);
-  }
-}
-
-describe("JevIntegration", () => {
-  test("missing Product Runtime authorization makes zero outbound requests", async () => {
-    const client = new FakeJevClient([
-      evaluation({
-        modelTier: choiceAnswer("STANDARD"),
-        reasoningTier: choiceAnswer("HIGH"),
-      }),
-    ]);
+describe("PiClassifierDecisionClient", () => {
+  test("released JevIntegration name is the same native adapter", () =>
+    expect(JevIntegration).toBe(PiClassifierDecisionClient));
+  test("missing authorization or scope mismatch makes zero classifier calls", async () => {
+    const registry = new FakeClassifierRuntime([routeResult]);
+    const adapter = new JevIntegration({ modelRegistry: registry });
+    await expect(adapter.routeExecution(routingInput)).rejects.toMatchObject({
+      kind: "policy",
+    });
     await expect(
-      new ProductJevIntegration({ client }).routeExecution(routingInput()),
+      adapter.routeExecution(routingInput, {
+        ...adapterAuthorization,
+        authorizeAttempt: async () => {
+          throw Error("denied");
+        },
+      }),
+    ).rejects.toThrow("denied");
+    await expect(
+      adapter.routeExecution(routingInput, {
+        ...adapterAuthorization,
+        destination: "other/jev-latest",
+      }),
     ).rejects.toMatchObject({ kind: "policy" });
-    expect(client.calls).toHaveLength(0);
+    expect(registry.calls).toHaveLength(0);
   });
-  test("builds public Choice requests and normalizes all three v1 decision families", async () => {
-    const client = new FakeJevClient([
-      evaluation({
-        modelTier: choiceAnswer("STANDARD"),
-        reasoningTier: choiceAnswer("HIGH", 0.84),
-      }),
-      evaluation({
-        evidenceSupported: choiceAnswer("true"),
-        conflictsWithApprovedPlan: choiceAnswer("false"),
-        conflictsWithArchitecture: choiceAnswer("false"),
-        inScope: choiceAnswer("true"),
-        requiresHumanDecision: choiceAnswer("false"),
-      }),
-      evaluation({
-        decision: choiceAnswer("ESCALATE"),
-        escalationReason: choiceAnswer("human-decision"),
+  test("all six bounded families use native Choice, preserve evidence, confidence and probabilities", async () => {
+    const registry = nativeRuntime(async (_model, request, options) => {
+      expect(options?.maxRetries).toBe(0);
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      return firstChoices(request);
+    });
+    const classify = vi.spyOn(registry, "classify");
+    const reserve = vi.fn((attempt) =>
+      adapterAuthorization.authorizeAttempt(attempt),
+    );
+    const record = vi.fn((usage) => adapterAuthorization.recordUsage(usage));
+    const authorization = {
+      ...adapterAuthorization,
+      authorizeAttempt: reserve,
+      recordUsage: record,
+    };
+    const adapter = new JevIntegration({ modelRegistry: registry });
+    await expect(
+      adapter.routeStage(
+        { ...planningInput, stage: "research", policy: "conditional" },
+        authorization,
+      ),
+    ).resolves.toEqual({ value: "RUN", confidence: 0.9 });
+    await expect(
+      adapter.routeClarification(planningInput, authorization),
+    ).resolves.toEqual({ value: "SKIP", confidence: 0.9 });
+    await expect(
+      adapter.routeDevelopmentMethod(planningInput, authorization),
+    ).resolves.toEqual({ value: "STANDARD", confidence: 0.9 });
+    await adapter.routeExecution(routingInput, authorization);
+    await adapter.evaluateFindings(findingInput, authorization);
+    await adapter.decideRound(roundInput, authorization);
+    expect(classify).toHaveBeenCalledTimes(6);
+    expect(reserve.mock.calls.map(([attempt]) => attempt.family)).toEqual([
+      "stage",
+      "clarification",
+      "method",
+      "routing",
+      "finding",
+      "round",
+    ]);
+    for (const [index, [attempt]] of reserve.mock.calls.entries()) {
+      expect(attempt).toMatchObject({
+        destination: "typesafe/jev-latest",
+        requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        configurationDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        decisionSchemaVersion: 1,
+      });
+      expect(reserve.mock.invocationCallOrder[index]).toBeLessThan(
+        classify.mock.invocationCallOrder[index],
+      );
+      expect(record.mock.calls[index][0]).toMatchObject({
+        answers: expect.any(Object),
+        inputTokens: 12,
+        outputTokens: 1,
+      });
+    }
+    expect(classify.mock.calls[0][1].state).toEqual({
+      ...planningInput,
+      stage: "research",
+      policy: "conditional",
+    });
+    expect(classify.mock.calls[3][1].state).toEqual(routingInput);
+    expect(classify.mock.calls[4][1].state).toMatchObject({
+      finding,
+      reviewRef: reviewRefs.correctness,
+      evidence: decisionEvidence,
+    });
+    expect(classify.mock.calls[4][1].questions.evidenceSupported).toMatchObject(
+      {
+        type: "choice",
+        criteria: { true: expect.any(String), false: expect.any(String) },
+      },
+    );
+    expect(classify.mock.calls[5][1].state).toMatchObject(roundInput);
+  });
+  test("required/skip policy is never sent to the classifier", async () => {
+    const registry = new FakeClassifierRuntime([]);
+    for (const policy of ["required", "skip"]) {
+      // Check each forbidden deterministic policy independently.
+      // oxlint-disable-next-line eslint/no-await-in-loop
+      await expect(
+        new JevIntegration({ modelRegistry: registry }).routeStage(
+          makeInvalidPayload<ConditionalStageRoutingInput>({
+            ...planningInput,
+            stage: "research",
+            policy,
+          }),
+          adapterAuthorization,
+        ),
+      ).rejects.toMatchObject({ kind: "policy" });
+    }
+    expect(registry.calls).toHaveLength(0);
+  });
+  test("low confidence and separate escalation reason confidence stay under core policy", async () => {
+    const registry = new FakeClassifierRuntime([
+      routeResult,
+      classification({
+        decision: answer("ESCALATE", ["COMPLETE", "RETRY", "ESCALATE"], 0.9),
+        escalationReason: answer(
+          "human-decision",
+          [
+            "implementation-capability",
+            "plan-conflict",
+            "human-decision",
+            "uncertain",
+          ],
+          0.2,
+        ),
       }),
     ]);
-    const integration = new JevIntegration({ client, timeoutMs: 100 });
-
+    const adapter = new JevIntegration({ modelRegistry: registry });
     await expect(
-      integration.routeExecution(
-        routingInput({ changeScope: "a small feature" }),
-      ),
+      adapter.routeExecution(routingInput, adapterAuthorization),
     ).resolves.toEqual({
       modelTier: { value: "STANDARD", confidence: 0.91 },
       reasoningTier: { value: "HIGH", confidence: 0.84 },
     });
-    expect(client.calls[0].request.state).toMatchObject({
-      approvedPlanRef: planRef,
-      planEvidence,
-      playbook: "feature",
-      changeScope: "a small feature",
-      contextRefs: [contextRef],
-      contextEvidence,
-      priorRetryCount: 0,
-    });
-
     await expect(
-      integration.evaluateFindings({
-        evidence: decisionEvidence,
-        reviewRefs,
-        approvedPlanRef: planRef,
-        implementationRevision: 1,
-        findings: [finding],
-      }),
-    ).resolves.toEqual([
-      {
-        findingId: "C1",
-        evidenceSupported: { value: true, confidence: 0.91 },
-        conflictsWithApprovedPlan: { value: false, confidence: 0.91 },
-        conflictsWithArchitecture: { value: false, confidence: 0.91 },
-        inScope: { value: true, confidence: 0.91 },
-        requiresHumanDecision: { value: false, confidence: 0.91 },
-      },
-    ]);
-
-    await expect(
-      integration.decideRound({
-        ...roundEvidence,
-        findingSummaries: [{ finding, sourceRef: reviewRefs.correctness }],
-        approvedPlanRef: planRef,
-        implementationRevision: 1,
-        validation,
-        findings: [evaluatedFinding],
-      }),
-    ).resolves.toEqual({
-      decision: "ESCALATE",
-      confidence: 0.91,
-      escalationReason: "human-decision",
-      escalationReasonConfidence: 0.91,
-    });
-
-    expect(client.calls[0].request.questions).toMatchObject({
-      modelTier: {
-        type: "choice",
-        criteria: {
-          ECONOMY: expect.anything(),
-          STANDARD: expect.anything(),
-          STRONG: expect.anything(),
-        },
-      },
-      reasoningTier: {
-        type: "choice",
-        criteria: {
-          LOW: expect.anything(),
-          MEDIUM: expect.anything(),
-          HIGH: expect.anything(),
-        },
-      },
-    });
-    expect(client.calls[1].request.state).toMatchObject({
-      reviewRef: reviewRefs.correctness,
-      finding: { summary: finding.summary, evidence: finding.evidence },
-    });
-    expect(client.calls[1].request.questions).toMatchObject({
-      evidenceSupported: {
-        type: "choice",
-        criteria: { true: expect.anything(), false: expect.anything() },
-      },
-    });
-    expect(client.calls[2].request.state).toMatchObject({
-      findingSummaries: [{ finding, sourceRef: reviewRefs.correctness }],
-    });
-    expect(client.calls[2].request.questions).toMatchObject({
-      decision: {
-        type: "choice",
-        criteria: {
-          COMPLETE: expect.anything(),
-          RETRY: expect.anything(),
-          ESCALATE: expect.anything(),
-        },
-      },
+      adapter.decideRound(roundInput, adapterAuthorization),
+    ).resolves.toMatchObject({
+      confidence: 0.9,
+      escalationReasonConfidence: 0.2,
     });
   });
-
-  test("preserves a low-confidence Choice for core policy", async () => {
-    const client = new FakeJevClient([
-      evaluation({
-        modelTier: choiceAnswer("ECONOMY", 0.2),
-        reasoningTier: choiceAnswer("LOW", 0.3),
-      }),
-    ]);
-
-    await expect(
-      new JevIntegration({ client }).routeExecution(
-        routingInput({
-          playbook: "bugfix",
-          changeScope: "a bug fix",
-          contextRefs: [],
-          contextEvidence: [],
-          priorRetryCount: 1,
-        }),
-      ),
-    ).resolves.toEqual({
-      modelTier: { value: "ECONOMY", confidence: 0.2 },
-      reasoningTier: { value: "LOW", confidence: 0.3 },
-    });
-  });
-
   test.each([
+    ["error", { stopReason: "error" }],
+    ["aborted", { stopReason: "aborted" }],
+    ["provider", { provider: "other" }],
+    ["model", { model: "other" }],
+    ["api", { api: "other" }],
+    ["partial", { answers: { modelTier: routeResult.answers.modelTier } }],
     [
-      "missing question result",
-      evaluation({ modelTier: choiceAnswer("STANDARD") }),
+      "unexpected",
+      {
+        answers: {
+          ...routeResult.answers,
+          extra: routeResult.answers.modelTier,
+        },
+      },
+    ],
+    [
+      "Bool is not confidence",
+      {
+        answers: {
+          ...routeResult.answers,
+          modelTier: { type: "bool", probability: 0.99 },
+        },
+      },
+    ],
+    [
+      "invalid probabilities",
+      {
+        answers: {
+          ...routeResult.answers,
+          modelTier: {
+            ...routeResult.answers.modelTier,
+            probabilities: { STANDARD: 1 },
+          },
+        },
+      },
     ],
     [
       "unknown choice",
-      evaluation({
-        modelTier: choiceAnswer("UNKNOWN"),
-        reasoningTier: choiceAnswer("HIGH"),
-      }),
-    ],
-    [
-      "schema mismatch",
-      evaluation({
-        modelTier: { type: "noul", noul: 0.9 },
-        reasoningTier: choiceAnswer("HIGH"),
-      }),
-    ],
-  ])("fails closed for %s", async (_name, outcome) => {
-    const client = new FakeJevClient([outcome]);
-
-    await expect(
-      new JevIntegration({ client }).routeExecution(
-        routingInput({ contextRefs: [], contextEvidence: [] }),
-      ),
-    ).rejects.toMatchObject({
-      name: "RuntimePortError",
-      kind: "infrastructure",
-    });
-  });
-
-  test("normalizes authentication unavailable/rejected and budget failures without leaking SDK errors", async () => {
-    const unavailable = new JevIntegration({
-      createClient: () => {
-        throw new TypeSafeIntegrationError("configuration", "No API key.");
+      {
+        answers: {
+          ...routeResult.answers,
+          modelTier: { ...routeResult.answers.modelTier, choice: "UNKNOWN" },
+        },
       },
-    });
-    await expect(
-      unavailable.routeExecution(
-        routingInput({ contextRefs: [], contextEvidence: [] }),
-      ),
-    ).rejects.toMatchObject({
-      kind: "infrastructure",
-      name: "RuntimePortError",
-    });
-
-    const rejected = new FakeJevClient([
-      new TypeSafeIntegrationError("http", "TypeSafe returned HTTP 401.", 401),
-    ]);
-    await expect(
-      new JevIntegration({ client: rejected }).routeExecution(
-        routingInput({ contextRefs: [], contextEvidence: [] }),
-      ),
-    ).rejects.toMatchObject({
-      kind: "infrastructure",
-      name: "RuntimePortError",
-    });
-
-    const budget = new FakeJevClient([
-      new TypeSafeIntegrationError("budget", "daily request cap reached"),
-    ]);
-    await expect(
-      new JevIntegration({ client: budget }).routeExecution(
-        routingInput({ contextRefs: [], contextEvidence: [] }),
-      ),
-    ).rejects.toMatchObject({
-      kind: "infrastructure",
-      name: "RuntimePortError",
-    });
-  });
-
-  test.each([
-    ["timeout", "timeout"],
-    ["transport", "connection"],
-    ["API response", "response"],
-  ] as const)("normalizes %s failure", async (_name, code) => {
-    const client = new FakeJevClient([
-      new TypeSafeIntegrationError(code, `${code} failed`),
-    ]);
-
-    await expect(
-      new JevIntegration({ client }).routeExecution(
-        routingInput({ contextRefs: [], contextEvidence: [] }),
-      ),
-    ).rejects.toMatchObject({
-      kind: code === "timeout" ? "timeout" : "infrastructure",
-      name: "RuntimePortError",
-    });
-  });
-
-  test.each([undefined, "https://api.typesafe.ai/"])(
-    "uses pi-typesafe 0.8.1 default backend without URL rewriting (%s)",
-    async (endpoint) => {
-      const transport = vi.fn(async (input: string, init?: RequestInit) => {
-        expect(init?.signal).toBeInstanceOf(AbortSignal);
-        expect(init?.headers).toMatchObject({
-          Authorization: "Bearer fixture-key",
-        });
-        return new Response(
-          JSON.stringify({
-            model: "jev-latest",
-            answers: {
-              modelTier: {
-                type: "choice",
-                choice: "STANDARD",
-                confidence: 0.91,
-                probabilities: { ECONOMY: 0, STANDARD: 0.91, STRONG: 0 },
-              },
-              reasoningTier: {
-                type: "choice",
-                choice: "HIGH",
-                confidence: 0.91,
-                probabilities: { LOW: 0, MEDIUM: 0, HIGH: 0.91 },
-              },
-            },
-            usage: { input_tokens: 12, output_tokens: 0 },
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      });
-      const previousKey = process.env.TYPESAFE_API_KEY;
-      process.env.TYPESAFE_API_KEY = "fixture-key";
-      try {
-        await expect(
-          new JevIntegration({
-            endpoint,
-            transport,
-            timeoutMs: 100,
-          }).routeExecution(
-            routingInput({ contextRefs: [], contextEvidence: [] }),
-          ),
-        ).resolves.toMatchObject({
-          modelTier: { value: "STANDARD" },
-          reasoningTier: { value: "HIGH" },
-        });
-      } finally {
-        if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
-        else process.env.TYPESAFE_API_KEY = previousKey;
-      }
-      expect(transport).toHaveBeenCalledTimes(1);
-      expect(transport.mock.calls[0]?.[0]).toBe(
-        "https://api.typesafe.ai/v1/systemone",
-      );
-    },
-  );
-
-  test.each([
-    "https://arbitrary.example.test",
-    "https://api.typesafe.ai.attacker.test",
-    "https://api.typesafe.ai/custom",
-    "http://api.typesafe.ai",
-    "https://key@api.typesafe.ai",
-    "https://api.typesafe.ai?key=secret",
-    "https://api.typesafe.ai#fragment",
-  ])(
-    "rejects custom direct-Jev destinations before client creation: %s",
-    (endpoint) => {
-      const transport = vi.fn();
-      const createClient = vi.fn();
-      expect(
-        () => new JevIntegration({ endpoint, transport, createClient }),
-      ).toThrow();
-      expect(createClient).not.toHaveBeenCalled();
-      expect(transport).not.toHaveBeenCalled();
-      expect(
-        () => new JevIntegration({ endpoint, client: new FakeJevClient([]) }),
-      ).toThrow();
-    },
-  );
-
-  test("retries only transport failures up to the configured bound", async () => {
-    const client = new FakeJevClient([
-      new TypeSafeIntegrationError("connection", "connection failed"),
-      evaluation({
-        modelTier: choiceAnswer("STANDARD"),
-        reasoningTier: choiceAnswer("HIGH"),
-      }),
-    ]);
-
-    await expect(
-      new JevIntegration({ client, maxTransportRetries: 1 }).routeExecution(
-        routingInput({ contextRefs: [], contextEvidence: [] }),
-      ),
-    ).resolves.toEqual({
-      modelTier: { value: "STANDARD", confidence: 0.91 },
-      reasoningTier: { value: "HIGH", confidence: 0.91 },
-    });
-    expect(client.calls).toHaveLength(2);
-
-    const budget = new FakeJevClient([
-      new TypeSafeIntegrationError("budget", "budget exhausted"),
-      evaluation({
-        modelTier: choiceAnswer("STANDARD"),
-        reasoningTier: choiceAnswer("HIGH"),
-      }),
+    ],
+  ])("rejects %s without fallback/retry", async (name, patch) => {
+    const registry = new FakeClassifierRuntime([
+      makeInvalidPayload<ClassifierResult>({ ...routeResult, ...patch }),
+      makeInvalidPayload<ClassifierResult>({ ...routeResult, ...patch }),
     ]);
     await expect(
       new JevIntegration({
-        client: budget,
+        modelRegistry: registry,
         maxTransportRetries: 1,
-      }).routeExecution(routingInput({ contextRefs: [], contextEvidence: [] })),
-    ).rejects.toMatchObject({ kind: "infrastructure" });
-    expect(budget.calls).toHaveLength(1);
+      }).routeExecution(routingInput, adapterAuthorization),
+    ).rejects.toMatchObject({
+      kind: name === "aborted" ? "timeout" : "infrastructure",
+    });
+    // Aborted requests may retry, but an unknown result is not a second evaluator.
+    expect(registry.calls).toHaveLength(name === "aborted" ? 2 : 1);
   });
-
-  test("does not call Jev for an empty finding set", async () => {
-    const client = new FakeJevClient([]);
-
+  test("unavailable registry/auth and thrown provider errors fail closed, never leak secrets", async () => {
+    const registry = new FakeClassifierRuntime([Error("Bearer secret")]);
     await expect(
-      new JevIntegration({ client }).evaluateFindings({
-        evidence: decisionEvidence,
-        reviewRefs,
-        approvedPlanRef: planRef,
-        implementationRevision: 1,
-        findings: [],
+      new JevIntegration({ modelRegistry: registry }).routeExecution(
+        routingInput,
+        adapterAuthorization,
+      ),
+    ).rejects.toMatchObject({
+      kind: "infrastructure",
+      message: "Pi classifier request failed",
+    });
+    await expect(
+      new JevIntegration().routeExecution(routingInput, adapterAuthorization),
+    ).rejects.toMatchObject({ kind: "infrastructure" });
+  });
+  test("provider lookup failures also normalize without leaking credentials", async () => {
+    const registry = new FakeClassifierRuntime([]);
+    vi.spyOn(registry, "findOfType").mockImplementation(() => {
+      throw Error("Bearer secret");
+    });
+    await expect(
+      new JevIntegration({ modelRegistry: registry }).routeExecution(
+        routingInput,
+        adapterAuthorization,
+      ),
+    ).rejects.toMatchObject({
+      kind: "infrastructure",
+      message: "Pi classifier request failed",
+    });
+    expect(registry.calls).toHaveLength(0);
+  });
+  test("finite deadline rejects even an uncooperative classifier, late results have no authority", async () => {
+    let finish: ((result: ClassifierResult) => void) | undefined;
+    const registry = nativeRuntime(
+      async () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const record = vi.fn();
+    await expect(
+      new JevIntegration({
+        modelRegistry: registry,
+        timeoutMs: 10,
+      }).routeExecution(routingInput, {
+        ...adapterAuthorization,
+        recordUsage: record,
       }),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    finish?.(routeResult);
+    await Promise.resolve();
+    expect(record).not.toHaveBeenCalled();
+  });
+  test("usage persistence failure never returns a decision", async () => {
+    const registry = new FakeClassifierRuntime([routeResult]);
+    await expect(
+      new JevIntegration({ modelRegistry: registry }).routeExecution(
+        routingInput,
+        {
+          ...adapterAuthorization,
+          recordUsage: async () => {
+            throw Error("disk full");
+          },
+        },
+      ),
+    ).rejects.toThrow("disk full");
+  });
+  test("missing token usage is not fabricated; empty findings make no call", async () => {
+    const record = vi.fn();
+    const registry = new FakeClassifierRuntime([
+      { ...routeResult, usage: undefined },
+    ]);
+    const adapter = new JevIntegration({ modelRegistry: registry });
+    await adapter.routeExecution(routingInput, {
+      ...adapterAuthorization,
+      recordUsage: record,
+    });
+    expect(record.mock.calls[0][0]).not.toHaveProperty("inputTokens");
+    await expect(
+      adapter.evaluateFindings({ ...findingInput, findings: [] }),
     ).resolves.toEqual([]);
-    expect(client.calls).toHaveLength(0);
+    expect(registry.calls).toHaveLength(1);
   });
 });

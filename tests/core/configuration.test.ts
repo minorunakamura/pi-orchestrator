@@ -33,7 +33,7 @@ function validConfiguration(): OrchestratorConfiguration {
       stopOnInfrastructureFailure: true,
     },
     jev: {
-      endpoint: "https://api.typesafe.ai",
+      classifier: { provider: "typesafe", model: "jev-latest" },
       timeoutMs: 30_000,
       maxTransportRetries: 1,
     },
@@ -55,10 +55,21 @@ test.each([
   "https://jev.example.test",
   "https://api.typesafe.ai/custom",
   "http://api.typesafe.ai",
-])("rejects unsupported direct-Jev endpoint configuration: %s", (endpoint) => {
+])("rejects obsolete direct-Jev endpoint configuration: %s", (endpoint) => {
   const configuration = validConfiguration();
   expect(() =>
     parseConfiguration({ ...configuration, jev: { endpoint } }),
+  ).toThrow(SchemaValidationError);
+});
+
+test.each([
+  { provider: "https://api.typesafe.ai", model: "jev-latest" },
+  { provider: "typesafe", model: "jev-latest?secret=value" },
+  { provider: "typesafe", model: "" },
+  { provider: "typesafe", model: "../other" },
+])("rejects invalid native classifier identity: %j", (classifier) => {
+  expect(() =>
+    parseConfiguration({ ...validConfiguration(), jev: { classifier } }),
   ).toThrow(SchemaValidationError);
 });
 

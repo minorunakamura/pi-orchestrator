@@ -1,29 +1,31 @@
+import type {
+  ClassifierContext,
+  ClassifierChoiceQuestion,
+  JsonValue,
+  ClassifierResult,
+} from "@earendil-works/pi-ai";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { calculateSha256 } from "../persistence/artifact-store.ts";
 import {
-  ask,
-  choice,
-  createTypeSafe,
-  type JsonValue,
-  type Questions,
-  type SystemOneRequest,
-  type TypeSafe,
-  type TypeSafeOptions,
-} from "pi-typesafe";
-import {
-  jevDestination,
+  classifierIdentity,
   type JevConfiguration,
+  type ClassifierIdentity,
 } from "../../core/configuration.ts";
 import type {
   JevCallAuthorization,
   JevRequestFamily,
 } from "../ports/jev-decision-client.ts";
-import { isConfidence, isRecord } from "../../core/schema.ts";
+import { isConfidence, isRecord, hasOnlyKeys } from "../../core/schema.ts";
 import type { ReviewFinding } from "../../core/coding/finding.ts";
 import type {
   ExecutionRoutingInput,
   ExecutionRoutingRawDecision,
   FindingEvaluationInput,
   FindingEvaluationRawDecision,
-  JevDecisionClient,
+  DecisionClassifierPort,
+  ConditionalStageRoutingInput,
+  PlanningClassifierInput,
+  ClassifierChoiceEvidence,
   RoundDecisionInput,
   RoundDecisionRawDecision,
 } from "../ports/jev-decision-client.ts";
@@ -31,16 +33,21 @@ import { RuntimePortError } from "../ports/errors.ts";
 
 export const DEFAULT_JEV_TIMEOUT_MS = 15_000;
 
-export type JevClient = Pick<TypeSafe, "evaluate">;
-export type JevTransport = NonNullable<TypeSafeOptions["fetch"]>;
-
+export type PiClassifierRuntime = Pick<
+  ModelRegistry,
+  "findOfType" | "classify"
+>;
 export interface JevIntegrationOptions extends JevConfiguration {
-  client?: JevClient;
-  createClient?: () => JevClient;
-  transport?: JevTransport;
+  modelRegistry?: PiClassifierRuntime;
 }
-
-type JevRequest = SystemOneRequest;
+type Questions = Record<string, ClassifierChoiceQuestion>;
+type JevRequest = ClassifierContext;
+function choice(
+  instructions: string,
+  criteria: Record<string, string>,
+): ClassifierChoiceQuestion {
+  return { type: "choice", instructions, criteria };
+}
 
 const modelTiers = ["ECONOMY", "STANDARD", "STRONG"] as const;
 const reasoningTiers = ["LOW", "MEDIUM", "HIGH"] as const;
@@ -52,24 +59,6 @@ const escalationReasons = [
   "human-decision",
   "uncertain",
 ] as const;
-
-function asErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isRetriable(code: string | undefined): boolean {
-  return code === "timeout" || code === "connection";
-}
-
-function normalizeFailure(
-  code: string | undefined,
-  message: string,
-): RuntimePortError {
-  return new RuntimePortError(
-    code === "timeout" || code === "aborted" ? "timeout" : "infrastructure",
-    `Jev integration failed: ${message}`,
-  );
-}
 
 function toJsonValue(value: unknown): JsonValue {
   if (
@@ -96,11 +85,8 @@ function toJsonValue(value: unknown): JsonValue {
 
 function request(state: unknown, questions: Questions): JevRequest {
   const jsonState = toJsonValue(state);
-  if (typeof jsonState === "number" || typeof jsonState === "boolean") {
-    throw new RuntimePortError(
-      "domain",
-      "Jev request state must be text, an object, an array, or null",
-    );
+  if (!isRecord(jsonState)) {
+    throw new RuntimePortError("domain", "Jev request state must be an object");
   }
   return { state: jsonState, questions };
 }
@@ -230,8 +216,8 @@ function roundRequest(input: RoundDecisionInput): JevRequest {
 
 function normalizeAnswers(
   value: unknown,
-  questions: Questions,
-): Record<string, unknown> {
+  questions: JevRequest["questions"],
+): Record<string, ClassifierChoiceEvidence> {
   if (!isRecord(value)) {
     throw new RuntimePortError(
       "infrastructure",
@@ -248,7 +234,17 @@ function normalizeAnswers(
       "Jev response answers do not match the requested questions",
     );
   }
-  return value;
+  for (const [id, question] of Object.entries(questions)) {
+    if (question.type !== "choice")
+      throw new RuntimePortError(
+        "domain",
+        "Only Choice questions are supported",
+      );
+    choiceAnswer(value, id, Object.keys(question.criteria));
+  }
+  // Every answer was validated against its exact Choice schema above.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return value as Record<string, ClassifierChoiceEvidence>;
 }
 
 function choiceAnswer<const T extends readonly string[]>(
@@ -257,7 +253,11 @@ function choiceAnswer<const T extends readonly string[]>(
   allowed: T,
 ): { value: T[number]; confidence: number } {
   const answer = answers[questionId];
-  if (!isRecord(answer) || answer.type !== "choice") {
+  if (
+    !isRecord(answer) ||
+    answer.type !== "choice" ||
+    !hasOnlyKeys(answer, ["type", "choice", "confidence", "probabilities"])
+  ) {
     throw new RuntimePortError(
       "infrastructure",
       `Jev response is missing a Choice answer for ${questionId}`,
@@ -299,48 +299,99 @@ function booleanDecision(
   return { value: answer.value === "true", confidence: answer.confidence };
 }
 
-/**
- * Runtime adapter for the published pi-typesafe library API.
- *
- * It only constructs bounded requests and normalizes transport/results. Domain
- * policy and Workflow State routing remain in the orchestrator/core layers.
- */
-export class JevIntegration implements JevDecisionClient {
-  private readonly injectedClient?: JevClient;
-  private readonly createClient: () => JevClient;
+/** Pi owns transport/auth; the runtime owns authorization, evidence and policy. */
+export class PiClassifierDecisionClient implements DecisionClassifierPort {
   private readonly timeoutMs: number;
   private readonly destination: string;
+  private readonly identity: ClassifierIdentity;
   private readonly maxTransportRetries: number;
-  private resolvedClient?: JevClient;
+  private readonly configurationDigest: string;
 
-  constructor(options: JevIntegrationOptions = {}) {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
-    const maxTransportRetries = options.maxTransportRetries ?? 0;
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+  constructor(private readonly options: JevIntegrationOptions = {}) {
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_JEV_TIMEOUT_MS;
+    this.maxTransportRetries = options.maxTransportRetries ?? 0;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0)
       throw new Error("Jev timeoutMs must be a positive safe integer");
-    }
-    if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0) {
+    if (
+      !Number.isSafeInteger(this.maxTransportRetries) ||
+      this.maxTransportRetries < 0
+    )
       throw new Error(
         "Jev maxTransportRetries must be a non-negative safe integer",
       );
-    }
-    try {
-      this.destination = jevDestination(options.endpoint);
-    } catch {
-      throw new RuntimePortError("policy", "Unsafe Jev destination");
-    }
-    this.injectedClient = options.client;
-    this.timeoutMs = timeoutMs;
-    this.maxTransportRetries = maxTransportRetries;
-    this.createClient =
-      options.createClient ??
-      (() =>
-        createTypeSafe({
-          timeoutMs,
-          ...(options.transport === undefined
-            ? {}
-            : { fetch: options.transport }),
-        }));
+    this.identity = classifierIdentity(options);
+    this.destination = `${this.identity.provider}/${this.identity.model}`;
+    this.configurationDigest = calculateSha256(
+      JSON.stringify({
+        classifier: this.identity,
+        timeoutMs: this.timeoutMs,
+        maxTransportRetries: this.maxTransportRetries,
+      }),
+    );
+  }
+
+  async routeStage(
+    input: ConditionalStageRoutingInput,
+    authorization?: JevCallAuthorization,
+  ) {
+    if (input.policy !== "conditional")
+      throw new RuntimePortError(
+        "policy",
+        "Required/skip stage policy must remain deterministic",
+      );
+    return this.routePlanning(
+      input,
+      "stage",
+      ["RUN", "SKIP", "ESCALATE"] as const,
+      "Should the named conditional stage run given the supplied accumulated evidence? RUN if needed, SKIP only with sufficient evidence, ESCALATE if unresolved.",
+      authorization,
+    );
+  }
+
+  async routeClarification(
+    input: PlanningClassifierInput,
+    authorization?: JevCallAuthorization,
+  ) {
+    return this.routePlanning(
+      input,
+      "clarification",
+      ["SKIP", "GRILL_ME", "GRILL_WITH_DOCS", "ESCALATE"] as const,
+      "Which clarification mode is needed? SKIP only with sufficient evidence; GRILL_ME for Human choices; GRILL_WITH_DOCS for Human choices needing domain documents; ESCALATE if unresolved. Do not generate questions or grant write authority.",
+      authorization,
+    );
+  }
+
+  async routeDevelopmentMethod(
+    input: PlanningClassifierInput,
+    authorization?: JevCallAuthorization,
+  ) {
+    return this.routePlanning(
+      input,
+      "method",
+      ["STANDARD", "TDD", "ESCALATE"] as const,
+      "Which implementation method fits the eligible behavior change? STANDARD or TDD, ESCALATE for unresolved Human preference. Explicit Human TDD and inapplicable work are resolved deterministically before this call.",
+      authorization,
+    );
+  }
+
+  private async routePlanning<const T extends readonly string[]>(
+    input: PlanningClassifierInput,
+    family: JevRequestFamily,
+    allowed: T,
+    instructions: string,
+    authorization?: JevCallAuthorization,
+  ) {
+    const answers = await this.evaluate(
+      request(input, {
+        decision: choice(
+          instructions,
+          Object.fromEntries(allowed.map((value) => [value, value])),
+        ),
+      }),
+      family,
+      authorization,
+    );
+    return choiceAnswer(answers, "decision", allowed);
   }
 
   async routeExecution(
@@ -431,22 +482,68 @@ export class JevIntegration implements JevDecisionClient {
     };
   }
 
-  private getClient(): JevClient {
-    if (this.resolvedClient) return this.resolvedClient;
-    if (this.injectedClient) {
-      this.resolvedClient = this.injectedClient;
-      return this.resolvedClient;
-    }
+  private async classify(requestValue: JevRequest): Promise<ClassifierResult> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      this.resolvedClient = this.createClient();
-      return this.resolvedClient;
-    } catch (error) {
-      throw normalizeFailure(
-        isRecord(error) && typeof error.code === "string"
-          ? error.code
-          : undefined,
-        asErrorMessage(error),
+      const registry = this.options.modelRegistry;
+      const model = registry?.findOfType(
+        "classifier",
+        this.identity.provider,
+        this.identity.model,
       );
+      if (
+        !registry ||
+        !model ||
+        model.type !== "classifier" ||
+        model.provider !== this.identity.provider ||
+        model.id !== this.identity.model
+      )
+        throw new RuntimePortError(
+          "infrastructure",
+          "Configured Jev classifier is unavailable",
+        );
+      const result = await Promise.race([
+        registry.classify(model, requestValue, {
+          signal: controller.signal,
+          maxRetries: 0,
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(
+              new RuntimePortError(
+                "timeout",
+                "Jev classification deadline exceeded",
+              ),
+            );
+          }, this.timeoutMs);
+        }),
+      ]);
+      if (
+        result.provider !== model.provider ||
+        result.model !== model.id ||
+        result.api !== model.api
+      )
+        throw new RuntimePortError(
+          "infrastructure",
+          "Classifier response identity mismatch",
+        );
+      if (result.stopReason !== "stop")
+        throw new RuntimePortError(
+          result.stopReason === "aborted" ? "timeout" : "infrastructure",
+          "Jev classification did not complete",
+        );
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimePortError) throw error;
+      // Do not expose provider messages or credentials in durable diagnostics.
+      throw new RuntimePortError(
+        "infrastructure",
+        "Pi classifier request failed",
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -456,7 +553,7 @@ export class JevIntegration implements JevDecisionClient {
     authorization?: JevCallAuthorization,
     findingId?: string,
   ): Promise<Record<string, unknown>> {
-    if (!authorization)
+    if (!authorization || authorization.destination !== this.destination)
       throw new RuntimePortError(
         "policy",
         "Product Runtime authorization is required before Jev dispatch",
@@ -469,25 +566,37 @@ export class JevIntegration implements JevDecisionClient {
         destination: this.destination,
         retryIndex: attempt,
         ...(findingId ? { findingId } : {}),
+        requestDigest: calculateSha256(JSON.stringify(requestValue)),
+        configurationDigest: this.configurationDigest,
+        decisionSchemaVersion: 1,
       });
-      // The retry result determines whether a later attempt may be dispatched.
-      // oxlint-disable-next-line eslint/no-await-in-loop
-      const result = await ask(this.getClient(), requestValue, {
-        timeoutMs: this.timeoutMs,
-      });
-      if (result.ok) {
-        // Record this attempt's usage before accepting its decision.
+      let result: ClassifierResult;
+      try {
+        // Each explicit retry has its own durable reservation; Pi never retries.
         // oxlint-disable-next-line eslint/no-await-in-loop
-        await authorization.recordUsage({
-          inputTokens: result.usage.input_tokens,
-          outputTokens: result.usage.output_tokens,
-        });
-        return normalizeAnswers(result.answers, requestValue.questions);
+        result = await this.classify(requestValue);
+      } catch (error) {
+        if (
+          error instanceof RuntimePortError &&
+          error.kind === "timeout" &&
+          attempt < this.maxTransportRetries
+        )
+          continue;
+        throw error;
       }
-      if (isRetriable(result.errorCode) && attempt < this.maxTransportRetries) {
-        continue;
-      }
-      throw normalizeFailure(result.errorCode, result.error);
+      const answers = normalizeAnswers(result.answers, requestValue.questions);
+      // Persist full probabilities/confidence before accepting the decision.
+      // oxlint-disable-next-line eslint/no-await-in-loop
+      await authorization.recordUsage({
+        ...(result.usage
+          ? {
+              inputTokens: result.usage.input,
+              outputTokens: result.usage.output,
+            }
+          : {}),
+        answers,
+      });
+      return answers;
     }
     throw new RuntimePortError(
       "infrastructure",
@@ -495,3 +604,6 @@ export class JevIntegration implements JevDecisionClient {
     );
   }
 }
+
+// Retain the released product name; this is the same native adapter, not a fallback.
+export { PiClassifierDecisionClient as JevIntegration };

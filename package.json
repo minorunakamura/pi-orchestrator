@@ -52,7 +52,6 @@
     "vitest": "^5.0.1"
   },
   "dependencies": {
-    "pi-subagents": "0.74.0",
-    "pi-typesafe": "^0.8.1"
+    "pi-subagents": "0.74.0"
   }
 }

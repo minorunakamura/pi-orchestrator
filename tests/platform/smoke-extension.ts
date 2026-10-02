@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   getAgentDir,
@@ -125,17 +125,9 @@ export default function (pi: ExtensionAPI) {
           });
         }
         await assert.rejects(access(join(root, "project-extension-loaded")));
-        const typesafe = JSON.parse(
-          await readFile(
-            join(ctx.cwd, "node_modules/pi-typesafe/package.json"),
-            "utf8",
-          ),
-        );
-        assert.equal(typesafe.version, "0.8.1");
         Object.assign(report, {
           status: "passed",
           subagents: "0.74.0",
-          typesafe: typesafe.version,
           lifecycleArtifactVersion: 3,
           results,
           herdrTab: process.env.HERDR_TAB_ID,

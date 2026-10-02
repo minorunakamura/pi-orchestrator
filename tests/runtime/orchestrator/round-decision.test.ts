@@ -351,7 +351,7 @@ describe("RoundDecisionRunner ORCH-016", () => {
         correctnessReviewRef,
         current.state.coding.ponytailReviewRef!,
       ],
-      configuration.decision,
+      { decision: configuration.decision, jev: configuration.jev },
     );
     const evaluationRef = await current.artifactStore.writeText(
       "finding-evaluation",

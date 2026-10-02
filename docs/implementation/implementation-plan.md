@@ -31,6 +31,8 @@ Inspected sources before design revision:
 | Plannotator adapter assumes async pending/reviewId/status for Code and five-second timeout | #9 actual synchronous Code result + local attempt |
 | no material deviation protocol / bounded builtin Oracle / active Main guard / read-only Codemode policy | #15 / #17 / #5 / #20 |
 
+Subsequent #19 update: all six classifier port families use Pi native typesafe/jev-latest; the existing three production coding families are connected, old endpoint/URL consent is rejected and pi-typesafe is removed after live Pi 0.99.1 smoke。See [migration verification](./native-classifier-migration.md)。The table above is the pre-redesign inspection, not current transport status。Stage/mode/method lifecycle wiring remains #6/#8/#16 and generated-workflow grant/binding remains #11; this migration does not implement those child Issues。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order

@@ -92,20 +92,74 @@ export type ExecutionRoutingRawDecision = NormalizedExecutionRoutingDecision;
 export type FindingEvaluationRawDecision = NormalizedFindingEvaluationDecision;
 export type RoundDecisionRawDecision = NormalizedRoundDecision;
 
-export type JevRequestFamily = "routing" | "finding" | "round";
+export type JevRequestFamily =
+  | "stage"
+  | "clarification"
+  | "method"
+  | "routing"
+  | "finding"
+  | "round";
+
+export interface ClassifierChoiceEvidence {
+  type: "choice";
+  choice: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+}
 export interface JevAttempt {
   family: JevRequestFamily;
   destination: string;
   retryIndex: number;
   findingId?: string;
+  requestDigest: string;
+  configurationDigest: string;
+  decisionSchemaVersion: 1;
 }
 export interface JevCallAuthorization {
   destination: string;
   authorizeAttempt(attempt: JevAttempt): Promise<void>;
   recordUsage(usage: {
-    inputTokens: number;
-    outputTokens: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    answers?: Record<string, ClassifierChoiceEvidence>;
   }): Promise<void>;
+}
+
+export interface PlanningClassifierInput {
+  playbook: PlaybookKind;
+  inputRefs: readonly ArtifactRef[];
+  /** Exact, bounded evidence assembled by the runtime; no inferred approval. */
+  evidence: Readonly<Record<string, unknown>>;
+}
+export interface ConditionalStageRoutingInput extends PlanningClassifierInput {
+  stage: "research" | "clarification" | "architecture";
+  policy: "conditional";
+}
+export interface DecisionClassifierPort extends JevDecisionClient {
+  routeStage(
+    input: ConditionalStageRoutingInput,
+    authorization?: JevCallAuthorization,
+  ): Promise<
+    import("../../core/decisions/types.ts").Decision<
+      "RUN" | "SKIP" | "ESCALATE"
+    >
+  >;
+  routeClarification(
+    input: PlanningClassifierInput,
+    authorization?: JevCallAuthorization,
+  ): Promise<
+    import("../../core/decisions/types.ts").Decision<
+      "SKIP" | "GRILL_ME" | "GRILL_WITH_DOCS" | "ESCALATE"
+    >
+  >;
+  routeDevelopmentMethod(
+    input: PlanningClassifierInput,
+    authorization?: JevCallAuthorization,
+  ): Promise<
+    import("../../core/decisions/types.ts").Decision<
+      "STANDARD" | "TDD" | "ESCALATE"
+    >
+  >;
 }
 
 export interface JevDecisionClient {

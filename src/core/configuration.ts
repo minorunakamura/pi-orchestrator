@@ -36,6 +36,12 @@ export const jevEvidenceCategories = [
   "review",
   "validation",
   "history",
+  "task",
+  "scout",
+  "diagnosis",
+  "research",
+  "clarification",
+  "design",
 ] as const;
 export type JevEvidenceCategory = (typeof jevEvidenceCategories)[number];
 export interface JevRuntimePolicy {
@@ -50,25 +56,51 @@ export interface JevRuntimePolicy {
     evidenceCategories: readonly JevEvidenceCategory[];
   };
 }
-export const DEFAULT_JEV_DESTINATION = "https://api.typesafe.ai";
-export function jevDestination(
-  value: string = DEFAULT_JEV_DESTINATION,
-): string {
-  const url = new URL(value);
+export interface ClassifierIdentity {
+  provider: string;
+  model: string;
+}
+export const DEFAULT_JEV_CLASSIFIER: Readonly<ClassifierIdentity> = {
+  provider: "typesafe",
+  model: "jev-latest",
+};
+export const DEFAULT_JEV_DESTINATION = "typesafe/jev-latest";
+export function jevDestination(value = DEFAULT_JEV_DESTINATION): string {
   if (
-    !["https:", "http:"].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
+    !/^[A-Za-z0-9_-]+\/[A-Za-z0-9_~./-]+$/u.test(value) ||
+    value.includes("..")
   )
     throw new Error(
-      "Jev destination must not contain credentials, query or fragment",
+      "Jev destination must be a non-secret provider/model identity",
     );
-  const destination = url.href.replace(/\/$/u, "");
-  if (destination !== DEFAULT_JEV_DESTINATION)
-    throw new Error("Direct Jev supports only the default TypeSafe backend");
-  return destination;
+  return value;
+}
+export function classifierIdentity(
+  configuration?: JevConfiguration,
+): ClassifierIdentity {
+  const identity = configuration?.classifier ?? DEFAULT_JEV_CLASSIFIER;
+  if (!isClassifierIdentity(identity))
+    throw new Error("Invalid classifier identity");
+  return { ...identity };
+}
+export function isClassifierIdentity(
+  value: unknown,
+): value is ClassifierIdentity {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["provider", "model"]) ||
+    !isNonEmptyString(value.provider) ||
+    !isNonEmptyString(value.model)
+  )
+    return false;
+  try {
+    return (
+      !value.provider.includes("/") &&
+      Boolean(jevDestination(`${value.provider}/${value.model}`))
+    );
+  } catch {
+    return false;
+  }
 }
 export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
   if (
@@ -97,7 +129,7 @@ export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
       consent.destination,
     ].every(isNonEmptyString) &&
     typeof consent.active === "boolean" &&
-    isSafeJevEndpoint(consent.destination) &&
+    isSafeJevDestination(consent.destination) &&
     Array.isArray(consent.evidenceCategories) &&
     consent.evidenceCategories.every(
       (item) =>
@@ -108,8 +140,8 @@ export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
 }
 export interface JevConfiguration {
   runtimePolicy?: JevRuntimePolicy;
-  /** Transitional: only https://api.typesafe.ai is supported until #19. */
-  endpoint?: string;
+  /** Pi owns credentials and provider transport. */
+  classifier?: ClassifierIdentity;
   timeoutMs?: number;
   maxTransportRetries?: number;
 }
@@ -198,7 +230,7 @@ function isValidationConfiguration(
   );
 }
 
-function isSafeJevEndpoint(value: unknown): boolean {
+function isSafeJevDestination(value: unknown): boolean {
   try {
     return isNonEmptyString(value) && Boolean(jevDestination(value));
   } catch {
@@ -209,14 +241,15 @@ function isJevConfiguration(value: unknown): value is JevConfiguration {
   return (
     isRecord(value) &&
     hasOnlyKeys(value, [
-      "endpoint",
+      "classifier",
       "timeoutMs",
       "maxTransportRetries",
       "runtimePolicy",
     ]) &&
     (!Object.hasOwn(value, "runtimePolicy") ||
       isJevRuntimePolicy(value.runtimePolicy)) &&
-    (!Object.hasOwn(value, "endpoint") || isSafeJevEndpoint(value.endpoint)) &&
+    (!Object.hasOwn(value, "classifier") ||
+      isClassifierIdentity(value.classifier)) &&
     (!Object.hasOwn(value, "timeoutMs") ||
       (isNonNegativeInteger(value.timeoutMs) && value.timeoutMs > 0)) &&
     (!Object.hasOwn(value, "maxTransportRetries") ||
@@ -328,9 +361,7 @@ export function toConfigurationSnapshot(
       ...(configuration.jev.runtimePolicy
         ? { runtimePolicy: structuredClone(configuration.jev.runtimePolicy) }
         : {}),
-      ...(configuration.jev.endpoint
-        ? { endpoint: configuration.jev.endpoint }
-        : {}),
+      classifier: classifierIdentity(configuration.jev),
       ...(configuration.jev.timeoutMs !== undefined
         ? { timeoutMs: configuration.jev.timeoutMs }
         : {}),

@@ -4,7 +4,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Ownership / baseline
 
-Configuration is execution policy / threshold / mapping, not Workflow progress or authority。v1 target requires Pi >=0.99.1 and pi-subagents >=0.74.0; pi-typesafe >=0.8.1 is transitional only until #19。#18 updates package/lockfile verification to Pi 0.99.1 / pi-subagents 0.74.0 / pi-typesafe 0.8.1; the remaining policy groups below are target contracts, not implemented settings。
+Configuration is execution policy / threshold / mapping, not Workflow progress or authority。v1 target requires Pi >=0.99.1 and pi-subagents >=0.74.0。#18 established that platform; #19 replaces the transitional pi-typesafe adapter/dependency with Pi native classification after live smoke。Policy groups marked as logical targets below are not all implemented settings。
 
 Safety invariants cannot be disabled by configuration: both Human Gates, deterministic validation, freshness, intent-before-side-effect, finite budgets and active ownership are mandatory。
 
@@ -80,11 +80,13 @@ No requirement to configure a not-yet-generated exact workflowId in project sett
 
 Reserve every actual request including per-finding and retries before dispatch。Timeout remains charged; restart/client recreation cannot refund/reset allowance。API key/model availability, Plan approval and `/typesafe enable` are not Product Runtime consent。
 
-## 7. Native classifier and transitional endpoint
+## 7. Native classifier configuration
 
 Target config selects native classifier provider/model via Pi registry; provider/auth plumbing belongs to Pi。Explicit maxRetries:0 disables hidden provider retries; each Orchestrator retry needs a new durable reservation。Use finite signal/deadline and require stopReason:stop plus valid complete answers (classify errors/aborts are returned results, not necessarily exceptions)。No silent classifier/LLM fallback。Classifier identity and bounded request/policy/config digests are required for freshness。
 
-#18 chooses **default TypeSafe backend only** until #19 removes direct transport。`jev.endpoint` may be omitted or set to `https://api.typesafe.ai` (trailing slash accepted); custom host/path, HTTP, credentials, query and fragment are rejected by configuration and the adapter before client creation/dispatch。Existing custom-endpoint configurations must be removed or changed to the default, with matching consent destination。No backend registry/custom credential configuration is added。Never rewrite an authenticated TypeSafe fetch to arbitrary host; remove obsolete direct endpoint config after #19 migration/smoke。
+#19 implements `jev.classifier: { provider: "typesafe", model: "jev-latest" }` (explicit default when omitted)。`runtimePolicy.consent.destination` must exactly equal `typesafe/jev-latest` (or the explicitly selected native provider/model)。The old `jev.endpoint` and URL consent are rejected; do not silently convert old authorization。Pi alone resolves provider authentication/transport; no API key/backend/endpoint belongs in product configuration。`timeoutMs` defaults to 15000 and `maxTransportRetries` to 0; explicit retries apply only to timeout/aborted results, since native error results do not expose a reliable retriable transport code。Each retry is newly reserved, never an evaluator fallback。
+
+Classifier provider/model and normalized non-secret configuration enter DecisionFreshness for Execution/Finding/Round, including empty finding evaluations。Runtime authorization is independently revalidated, not treated as a decision confidence/config grant。The generated-workflow operator grant → durable consent redesign remains #11; current runtime still requires exact workflow ID consent。The implementation status / dependency removal gate is [recorded separately](../implementation/native-classifier-migration.md)。
 
 ## 8. Validation / Human review / ownership
 

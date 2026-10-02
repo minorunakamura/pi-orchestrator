@@ -4,7 +4,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Scope / validation status
 
-Tests cover v1 contracts, not evidence that design-only changes implement them。Pi >=0.99.1 / pi-subagents >=0.74.0 are production baselines; pi-typesafe >=0.8.1 transitional until #19 native classifier migration。Child Issues add focused tests as producers change; #12 integrates host contracts and real production smoke。
+Tests cover v1 contracts, not evidence that design-only changes implement them。Pi >=0.99.1 / pi-subagents >=0.74.0 are production baselines; #19 uses native classifier typesafe/jev-latest and removes transitional pi-typesafe after live smoke。Child Issues add focused tests as producers change; #12 integrates host contracts and real production smoke。
 
 For documentation-only #3: validate required docs/links, consistent phase/event/artifact/matrix/authority contracts, and review versioned public dependency declarations/docs with recorded provenance ([Dependency Contract Review](../implementation/dependency-contract-review.md)); run existing pnpm check。Internal link/enum checks and existing tests alone do not prove dependency compatibility。No real Pi smoke or live classifier request is required to validate prose changes, and no redesigned-runtime PASS is claimed。
 
@@ -136,6 +136,6 @@ herdr tab create --workspace <HERDR_WORKSPACE_ID> --cwd <repo> --label <unique> 
 
 Herdr is not runtime dependency。Success closes tab; failure reports tab ID/pane ID/agent name, may preserve diagnosis。
 
-Record exact Pi/subagents/transitional classifier package versions; test real production composition, not fake replacement of Gates/clarification/classifier paths。Required live matrix: normal driver + recovery, actual Human Plan/Code Gates, Git/non-Git static patch, GRILL_ME/GRILL_WITH_DOCS, TDD/seams/explicit skills, simplicity/refinement, material deviation/reapproval, rare Oracle, native classifier consent/budget, public launch/trust/isolation/Codemode restrictions。
+Record exact Pi/subagents versions and native classifier provider/model identity; test real production composition, not fake replacement of Gates/clarification/classifier paths。Required live matrix: normal driver + recovery, actual Human Plan/Code Gates, Git/non-Git static patch, GRILL_ME/GRILL_WITH_DOCS, TDD/seams/explicit skills, simplicity/refinement, material deviation/reapproval, rare Oracle, native classifier consent/budget, public launch/trust/isolation/Codemode restrictions。
 
 No release evidence/CHANGELOG PASS until all child/required production checks pass。Unavailable credentials/Human environment are explicit unperformed/blocked validation, not success。

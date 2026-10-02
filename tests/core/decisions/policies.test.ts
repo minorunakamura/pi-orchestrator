@@ -582,6 +582,7 @@ describe("decision freshness", () => {
   const expected: DecisionFreshnessExpectation = {
     schemaVersion: 1,
     decisionSchemaVersion: 1,
+    classifier: { provider: "typesafe", model: "jev-latest" },
     policyVersion: "test-policy",
     planVersion: 1,
     implementationRevision: 2,
@@ -607,6 +608,8 @@ describe("decision freshness", () => {
     ["inputDigest", { inputDigest: "other" }],
     ["policyDigest", { policyDigest: "other" }],
     ["configurationDigest", { configurationDigest: "other" }],
+    ["classifier", { classifier: { provider: "other", model: "jev-latest" } }],
+    ["classifier", { classifier: { provider: "typesafe", model: "other" } }],
   ])("rejects stale %s", (_field, change) => {
     const staleDecision = { ...expected, ...change };
     expect(isDecisionFresh(staleDecision, expected)).toBe(false);
