@@ -7,6 +7,9 @@ import {
 export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   task: "context",
   scout: "context",
+  diagnosis: "context",
+  "conditional-stage": "decisions",
+  "clarification-mode": "decisions",
   research: "context",
   clarification: "context",
   plan: "plans",

@@ -1,3 +1,9 @@
+import {
+  PlanningRouting,
+  PlanningRoutingStoppedError,
+  requirePlanningRouting,
+  type PlanningRoutingDependencies,
+} from "./planning-routing.ts";
 import { agentLaunchPolicy } from "../../core/agent-launch.ts";
 import {
   runPlanningAgent,
@@ -161,7 +167,8 @@ interface PlanReviewArtifact {
   feedback?: string;
 }
 
-export interface PlanningOrchestratorDependencies {
+export interface PlanningOrchestratorDependencies
+  extends PlanningRoutingDependencies {
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
   subagentExecutor: SubagentExecutor;
@@ -188,7 +195,9 @@ function planningContextRefs(state: WorkflowState): readonly ArtifactRef[] {
   const refs: Array<ArtifactRef | undefined> = [
     state.taskRef,
     state.planning.context.scoutRef,
+    state.planning.context.diagnosisRef,
     state.planning.context.researchRef,
+    state.coding.roundDecisionRef,
   ];
   return refs.filter((ref): ref is ArtifactRef => ref !== undefined);
 }
@@ -277,20 +286,6 @@ function requirePlanReviewBinding(
   return binding;
 }
 
-function requirePlanningPolicy(state: WorkflowState): void {
-  const { researchRequired, clarificationRequired, architectureRequired } =
-    state.planning;
-  if (
-    [researchRequired, clarificationRequired, architectureRequired].some(
-      (value) => typeof value !== "boolean",
-    )
-  ) {
-    throw new Error(
-      "Persisted resolved planning policy is required; legacy policy must not be inferred",
-    );
-  }
-}
-
 export class PlanningOrchestrator {
   constructor(
     private readonly dependencies: PlanningOrchestratorDependencies,
@@ -303,7 +298,7 @@ export class PlanningOrchestrator {
       throw new Error("Context gathering requires gathering-context phase");
     }
 
-    requirePlanningPolicy(input.state);
+    requirePlanningRouting(input.state);
     const taskRef = input.state.taskRef;
     let state = input.state;
     let scoutRef = state.planning.context.scoutRef;
@@ -331,14 +326,24 @@ export class PlanningOrchestrator {
       );
     }
 
+    const routing = new PlanningRouting(this.dependencies);
+    let research;
+    try {
+      research = await routing.stage(state, "research");
+      state = research.state;
+    } catch (error) {
+      if (error instanceof PlanningRoutingStoppedError)
+        return { state: error.state, scoutRef };
+      throw error;
+    }
     let researchRef = state.planning.context.researchRef;
-    if (state.planning.researchRequired && !researchRef) {
+    if (research.outcome === "RUN" && !researchRef) {
       const researchResult = await this.run(
         state,
         request(
           "pi-ketch.researcher",
           "Gather external facts relevant to the task and the local scout evidence. Return sources and uncertainty; do not make product decisions or mutate Workflow State.",
-          [taskRef, scoutRef],
+          [...research.inputRefs, state.planning.stageDecisionRefs!.research!],
           input.cwd,
         ),
       );
@@ -362,10 +367,21 @@ export class PlanningOrchestrator {
       );
     }
 
-    const event: WorkflowEvent = state.planning.clarificationRequired
-      ? { type: "CLARIFICATION_REQUIRED" }
-      : { type: "CONTEXT_READY" };
-    state = await advanceWorkflow(state, event, this.dependencies.stateStore);
+    try {
+      state = (await routing.stage(state, "clarification")).state;
+      const clarification = await routing.clarification(state);
+      state = await advanceWorkflow(
+        clarification.state,
+        clarification.mode === "SKIP"
+          ? { type: "CONTEXT_READY" }
+          : { type: "CLARIFICATION_REQUIRED" },
+        this.dependencies.stateStore,
+      );
+    } catch (error) {
+      if (error instanceof PlanningRoutingStoppedError)
+        return { state: error.state, scoutRef, researchRef };
+      throw error;
+    }
 
     return { state, scoutRef, ...(researchRef ? { researchRef } : {}) };
   }
@@ -383,7 +399,18 @@ export class PlanningOrchestrator {
     const port = this.dependencies.clarificationPort;
     if (!port) throw new Error("ClarificationPort is required");
 
+    // #8 owns the root skill/UI bridge and narrow document grants. Mode is evidence only.
+    const routing = await new PlanningRouting(this.dependencies).clarification(
+      sourceState,
+      true,
+    );
+    if (routing.mode === "SKIP" && !sourceState.coding.roundDecisionRef)
+      throw new Error("SKIP does not authorize a clarification interaction");
     const clarificationRequest = {
+      mode: routing.mode === "SKIP" ? ("GRILL_ME" as const) : routing.mode,
+      ...(routing.mode !== "SKIP"
+        ? { modeRef: sourceState.planning.clarificationModeRef! }
+        : {}),
       prompt: input.prompt,
       contextRefs: structuredClone(
         input.contextRefs ?? planningContextRefs(sourceState),
@@ -460,11 +487,23 @@ export class PlanningOrchestrator {
     if (!Number.isSafeInteger(targetVersion)) {
       throw new Error("Plan version cannot be incremented safely");
     }
-    requirePlanningPolicy(input.state);
-    const architectureRequired = input.state.planning.architectureRequired;
+    requirePlanningRouting(input.state);
+    const architecture = await new PlanningRouting(this.dependencies).stage(
+      input.state,
+      "architecture",
+    );
+    input = { ...input, state: architecture.state };
+    const architectureRequired = architecture.outcome === "RUN";
     const plannerInput: PlannerInput = {
       taskRef: input.state.taskRef,
       scoutRef,
+      ...(input.state.planning.context.diagnosisRef
+        ? { diagnosisRef: input.state.planning.context.diagnosisRef }
+        : {}),
+      decisionRefs: [
+        ...Object.values(input.state.planning.stageDecisionRefs!),
+        input.state.planning.clarificationModeRef!,
+      ],
       ...(input.state.planning.context.researchRef
         ? { researchRef: input.state.planning.context.researchRef }
         : {}),
@@ -532,6 +571,7 @@ export class PlanningOrchestrator {
     const gate = this.dependencies.plannotatorGate;
     if (!gate) throw new Error("PlannotatorGate is required");
     const planRef = currentPlan(input.state);
+    await this.validatePlanAuthority(input.state);
     const existingId =
       input.state.external[
         planReviewIdentityKey(input.state.planning.currentPlanVersion)
@@ -719,6 +759,11 @@ export class PlanningOrchestrator {
   }
 
   private async validatePlanAuthority(state: WorkflowState): Promise<void> {
+    const architecture = await new PlanningRouting(this.dependencies).stage(
+      state,
+      "architecture",
+      true,
+    );
     const ref = currentPlan(state);
     validateArtifactRef(ref);
     const store = this.dependencies.artifactStore;
@@ -728,7 +773,7 @@ export class PlanningOrchestrator {
     if (calculateSha256(content) !== ref.sha256)
       throw new Error("Authoritative Plan artifact hash mismatch");
     parsePlan(content, {
-      architectureRequired: state.planning.architectureRequired !== false,
+      architectureRequired: architecture.outcome === "RUN",
     });
   }
 

@@ -140,17 +140,13 @@ export interface DecisionClassifierPort extends JevDecisionClient {
     input: ConditionalStageRoutingInput,
     authorization?: JevCallAuthorization,
   ): Promise<
-    import("../../core/decisions/types.ts").Decision<
-      "RUN" | "SKIP" | "ESCALATE"
-    >
+    import("../../core/decisions/planning-routing.ts").ConditionalStageDecision
   >;
   routeClarification(
     input: PlanningClassifierInput,
     authorization?: JevCallAuthorization,
   ): Promise<
-    import("../../core/decisions/types.ts").Decision<
-      "SKIP" | "GRILL_ME" | "GRILL_WITH_DOCS" | "ESCALATE"
-    >
+    import("../../core/decisions/planning-routing.ts").ClarificationModeDecision
   >;
   routeDevelopmentMethod(
     input: PlanningClassifierInput,

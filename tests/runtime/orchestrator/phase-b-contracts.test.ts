@@ -5,7 +5,7 @@ import { afterEach, expect, test } from "vitest";
 import type { WorkflowState } from "../../../src/core/workflow/state.ts";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "../../fakes/planning.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { PlannotatorIntegration } from "../../../src/runtime/integrations/plannotator.ts";
 import type { PlanReviewStatus } from "../../../src/runtime/ports/index.ts";
@@ -58,6 +58,7 @@ async function ready() {
     { runsDirectory: await root(), subagentExecutor: executor },
   );
   const dependencies = {
+    ...started,
     artifactStore: started.artifactStore,
     stateStore: started.stateStore,
     subagentExecutor: executor,
@@ -344,6 +345,7 @@ test.each(["scout", "research"])(
       run: [success("facts"), success("research")],
     });
     const resumed = await new PlanningOrchestrator({
+      ...started,
       artifactStore: started.artifactStore,
       stateStore: store,
       subagentExecutor: resumedExecutor,
@@ -352,8 +354,8 @@ test.each(["scout", "research"])(
     expect(resumed.state.planning).toMatchObject({
       researchRequired: true,
       clarificationRequired: true,
-      architectureRequired: true,
     });
+    expect(resumed.state.planning.architectureRequired).toBeUndefined();
     expect(resumedExecutor.calls.run.map((call) => call.agent)).toEqual(
       stage === "scout"
         ? ["workflow-scout", "pi-ketch.researcher"]
@@ -367,7 +369,7 @@ test.each(["scout", "research"])(
 test("I2: missing legacy planning policy fails closed before any child", async () => {
   const { dependencies, started } = await ready();
   const state = structuredClone(started.state);
-  delete state.planning.researchRequired;
+  delete state.planning.stageDecisionRefs;
   const executor = new FakeSubagentExecutor();
   const orchestrator = new PlanningOrchestrator({
     ...dependencies,
@@ -442,7 +444,7 @@ test("M1: Plan artifact persists but State save failure prevents Human Gate open
   );
   const gate = new FakePlannotatorGate();
   const orchestrator = new PlanningOrchestrator({
-    artifactStore: started.artifactStore,
+    ...started,
     subagentExecutor: executor,
     plannotatorGate: gate,
     stateStore: {

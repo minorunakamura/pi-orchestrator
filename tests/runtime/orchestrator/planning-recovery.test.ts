@@ -17,6 +17,8 @@ import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning
 import type { WorkflowStateWriter } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { FakeSubagentRpc, childRequest } from "../../fakes/subagent-rpc.ts";
 import { plan } from "../../fakes/coding-scenario.ts";
+import { planningDependencies } from "../../fakes/planning.ts";
+import { workflowId } from "../../../src/types.ts";
 import { subagentRunId } from "../../../src/types.ts";
 import {
   projectWorkflowStatus,
@@ -75,6 +77,10 @@ async function setup(
     artifactReader: store,
     timeoutMs: 150,
   });
+  const routing = planningDependencies(
+    { workflowId: workflowId("recovery"), projectRoot: root },
+    { requiresResearch: !options.failContextSave },
+  );
   let error: unknown;
   try {
     await startWorkflow(
@@ -85,6 +91,7 @@ async function setup(
         artifactStore: store,
         stateStore: writer,
         subagentExecutor: executor,
+        ...routing,
       },
     );
   } catch (cause) {
@@ -94,6 +101,7 @@ async function setup(
   // Isolate exact historical child recovery; normal continuation is tested separately.
   const resume = (launchResolver = fakeLaunchResolver) =>
     reconcileWorkflow("recovery", {
+      ...routing,
       runDirectory,
       cwd: root,
       repositoryCwd: root,
@@ -114,6 +122,7 @@ async function setup(
     resume,
     error,
     executor,
+    routing,
   };
 }
 
@@ -129,6 +138,7 @@ test("recreated runtime observes the same research run, then recovers its result
   expect(attempt.inputRefs).toEqual([
     waiting.taskRef,
     waiting.planning.context.scoutRef,
+    waiting.planning.stageDecisionRefs!.research,
   ]);
   expect(attempt.receipt?.runId).toBe("pi-ketch.researcher-1");
   expect(renderWorkflowStatus(projectWorkflowStatus(waiting))).toContain(
@@ -157,6 +167,7 @@ test("recovers an interrupted planner without creating another plan version or d
   const h = await setup({ pause: "planner" });
   expect((await h.states.loadState()).phase).toBe("planning");
   const planner = new PlanningOrchestrator({
+    ...h.routing,
     artifactStore: h.store,
     stateStore: h.states,
     subagentExecutor: h.executor,
@@ -297,6 +308,7 @@ test("resume does not hold the Workflow lock while a planner waits, and a concur
     request = input;
   });
   const active = resumeWorkflow("recovery", {
+    ...h.routing,
     runDirectory: h.runDirectory,
     cwd: h.root,
     subagentExecutor: new SubagentsIntegration(bus, {
@@ -348,6 +360,7 @@ test("State rejects a planning attempt belonging to another Workflow", async () 
 test("live publication and recovery use identical bytes despite a saved-output notice in the completion event", async () => {
   const h = await setup();
   const created = await new PlanningOrchestrator({
+    ...h.routing,
     artifactStore: h.store,
     stateStore: h.states,
     subagentExecutor: h.executor,

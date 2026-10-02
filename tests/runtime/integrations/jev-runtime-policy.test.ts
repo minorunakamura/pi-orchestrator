@@ -12,7 +12,7 @@ import {
   type PiClassifierRuntime,
 } from "../../../src/runtime/integrations/jev.ts";
 import { JevAuthorization } from "../../../src/runtime/orchestrator/jev-authorization.ts";
-import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
+import { createWorkflow as startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
 import { FakeSubagentExecutor } from "../../fakes/index.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { succeeded, decisionEvidence } from "../../fakes/coding-scenario.ts";

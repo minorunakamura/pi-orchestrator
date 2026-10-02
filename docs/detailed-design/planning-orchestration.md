@@ -28,6 +28,8 @@ Research is conditional for every playbook。Resolve it after Scout/Diagnosis pe
 
 Each resolution persists stage/policy/input refs+hash/digest、raw decision/confidence if called、effective outcome → State → next side effect。No start-time all-stage boolean resolution, no absent transient hint default-to-skip。Current v0.1.0 flags are legacy and cannot establish new conditional authority。
 
+#6 implementation: conditional Clarification の stage decision が RUN のときだけ mode を classifier で選択する。Stage SKIP は deterministic mode SKIP、stage RUN に対する mode SKIP は contradictory として ESCALATE。Mode selection は質問生成や文書 write grant ではない。実装範囲と未実装 producer / production prerequisite は [implementation record](../implementation/conditional-stage-routing.md) を参照。
+
 Reusing prior evidence requires current input/policy freshness and historical launch identity。Running/ambiguous child is not permission to rerun。Scout/Research cannot run in parallel where Research decision depends on Scout/Diagnosis。
 
 ## 3. Clarification production bridge

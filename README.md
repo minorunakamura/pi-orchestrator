@@ -35,7 +35,7 @@ Pi loader は `pi.extensions: ./src/index.ts` の TypeScript source を読み込
 | pi-subagents | **>=0.74.0**、released public single-agent RPC / preflight / lifecycle v3 |
 | Classifier | Pi native **typesafe/jev-latest**（Pi が credential/provider を解決。`pi-typesafe` dependency は削除済み） |
 | @plannotator/pi-extension | mandatory Human Plan/Code UI、Plan async / Code synchronous public contract |
-| [minorunakamura/pi-ketch](https://github.com/minorunakamura/pi-ketch) | conditional Research、pi-ketch.researcher。Same-name npm package は別契約 |
+| [minorunakamura/pi-ketch](https://github.com/minorunakamura/pi-ketch) | GitHub 配布のみ。conditional Research / pi-ketch.researcher。検証 revision は `e49fd9e`（[検証記録](./docs/implementation/conditional-stage-routing.md#real-pi--research-integration)）。同名 npm package は使用しない |
 | [minorunakamura/pi-ask-user-question](https://github.com/minorunakamura/pi-ask-user-question) | root/Main の Human clarification。Same-name npm askUserQuestion は代替ではない |
 
 package/lockfile は Pi **0.99.1** / pi-subagents **0.74.0** で検証します。Pi は host peer のまま、pi-subagents は public preflight 用 runtime dependency です。実行 host は同じ released dependency の extension を明示 load してください（development smoke: `-e ./node_modules/pi-subagents`）。Jev decision transport は Pi native classifiers（default `typesafe/jev-latest`）を使います。`jev.classifier: { provider, model }` を選び、workflow consent の `destination` は同じ `provider/model` に明示 binding してください。旧 `jev.endpoint` / URL consent は拒否され、自動変換・fallback はありません。Pi が credentials/provider transport を所有し、Orchestrator が request ごとの durable reservation と confidence policy を所有します。Pi 0.99.1 の live smoke 検証後に `pi-typesafe` dependency を削除しました。検証状況は [Issue #19 migration record](docs/implementation/native-classifier-migration.md) を参照してください。
@@ -97,6 +97,8 @@ Oracle は difficult Diagnosis/Architecture/strategy disagreement/deviation/post
 
 required → RUN、skip → SKIP は deterministic。Jev は conditional → RUN/SKIP/ESCALATE のみ route し、low confidence を silent skip にしません。Research/Clarification/Architecture は accumulated durable Scout/Diagnosis/Research/Human evidence を sequential に使います。
 
+#6 では、この逐次 routing と immutable stage/mode decision、freshness 検証、normal-driver continuation を実装しました。旧 `PlaybookContext` の hint は authority にしません。Diagnosis 未保存の bugfix/hotfix は Scout 後に停止し、実行 stage は #7 が追加します。Root clarification/document writes は #8、生成 ID 後の consent capture は #11 のままです。[実装・acceptance coverage・production 制限](./docs/implementation/conditional-stage-routing.md) を参照してください。
+
 GRILL_ME は root/Main + grilling + ask_user_question。GRILL_WITH_DOCS はさらに domain-modeling。Jev は mode を選べても Human-facing question/answer は生成しません。
 
 Allowed document candidates: CONTEXT.md、CONTEXT-MAP.md、nested CONTEXT.md、docs/adr/*.md / nested docs/adr/*.md。Orchestrator が active clarification に bind した **exact path scope / intent / before identity を write 前に**保存し、after identity/diff/answer evidence を保存します。source/config/implementation mutation は Main に許可されず、docs exception も implementation authority ではありません。
@@ -141,12 +143,12 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver foundation (#4)、native classifier transport (#19)、共通 launch policy (#21) は実装済みです。Conditional stages/Diagnosis/root clarification/generated-workflow consent/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver foundation (#4)、sequential conditional routing (#6)、native classifier transport (#19)、共通 launch policy (#21) は実装済みです。Diagnosis/root clarification/generated-workflow consent/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 
 - [Documentation index](./docs/README.md)
 - [Canonical Basic Design](./docs/basic-design/basic-design.md)
 - [Implementation/dependency map](./docs/implementation/implementation-plan.md)
-- [Dependency public-contract review](./docs/implementation/dependency-contract-review.md) — 指定 release の根拠・条件・未解決の publication/runtime 検証。GitHub Ketch/Question package の compatible published source は未確定で、moving main を production 保証にしません
+- [Dependency public-contract review](./docs/implementation/dependency-contract-review.md) — 指定公開契約の根拠・条件。Ketch は operator 指定の GitHub source / 固定 commit で検証済み。Question package の選定・runtime 検証は #8。moving main を検証済み revision と同一視しません
 - [Historical v0.1.0 release evidence](./docs/release/v0.1.0.md)

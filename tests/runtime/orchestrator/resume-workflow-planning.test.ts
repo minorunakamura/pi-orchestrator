@@ -76,7 +76,7 @@ describe("ORCH-018 planning/context reconciliation", () => {
     expect(blocked.state.block?.reason).toBe("operator-attention-required");
 
     // A second workflow demonstrates the explicit prompt path without relying on transient hints.
-    const next = await setup({});
+    const next = await setup({ clarification: true });
     const nextState = await next.load();
     await next.stateStore.saveState(
       { ...nextState, phase: "clarifying" as const },

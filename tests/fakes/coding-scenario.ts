@@ -11,7 +11,7 @@ import type {
   JevDecisionClient,
 } from "../../src/runtime/ports/index.ts";
 import { plannotatorReviewId, subagentRunId } from "../../src/types.ts";
-import { startWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
+import { startWorkflow } from "./planning.ts";
 import { PlanningOrchestrator } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { CodingOrchestrator } from "../../src/runtime/orchestrator/coding-orchestrator.ts";
 import { ValidationRunner } from "../../src/runtime/orchestrator/validation-runner.ts";

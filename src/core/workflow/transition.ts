@@ -1,3 +1,4 @@
+import { getPlaybookStagePolicy } from "../playbooks/policy.ts";
 import type { ArtifactRef } from "../artifacts/references.ts";
 import { TransitionError, type TransitionErrorCode } from "./errors.ts";
 import { assertStateInvariants, sameArtifactRef } from "./invariants.ts";
@@ -85,6 +86,13 @@ function invalidatePlan(state: WorkflowState): void {
   delete state.coding.executionRoutingRef;
 }
 
+function invalidateArchitecture(state: WorkflowState): void {
+  if (state.planning.stageDecisionRefs) {
+    delete state.planning.stageDecisionRefs.architecture;
+    delete state.planning.architectureRequired;
+  }
+}
+
 function clearCurrentRoundEvidence(state: WorkflowState): void {
   delete state.coding.validationRef;
   delete state.coding.correctnessReviewRef;
@@ -94,6 +102,20 @@ function clearCurrentRoundEvidence(state: WorkflowState): void {
   delete state.coding.roundDecisionRef;
   delete state.coding.latestCodeReviewRef;
   delete state.coding.codeReview;
+}
+
+function requireContextDecisions(state: WorkflowState): void {
+  if (!state.planning.stageDecisionRefs) return; // Legacy State is diagnosed by runtime, not upgraded here.
+  const { context, stageDecisionRefs, clarificationModeRef } = state.planning;
+  if (
+    !context.scoutRef ||
+    !stageDecisionRefs.research ||
+    !stageDecisionRefs.clarification ||
+    !clarificationModeRef ||
+    (state.planning.researchRequired && !context.researchRef) ||
+    (["bugfix", "hotfix"].includes(state.playbook) && !context.diagnosisRef)
+  )
+    fail("Sequential planning requires durable context and decisions");
 }
 
 function setContextRefs(
@@ -119,6 +141,46 @@ function applyTransition(
   const next = cloneState(state);
 
   switch (event.type) {
+    case "STAGE_RESOLVED": {
+      if (
+        state.phase !==
+          (event.stage === "architecture" ? "planning" : "gathering-context") ||
+        !state.planning.context.scoutRef ||
+        !next.planning.stageDecisionRefs
+      )
+        fail(
+          "STAGE_RESOLVED requires the sequential planning phase and Scout evidence",
+        );
+      if (
+        next.planning.stageDecisionRefs[event.stage] &&
+        !sameArtifactRef(
+          next.planning.stageDecisionRefs[event.stage],
+          event.decisionRef,
+        )
+      )
+        fail(
+          "A stage decision cannot be replaced without explicit invalidation",
+        );
+      const policy = getPlaybookStagePolicy(state.playbook)[event.stage];
+      if (
+        (policy === "required" && !event.required) ||
+        (policy === "skip" && event.required)
+      )
+        fail("A classifier cannot override deterministic stage policy");
+      next.planning.stageDecisionRefs[event.stage] = event.decisionRef;
+      next.planning[`${event.stage}Required`] = event.required;
+      return next;
+    }
+
+    case "CLARIFICATION_MODE_RESOLVED":
+      if (
+        state.phase !== "gathering-context" ||
+        !state.planning.stageDecisionRefs?.clarification
+      )
+        fail("Clarification mode requires its persisted stage decision");
+      next.planning.clarificationModeRef = event.decisionRef;
+      return next;
+
     case "CONTEXT_EVIDENCE_PERSISTED":
       if (state.phase !== "gathering-context") {
         fail(
@@ -132,6 +194,12 @@ function applyTransition(
       if (state.phase !== "gathering-context")
         fail("CONTEXT_READY is only valid while gathering context");
       setContextRefs(next, event);
+      requireContextDecisions(next);
+      if (
+        next.planning.stageDecisionRefs &&
+        next.planning.clarificationRequired !== false
+      )
+        fail("CONTEXT_READY requires an explicit clarification SKIP");
       next.phase = "planning";
       return next;
 
@@ -144,6 +212,14 @@ function applyTransition(
         fail("CLARIFICATION_REQUIRED is not valid in the current phase");
       }
       setContextRefs(next, event);
+      if (state.phase === "gathering-context") {
+        requireContextDecisions(next);
+        if (
+          next.planning.stageDecisionRefs &&
+          next.planning.clarificationRequired !== true
+        )
+          fail("Clarification interaction requires a RUN decision");
+      }
       if (isRoundDecisionRef(event.reasonRef)) {
         next.coding.roundDecisionRef = event.reasonRef;
       }
@@ -154,12 +230,23 @@ function applyTransition(
       if (state.phase !== "clarifying")
         fail("CLARIFICATION_COMPLETE is only valid while clarifying");
       next.planning.context.clarificationRef = event.clarificationRef;
+      invalidateArchitecture(next);
       next.phase = "planning";
       return next;
 
     case "PLAN_CREATED": {
       if (state.phase !== "planning")
         fail("PLAN_CREATED is only valid while planning");
+      requireContextDecisions(state);
+      if (
+        state.planning.stageDecisionRefs &&
+        (!state.planning.stageDecisionRefs.architecture ||
+          (state.planning.clarificationRequired &&
+            !state.planning.context.clarificationRef))
+      )
+        fail(
+          "PLAN_CREATED requires Architecture routing and any confirmed Human answer",
+        );
       if (event.version <= state.planning.currentPlanVersion) {
         fail("PLAN_CREATED must advance the plan version");
       }
@@ -179,6 +266,7 @@ function applyTransition(
       if (state.phase !== "awaiting-plan-review")
         fail("PLAN_FEEDBACK is only valid while awaiting plan review");
       next.planning.latestPlanReviewRef = event.feedbackRef;
+      invalidateArchitecture(next);
       next.phase = "planning";
       return next;
 
@@ -206,6 +294,7 @@ function applyTransition(
       next.coding.roundDecisionRef = event.decisionRef;
       delete next.planning.latestPlanReviewRef;
       invalidatePlan(next);
+      invalidateArchitecture(next);
       next.phase = "planning";
       return next;
 

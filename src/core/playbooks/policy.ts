@@ -18,13 +18,9 @@ export const playbookStages = [
 
 export type PlaybookStage = (typeof playbookStages)[number];
 export type StagePolicy = "required" | "conditional" | "skip";
-export type ResolvedStagePolicy = Exclude<StagePolicy, "conditional">;
 export type PlaybookStagePolicy = Record<PlaybookStage, StagePolicy>;
-export type ResolvedPlaybookStagePolicy = Record<
-  PlaybookStage,
-  ResolvedStagePolicy
->;
 
+/** Legacy hints are accepted at the API boundary but never resolve authority. */
 export interface PlaybookContext {
   requiresResearch?: boolean;
   requiresClarification?: boolean;
@@ -32,7 +28,7 @@ export interface PlaybookContext {
 }
 
 export const newProjectStagePolicy: PlaybookStagePolicy = Object.freeze({
-  research: "required",
+  research: "conditional",
   clarification: "conditional",
   architecture: "required",
   "plan-review": "required",
@@ -56,7 +52,7 @@ export const bugfixStagePolicy: PlaybookStagePolicy = Object.freeze({
 });
 
 export const hotfixStagePolicy: PlaybookStagePolicy = Object.freeze({
-  research: "skip",
+  research: "conditional",
   clarification: "conditional",
   architecture: "skip",
   "plan-review": "required",
@@ -64,8 +60,8 @@ export const hotfixStagePolicy: PlaybookStagePolicy = Object.freeze({
 });
 
 export const choreStagePolicy: PlaybookStagePolicy = Object.freeze({
-  research: "skip",
-  clarification: "skip",
+  research: "conditional",
+  clarification: "conditional",
   architecture: "skip",
   "plan-review": "required",
   "code-review": "required",
@@ -79,68 +75,16 @@ const stagePolicies: Record<PlaybookKind, PlaybookStagePolicy> = {
   chore: choreStagePolicy,
 };
 
-function conditionalStageRuns(
-  stage: PlaybookStage,
-  context: PlaybookContext,
-): boolean {
-  switch (stage) {
-    case "research":
-      return context.requiresResearch === true;
-    case "clarification":
-      return context.requiresClarification === true;
-    case "architecture":
-      return context.requiresArchitecture === true;
-    case "plan-review":
-    case "code-review":
-      return true;
-  }
-  return false;
-}
-
-export function resolveStagePolicy(
-  stage: PlaybookStage,
-  policy: StagePolicy,
-  context: PlaybookContext = {},
-): ResolvedStagePolicy {
-  // Human Gates are hard Initial Scope rules, not configurable stage choices.
-  if (stage === "plan-review" || stage === "code-review") return "required";
-  if (policy === "required") return "required";
-  if (policy === "skip") return "skip";
-  return conditionalStageRuns(stage, context) ? "required" : "skip";
-}
-
 export function getPlaybookStagePolicy(
   playbook: PlaybookKind,
 ): PlaybookStagePolicy {
   return { ...stagePolicies[playbook] };
 }
 
+/** @deprecated Conditional policy stays unresolved until durable evidence exists. */
 export function resolvePlaybookPolicy(
   playbook: PlaybookKind,
-  context: PlaybookContext = {},
-): ResolvedPlaybookStagePolicy {
-  const policy = stagePolicies[playbook];
-  return {
-    research: resolveStagePolicy("research", policy.research, context),
-    clarification: resolveStagePolicy(
-      "clarification",
-      policy.clarification,
-      context,
-    ),
-    architecture: resolveStagePolicy(
-      "architecture",
-      policy.architecture,
-      context,
-    ),
-    "plan-review": resolveStagePolicy(
-      "plan-review",
-      policy["plan-review"],
-      context,
-    ),
-    "code-review": resolveStagePolicy(
-      "code-review",
-      policy["code-review"],
-      context,
-    ),
-  };
+  _context?: PlaybookContext,
+): PlaybookStagePolicy {
+  return getPlaybookStagePolicy(playbook);
 }
