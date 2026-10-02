@@ -112,12 +112,34 @@ describe("SubagentsIntegration", () => {
         await temporaryRoot(),
         { projectTrusted, launchResolver: fakeLaunchResolver },
       );
-      await runtime.start({ task: "Read-only scout probe", playbook: "chore" });
+      await runtime.start({
+        task: "Read-only scout probe",
+        playbook: "feature",
+        context: { requiresClarification: true },
+      });
       expect(childRequest(events.emitted[0].payload).agentScope).toBe(
         projectTrusted ? "both" : "user",
       );
     },
   );
+
+  test("preflights every static fanout identity before any avoidable child dispatch", async () => {
+    const events = new FakeEventBus();
+    const integration = new SubagentsIntegration(events, {
+      launchResolver: async (input, params) => {
+        if (input.agent === "ponytail-reviewer")
+          throw Error("Required Agent missing");
+        return fakeLaunchResolver(input, params);
+      },
+    });
+    await expect(
+      integration.runParallel([
+        { agent: "reviewer", task: "Review correctness" },
+        { agent: "ponytail-reviewer", task: "Review simplicity" },
+      ]),
+    ).rejects.toThrow("Agent launch preflight rejected");
+    expect(events.emitted).toHaveLength(0);
+  });
 
   test("runs reviewer requests in parallel with a fresh context", async () => {
     const events = new FakeEventBus();
@@ -298,7 +320,11 @@ describe("SubagentsIntegration", () => {
     });
     let settled = false;
     const start = runtime
-      .start({ task: "Reversi", playbook: "new-project" })
+      .start({
+        task: "Reversi",
+        playbook: "new-project",
+        context: { requiresClarification: true },
+      })
       .then((result) => {
         settled = true;
         return result;
@@ -322,7 +348,7 @@ describe("SubagentsIntegration", () => {
       "research after supervisor reply",
     );
     const result = await start;
-    expect(result.state.phase).toBe("planning");
+    expect(result.state.phase).toBe("clarifying");
     const store = new ArtifactStore(result.runDirectory);
     expect(
       await store.readText(result.state.planning.context.researchRef!),
@@ -342,12 +368,18 @@ describe("SubagentsIntegration", () => {
     });
     const tasks = ["ブラウザで遊べるリバーシゲーム", "別のプロジェクトの時計"];
     const started = await Promise.all(
-      tasks.map((task) => runtime.start({ task, playbook: "new-project" })),
+      tasks.map((task) =>
+        runtime.start({
+          task,
+          playbook: "new-project",
+          context: { requiresClarification: true },
+        }),
+      ),
     );
     const requests = events.emitted.map(({ payload }) => childRequest(payload));
     expect(requests).toHaveLength(4);
     for (const [index, workflow] of started.entries()) {
-      expect(workflow.state.phase).toBe("planning");
+      expect(workflow.state.phase).toBe("clarifying");
       const children = requests.filter(
         (request) => request.ownerRunId === workflow.workflowId,
       );

@@ -73,16 +73,8 @@ import {
 } from "./coding-orchestrator.ts";
 import type { WorkflowStateWriter } from "./advance-workflow.ts";
 import { advanceWorkflow } from "./advance-workflow.ts";
-import {
-  ValidationRunner,
-  type ValidationRunnerDependencies,
-} from "./validation-runner.ts";
-import { ReviewRunner, parseReviewArtifact } from "./review-runner.ts";
-import {
-  FindingEvaluationRunner,
-  persistedFindings,
-  type FindingEvaluationRunnerDependencies,
-} from "./finding-evaluation.ts";
+import { parseReviewArtifact } from "./review-runner.ts";
+import { persistedFindings } from "./finding-evaluation.ts";
 import {
   assembleCodingEvidence,
   assertValidationAuthority,
@@ -90,10 +82,6 @@ import {
   reviewEvidenceRefs,
   sourcedFindings,
 } from "./coding-evidence.ts";
-import {
-  RoundDecisionRunner,
-  type RoundDecisionRunnerDependencies,
-} from "./round-decision.ts";
 import { routeRoundDecision } from "../../core/decisions/round-decision.ts";
 import { isDecisionFresh } from "../../core/decisions/decision-freshness.ts";
 import { assertCodingAuthority } from "../../core/coding/authority.ts";
@@ -685,6 +673,8 @@ export class WorkflowReconciler {
         ],
       );
     }
+    if (!attempt || attempt.notDispatched)
+      return { status: "advanced", state: current, phase: current.phase };
     const orchestrator = new PlanningOrchestrator({
       artifactStore: store,
       stateStore: this.deps.stateStore,
@@ -732,32 +722,7 @@ export class WorkflowReconciler {
         "Clarification requires an explicit Human prompt; it must not be inferred from transient state",
       );
     }
-    const result = await new PlanningOrchestrator({
-      artifactStore: this.deps.artifactStore,
-      stateStore: this.deps.stateStore,
-      subagentExecutor: this.deps.subagentExecutor,
-      clarificationPort: this.deps.clarificationPort,
-    }).requestClarification({
-      state,
-      prompt: this.deps.clarificationPrompt,
-    });
-    if (result.status === "provided")
-      return {
-        status: "advanced",
-        state: result.state,
-        phase: result.state.phase,
-      };
-    if (result.status === "blocked")
-      return {
-        status: "blocked",
-        state: result.state,
-        phase: result.state.phase,
-      };
-    return {
-      status: "pending",
-      state: result.state,
-      phase: result.state.phase,
-    };
+    return { status: "advanced", state, phase: state.phase };
   }
 
   private async reconcilePlanning(
@@ -800,11 +765,13 @@ export class WorkflowReconciler {
         );
       }
     }
+    if (!attempt || attempt.notDispatched)
+      return { status: "advanced", state, phase: state.phase };
     const orchestrator = new PlanningOrchestrator({
       artifactStore: store,
       stateStore: this.deps.stateStore,
       subagentExecutor: this.deps.subagentExecutor,
-      plannotatorGate: this.deps.plannotatorGate,
+      // Recovered Plan publication is evidence; opening its Human Gate is normal driver work.
     });
     try {
       const result = await orchestrator.createPlan({
@@ -931,35 +898,7 @@ export class WorkflowReconciler {
   ): Promise<ReconciliationResult> {
     const worker = await this.reconcileWorker(state);
     if (worker) return worker;
-    if (!this.deps.configuration || !this.deps.jevDecisionClient)
-      return this.block(
-        state,
-        "operator-attention-required",
-        undefined,
-        "Product Runtime configuration is unavailable",
-      );
-    try {
-      const result = await new CodingOrchestrator(
-        this.codingDependencies(),
-      ).execute({
-        state,
-        cwd: this.deps.cwd ?? this.deps.repositoryCwd,
-        ...(this.deps.changeScope
-          ? { changeScope: this.deps.changeScope }
-          : {}),
-        reconcileStaleRouting: true,
-      });
-      return {
-        status: "advanced",
-        state: result.state,
-        phase: result.state.phase,
-      };
-    } catch (error) {
-      const current = await this.loadCurrentState(state);
-      if (current.phase === "blocked")
-        return { status: "blocked", state: current, phase: current.phase };
-      throw error;
-    }
+    return { status: "advanced", state, phase: state.phase };
   }
 
   private async loadCurrentState(
@@ -1480,19 +1419,6 @@ export class WorkflowReconciler {
     );
   }
 
-  private validationDependencies(): ValidationRunnerDependencies {
-    if (!this.deps.validationExecutor)
-      throw new ReconciliationError(
-        "Validation resume requires ValidationExecutor",
-      );
-    return {
-      artifactStore: this.deps.artifactStore,
-      stateStore: this.deps.stateStore,
-      validationExecutor: this.deps.validationExecutor,
-      configuration: this.deps.configuration,
-    };
-  }
-
   private async validationFromState(
     state: WorkflowState,
   ): Promise<
@@ -1577,33 +1503,9 @@ export class WorkflowReconciler {
         clearedState,
         state.stateRevision,
       );
-      return this.runValidation(cleared);
+      return { status: "advanced", state: cleared, phase: cleared.phase };
     }
-    return this.runValidation(state);
-  }
-
-  private async runValidation(
-    state: WorkflowState,
-  ): Promise<ReconciliationResult> {
-    try {
-      const result = await new ValidationRunner(
-        this.validationDependencies(),
-      ).execute({ state });
-      return {
-        status: result.state.phase === "blocked" ? "blocked" : "advanced",
-        state: result.state,
-        phase: result.state.phase,
-      };
-    } catch (error) {
-      const current = await this.loadCurrentState(state);
-      if (current.phase === "blocked" || current.phase === "failed")
-        return {
-          status: current.phase === "blocked" ? "blocked" : "failed",
-          state: current,
-          phase: current.phase,
-        };
-      throw error;
-    }
+    return { status: "advanced", state, phase: state.phase };
   }
 
   private async reviewRefsFromState(
@@ -1721,30 +1623,7 @@ export class WorkflowReconciler {
       !current.coding.correctnessReviewRef ||
       !current.coding.ponytailReviewRef
     ) {
-      try {
-        const result = await new ReviewRunner({
-          artifactStore: this.deps.artifactStore,
-          stateStore: this.deps.stateStore,
-          subagentExecutor: this.deps.subagentExecutor,
-        }).execute({
-          state: current,
-          cwd: this.deps.cwd ?? this.deps.repositoryCwd,
-        });
-        return {
-          status: result.state.phase === "blocked" ? "blocked" : "advanced",
-          state: result.state,
-          phase: result.state.phase,
-        };
-      } catch (error) {
-        const persisted = await this.loadCurrentState(current);
-        if (persisted.phase === "blocked" || persisted.phase === "failed")
-          return {
-            status: persisted.phase === "blocked" ? "blocked" : "failed",
-            state: persisted,
-            phase: persisted.phase,
-          };
-        throw error;
-      }
+      return { status: "advanced", state: current, phase: current.phase };
     }
     if (!this.deps.configuration || !this.deps.jevDecisionClient)
       return this.block(
@@ -1776,38 +1655,7 @@ export class WorkflowReconciler {
         evaluation.coding.validationRef!,
       );
     }
-    try {
-      const result = await new FindingEvaluationRunner(
-        this.findingDependencies(),
-      ).execute({ state: current });
-      return {
-        status: result.state.phase === "blocked" ? "blocked" : "advanced",
-        state: result.state,
-        phase: result.state.phase,
-      };
-    } catch (error) {
-      const persisted = await this.loadCurrentState(current);
-      if (persisted.phase === "blocked" || persisted.phase === "failed")
-        return {
-          status: persisted.phase === "blocked" ? "blocked" : "failed",
-          state: persisted,
-          phase: persisted.phase,
-        };
-      throw error;
-    }
-  }
-
-  private findingDependencies(): FindingEvaluationRunnerDependencies {
-    if (!this.deps.configuration || !this.deps.jevDecisionClient)
-      throw new ReconciliationError(
-        "Finding evaluation resume requires configuration and JevDecisionClient",
-      );
-    return {
-      artifactStore: this.deps.artifactStore,
-      stateStore: this.deps.stateStore,
-      jevDecisionClient: this.deps.jevDecisionClient,
-      configuration: this.deps.configuration,
-    };
+    return { status: "advanced", state: current, phase: current.phase };
   }
 
   private async evaluationFromState(
@@ -1976,38 +1824,7 @@ export class WorkflowReconciler {
       validationRef,
     );
     if (persisted) return this.applyRound(state, persisted, validationRef);
-    try {
-      const result = await new RoundDecisionRunner(
-        this.roundDependencies(),
-      ).execute({ state, validation, validationRef });
-      return {
-        status: result.state.phase === "blocked" ? "blocked" : "advanced",
-        state: result.state,
-        phase: result.state.phase,
-      };
-    } catch (error) {
-      const current = await this.loadCurrentState(state);
-      if (current.phase === "blocked" || current.phase === "failed")
-        return {
-          status: current.phase === "blocked" ? "blocked" : "failed",
-          state: current,
-          phase: current.phase,
-        };
-      throw error;
-    }
-  }
-
-  private roundDependencies(): RoundDecisionRunnerDependencies {
-    if (!this.deps.configuration || !this.deps.jevDecisionClient)
-      throw new ReconciliationError(
-        "Round Decision resume requires configuration and JevDecisionClient",
-      );
-    return {
-      artifactStore: this.deps.artifactStore,
-      stateStore: this.deps.stateStore,
-      jevDecisionClient: this.deps.jevDecisionClient,
-      configuration: this.deps.configuration,
-    };
+    return { status: "advanced", state, phase: state.phase };
   }
 
   private async roundFromState(
@@ -2212,39 +2029,7 @@ export class WorkflowReconciler {
       );
     try {
       const orchestrator = new CodingOrchestrator(this.codingDependencies());
-      if (!current) {
-        const opened = await orchestrator.openCodeReview({ state });
-        if (opened.status === "opened")
-          return {
-            status: "pending",
-            state: opened.state,
-            phase: opened.state.phase,
-          };
-        if (opened.status === "blocked")
-          return {
-            status: "blocked",
-            state: opened.state,
-            phase: opened.state.phase,
-          };
-        if (
-          opened.outcome.status === "approved" ||
-          opened.outcome.status === "feedback"
-        )
-          return {
-            status: "advanced",
-            state: opened.state,
-            phase: opened.state.phase,
-          };
-        return {
-          status: opened.outcome.status === "blocked" ? "blocked" : "pending",
-          state: opened.state,
-          phase: opened.state.phase,
-          reason:
-            opened.outcome.status === "unknown"
-              ? opened.outcome.reason
-              : undefined,
-        };
-      }
+      if (!current) return { status: "advanced", state, phase: state.phase };
       const outcome = await orchestrator.reconcileCodeReview({
         state,
         reviewId: current.reviewId,

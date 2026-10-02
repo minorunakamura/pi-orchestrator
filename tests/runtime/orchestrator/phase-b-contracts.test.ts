@@ -288,6 +288,7 @@ test("explicit REPLAN_REQUIRED invalidation rejects old approval without restori
   ).rejects.toThrow(/awaiting-plan-review/);
   expect(await store.loadState()).toEqual(state);
   expect(await readdir(join(store.rootDirectory, "plan-reviews"))).toEqual([
+    "plan-v1-open-intent.md",
     "review-1.md",
   ]);
 
@@ -552,6 +553,7 @@ test("M1: persisted settled artifact can be retried after approval State save fa
   );
   expect(restored.state.phase).toBe("implementing");
   expect(await readdir(join(store.rootDirectory, "plan-reviews"))).toEqual([
+    "plan-v1-open-intent.md",
     "review-1.md",
   ]);
 });

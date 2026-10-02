@@ -33,6 +33,8 @@ Inspected sources before design revision:
 
 Subsequent #19 update: all six classifier port families use Pi native typesafe/jev-latest; the existing three production coding families are connected, old endpoint/URL consent is rejected and pi-typesafe is removed after live Pi 0.99.1 smoke。See [migration verification](./native-classifier-migration.md)。The table above is the pre-redesign inspection, not current transport status。Stage/mode/method lifecycle wiring remains #6/#8/#16 and generated-workflow grant/binding remains #11; this migration does not implement those child Issues。
 
+Subsequent #4 update: commands now use createWorkflow → driveWorkflow over existing runners, and /wf-resume reconciles historical authority before the same driver. Plan result notifications wake normal continuation; Validation/review/Fix loops no longer require phase-by-phase resume. See [driver foundation coverage and limits](./normal-workflow-driver.md). Later stage implementation and driver integration remain owned by #6/#7/#8/#16/#14/#17/#15; synchronous Code Gate correction remains #9. Missing required target stages are not success/SKIP/approval, and foundation tests do not establish full v1 readiness。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order

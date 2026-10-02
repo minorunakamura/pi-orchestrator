@@ -194,7 +194,13 @@ export class ValidationRunner {
               },
               this.dependencies.stateStore,
             )
-          : input.state;
+          : await this.dependencies.stateStore.saveState(
+              {
+                ...input.state,
+                coding: { ...input.state.coding, validationRef },
+              },
+              input.state.stateRevision,
+            );
     return { state, validationRef, validation };
   }
 

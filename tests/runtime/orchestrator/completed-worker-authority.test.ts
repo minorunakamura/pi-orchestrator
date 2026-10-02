@@ -36,7 +36,9 @@ describe.each(["execute", "resume"] as const)(
         entry === "execute"
           ? await workflow.implement()
           : await workflow.resume();
-      expect(result.state.phase).toBe("validating");
+      expect(result.state.phase).toBe(
+        entry === "execute" ? "validating" : "awaiting-code-review",
+      );
       expect(result.state.coding.implementationRevision).toBe(2);
       expect(
         workflow.children.filter((child) => child.agent === "worker"),

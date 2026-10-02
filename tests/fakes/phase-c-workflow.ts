@@ -29,6 +29,10 @@ import {
 import { PlannotatorIntegration } from "../../src/runtime/integrations/plannotator.ts";
 import { SubagentsIntegration } from "./agent-launch.ts";
 import { startWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
+import {
+  driveWorkflow,
+  type WorkflowDriverDependencies,
+} from "../../src/runtime/orchestrator/drive-workflow.ts";
 import { PlanningOrchestrator } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { CodingOrchestrator } from "../../src/runtime/orchestrator/coding-orchestrator.ts";
 import {
@@ -544,6 +548,12 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     coding,
     load: () => stateStore.loadState(),
     cleanup: () => rm(root, { recursive: true, force: true }),
+    drive: (overrides: Partial<WorkflowDriverDependencies> = {}) =>
+      driveWorkflow(workflowId, {
+        ...deps,
+        loadState: () => stateStore.loadState(),
+        ...overrides,
+      }),
     resume: (overrides: Partial<ResumeWorkflowOptions> = {}) =>
       resumeWorkflow(workflowId, {
         runDirectory,

@@ -42,6 +42,8 @@ Conflicts are resolved through explicit Issue/canonical design changes, never si
 - [persistence-recovery.md](./detailed-design/persistence-recovery.md): intent-before-effect/freshness/recovery
 - [test-strategy.md](./detailed-design/test-strategy.md): focused/fault/host/live Herdr verification
 
+Implementation records: [#4 normal driver foundation](./implementation/normal-workflow-driver.md)、[#19 native classifier](./implementation/native-classifier-migration.md)、[#21 launch contract](./implementation/agent-launch-contract.md)。各 record の検証範囲は full v1 production readiness と区別します。
+
 ## 5. Commands / runtime target
 
 ```text

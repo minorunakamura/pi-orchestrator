@@ -313,6 +313,14 @@ export class SubagentsIntegration implements SubagentExecutor {
   }
 
   async runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
+    // Reject a missing static sibling before any child side effect. Each run still
+    // resolves and rechecks its exact launch around durable evidence persistence.
+    const preflight = await Promise.allSettled(
+      inputs.map((input) => this.preflight(input)),
+    );
+    for (const checked of preflight) {
+      if (checked.status === "rejected") throw checked.reason;
+    }
     const settled = await Promise.allSettled(
       inputs.map((input) => this.run(input)),
     );

@@ -37,12 +37,12 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     const workflow = await setup();
     const created = await workflow.createPlan();
     const resumed = await workflow.resume();
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("implementing");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(resumed.state.planning.approvedPlanRef).toEqual(created.planRef);
     expect(
       workflow.children.filter((child) => child.agent === "worker"),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
   });
 
   test.each(["corrupt", "missing"] as const)(
@@ -154,8 +154,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("reviewing");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(resumed.state.coding.validationRef).toEqual(
       validation.validationRef,
     );
@@ -172,8 +172,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("reviewing");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(
       workflow.children.filter(
         (child) =>
@@ -194,7 +194,7 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
+    expect(resumed.status).toBe("pending");
     expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(workflow.roundCalls()).toBe(calls);
   });
@@ -217,7 +217,7 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
+    expect(resumed.status).toBe("pending");
     expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(resumed.state.coding.findingEvaluationRef).toBeDefined();
     expect(resumed.state.coding.acceptedFindingsRef).toBeDefined();
@@ -237,8 +237,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume({ changeScope: "changed scope" });
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("validating");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(
       workflow.jevRequests.filter(
         (request) => "modelTier" in request.questions,
@@ -264,8 +264,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("validating");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(resumed.state.coding.implementationRevision).toBe(2);
     expect(resumed.state.coding.workerAttemptRef).not.toEqual(
       completedAttemptRef,
@@ -382,8 +382,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("validating");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-code-review");
     expect(resumed.state.block).toBeUndefined();
     expect(
       workflow.children.filter((child) => child.agent === "worker"),

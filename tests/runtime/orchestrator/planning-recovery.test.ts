@@ -9,7 +9,10 @@ import {
   fakeLaunchResolver,
 } from "../../fakes/agent-launch.ts";
 import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
-import { resumeWorkflow } from "../../../src/runtime/orchestrator/resume-workflow.ts";
+import {
+  resumeWorkflow,
+  reconcileWorkflow,
+} from "../../../src/runtime/orchestrator/resume-workflow.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import type { WorkflowStateWriter } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { FakeSubagentRpc, childRequest } from "../../fakes/subagent-rpc.ts";
@@ -88,8 +91,9 @@ async function setup(
     error = cause;
   }
   const freshEvents = new FakeSubagentRpc();
+  // Isolate exact historical child recovery; normal continuation is tested separately.
   const resume = (launchResolver = fakeLaunchResolver) =>
-    resumeWorkflow("recovery", {
+    reconcileWorkflow("recovery", {
       runDirectory,
       cwd: root,
       repositoryCwd: root,

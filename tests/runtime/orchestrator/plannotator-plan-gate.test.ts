@@ -167,7 +167,9 @@ describe("ORCH-009 Plannotator plan gate", () => {
       expect(await new StateStore(started.runDirectory).loadState()).toEqual(
         state,
       );
-      expect(await readdir(started.runDirectory)).not.toContain("plan-reviews");
+      expect(await readdir(join(started.runDirectory, "plan-reviews"))).toEqual(
+        ["plan-v1-open-intent.md"],
+      );
     },
   );
 
@@ -415,7 +417,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
     expect(gate.calls.getPlanReview).toHaveLength(2);
     await expect(
       readdir(join(root, "workflow-1", "plan-reviews")),
-    ).resolves.toEqual(["plan-review-1.md"]);
+    ).resolves.toEqual(["plan-review-1.md", "plan-v1-open-intent.md"]);
     void started;
   });
 
@@ -479,7 +481,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
     ).toBe(reloaded.stateRevision);
     await expect(
       readdir(join(root, "workflow-1", "plan-reviews")),
-    ).resolves.toEqual(["plan-review-1.md"]);
+    ).resolves.toEqual(["plan-review-1.md", "plan-v1-open-intent.md"]);
   });
 
   test("does not emit an event when review artifact persistence fails", async () => {
