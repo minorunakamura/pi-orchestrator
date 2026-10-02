@@ -6,7 +6,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 Basic Design defines WHAT/WHY/authority; Detailed Design defines HOW/contracts/recovery/tests; GitHub Issue #13 and child Issues define implementation order/acceptance。All are the v1 target, not current v0.1.0 production readiness。
 
-Production baseline: Pi >=0.99.1 / pi-subagents >=0.74.0 / pi-typesafe >=0.8.1 transitional only until #19。Released public contracts only; dependency source/patch/fork/private APIs forbidden。
+Production baseline: Pi >=0.99.1 / pi-subagents >=0.74.0 / native classifier typesafe/jev-latest。#19 removes transitional pi-typesafe after live smoke。Released public contracts only; dependency source/patch/fork/private APIs forbidden。
 
 ## 2. Canonical lifecycle
 

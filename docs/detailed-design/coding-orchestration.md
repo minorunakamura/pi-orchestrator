@@ -6,7 +6,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 This document defines the v1 target Coding Orchestration; existing v0.1.0 behavior is not proof of redesign completion. v1 contains exactly one Coding Orchestration.
 
-Production baseline: Pi >=0.99.1 / pi-subagents >=0.74.0; pi-typesafe >=0.8.1 is transitional only until #19 migrates every Jev path to Pi native classifiers. All child execution uses the orchestrator-owned Agent Launch Policy / public preflight (#21).
+Production baseline: Pi >=0.99.1 / pi-subagents >=0.74.0; #19 migrates every current production Jev path to Pi native classifiers (default typesafe/jev-latest) and removes pi-typesafe after live smoke. All child execution uses the orchestrator-owned Agent Launch Policy / public preflight (#21).
 
 ## 2. Pipeline
 

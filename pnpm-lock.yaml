@@ -210,9 +210,6 @@ importers:
       pi-subagents:
         specifier: 0.74.0
         version: 0.74.0(@earendil-works/pi-agent-core@0.99.1(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.3))(@earendil-works/pi-ai@0.99.1(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.3))(@earendil-works/pi-coding-agent@0.99.1(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(ws@8.21.3))(@earendil-works/pi-tui@0.99.1)(typebox@1.3.34)
-      pi-typesafe:
-        specifier: ^0.8.1
-        version: 0.8.1(@earendil-works/pi-coding-agent@0.99.1(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(ws@8.21.3))(@earendil-works/pi-tui@0.99.1)(typebox@1.3.34)
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.14
@@ -926,10 +923,6 @@ packages:
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
 
-  '@typesafe-ai/sdk@0.6.0':
-    resolution: {integrity: sha512-IddX+Q0XM+VagOUZFeP7wZjaO4SHMdvnh2zEBdrZZnXedWI3BNK1lKhMx3ayrkFWvVLbVcUHJy6AVZlY+e6Jaw==}
-    engines: {node: '>=20'}
-
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
     engines: {node: '>=16.20.0'}
@@ -1435,19 +1428,6 @@ packages:
       '@earendil-works/pi-tui':
         optional: true
       typebox:
-        optional: true
-
-  pi-typesafe@0.8.1:
-    resolution: {integrity: sha512-terjy6N1R9cZitpq+2/An7Lmm2mtK9LrpW7WjWXdEOiPtzt2BE8GyXo2MuykUt5wfBMNs1KAZxq5LHkeRTrCGA==}
-    engines: {node: '>=22.19.0'}
-    peerDependencies:
-      '@earendil-works/pi-coding-agent': '>=0.85.1 <1'
-      '@earendil-works/pi-tui': '>=0.85.1 <1'
-      typebox: '*'
-    peerDependenciesMeta:
-      '@earendil-works/pi-coding-agent':
-        optional: true
-      '@earendil-works/pi-tui':
         optional: true
 
   picocolors@1.1.1:
@@ -2306,8 +2286,6 @@ snapshots:
 
   '@types/retry@0.12.0': {}
 
-  '@typesafe-ai/sdk@0.6.0': {}
-
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -2712,14 +2690,6 @@ snapshots:
       '@earendil-works/pi-tui': 0.99.1
       typebox: 1.3.34
 
-  pi-typesafe@0.8.1(@earendil-works/pi-coding-agent@0.99.1(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(ws@8.21.3))(@earendil-works/pi-tui@0.99.1)(typebox@1.3.34):
-    dependencies:
-      '@typesafe-ai/sdk': 0.6.0
-      typebox: 1.3.34
-    optionalDependencies:
-      '@earendil-works/pi-coding-agent': 0.99.1(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(ws@8.21.3)
-      '@earendil-works/pi-tui': 0.99.1
-
   picocolors@1.1.1: {}
 
   picomatch@4.0.7: {}
@@ -2819,7 +2789,8 @@ snapshots:
 
   typebox@1.3.27: {}
 
-  typebox@1.3.34: {}
+  typebox@1.3.34:
+    optional: true
 
   typescript@7.0.2:
     optionalDependencies:

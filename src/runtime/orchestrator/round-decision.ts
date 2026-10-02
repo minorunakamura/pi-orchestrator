@@ -217,7 +217,7 @@ async function authoritativeFindings(
   state: WorkflowState,
   supplied: readonly RoundDecisionFinding[] | undefined,
   suppliedBlockingIds: readonly string[] | undefined,
-  policy: OrchestratorConfiguration["decision"],
+  configuration: RoundDecisionRunnerDependencies["configuration"],
 ): Promise<{
   findings: readonly RoundDecisionFinding[];
   findingSummaries: RoundDecisionInput["findingSummaries"];
@@ -319,7 +319,10 @@ async function authoritativeFindings(
       state.coding.ponytailReviewRef!,
       ...(evidence.previousDecision ? [evidence.previousDecision.ref] : []),
     ],
-    policy,
+    {
+      decision: configuration.decision,
+      ...(configuration.jev ? { jev: configuration.jev } : {}),
+    },
   );
   if (!isDecisionFresh(evaluation.freshness, expectedFreshness))
     throw new RoundDecisionRunnerError("Stale finding evaluation freshness");
@@ -640,7 +643,7 @@ export class RoundDecisionRunner {
       input.state,
       input.findings,
       input.acceptedBlockingFindingIds,
-      this.dependencies.configuration.decision,
+      this.dependencies.configuration,
     );
     const currentProfile = {
       modelTier: currentRouting.modelTier.value,

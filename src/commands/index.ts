@@ -11,7 +11,10 @@ import type {
 import type { OrchestratorConfiguration } from "../core/configuration.ts";
 import type { WorkflowState } from "../core/workflow/state.ts";
 import { CommandValidationExecutor } from "../runtime/validation/command-executor.ts";
-import { JevIntegration } from "../runtime/integrations/jev.ts";
+import {
+  JevIntegration,
+  type PiClassifierRuntime,
+} from "../runtime/integrations/jev.ts";
 import { PlannotatorIntegration } from "../runtime/integrations/plannotator.ts";
 import type {
   JevDecisionClient,
@@ -76,6 +79,7 @@ export interface WorkflowCommandRuntimeOptions {
   projectTrusted?: boolean;
   configuration?: OrchestratorConfiguration;
   jevDecisionClient?: JevDecisionClient;
+  modelRegistry?: PiClassifierRuntime;
   validationExecutor?: ValidationExecutor;
 }
 
@@ -149,11 +153,10 @@ function commandRuntime(
   if (options.runtime) return options.runtime;
   if (options.createRuntime) return options.createRuntime(context);
   if (options.eventBus)
-    return createWorkflowCommandRuntime(
-      options.eventBus,
-      context.cwd,
-      options.runtimeOptions,
-    );
+    return createWorkflowCommandRuntime(options.eventBus, context.cwd, {
+      ...options.runtimeOptions,
+      modelRegistry: context.modelRegistry,
+    });
   throw new Error("Workflow command runtime is not configured");
 }
 
@@ -287,7 +290,11 @@ export function createWorkflowCommandRuntime(
         repositoryCwd: cwd,
         configuration,
         jevDecisionClient:
-          options.jevDecisionClient ?? new JevIntegration(configuration?.jev),
+          options.jevDecisionClient ??
+          new JevIntegration({
+            ...configuration?.jev,
+            modelRegistry: options.modelRegistry,
+          }),
         validationExecutor:
           options.validationExecutor ?? new CommandValidationExecutor(),
         plannotatorGate: new PlannotatorIntegration({

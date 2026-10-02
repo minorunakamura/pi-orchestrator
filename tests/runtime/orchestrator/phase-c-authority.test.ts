@@ -39,6 +39,27 @@ test("real runners connect both Human Gates through complete empty reviews", asy
   expect(approved.state.phase).toBe("completed");
 });
 
+test.each(["provider", "model", "timeout", "threshold"])(
+  "changed %s invalidates finding evidence before Round classification",
+  async (dimension) => {
+    const f = await setup();
+    const configuration = structuredClone(f.configuration);
+    if (dimension === "provider")
+      configuration.jev.classifier = { provider: "other", model: "jev-latest" };
+    else if (dimension === "model")
+      configuration.jev.classifier = { provider: "typesafe", model: "other" };
+    else if (dimension === "timeout") configuration.jev.timeoutMs = 12345;
+    else configuration.decision.autoDecisionThreshold = 0.95;
+    await expect(
+      new RoundDecisionRunner({ ...f, configuration }).execute({
+        state: f.evaluated.state,
+        validation: f.validated.validation,
+      }),
+    ).rejects.toThrow(/freshness/iu);
+    expect(f.jev.calls.decideRound).toHaveLength(0);
+  },
+);
+
 test("Round Jev receives approved constraints and retry State from artifacts", async () => {
   const f = await setup();
   await new RoundDecisionRunner(f).execute({

@@ -15,7 +15,7 @@ export function jevPolicy(
         active: true,
         workflowId,
         projectRoot,
-        destination: "https://api.typesafe.ai",
+        destination: "typesafe/jev-latest",
         evidenceCategories: [
           "plan",
           "context",
@@ -30,7 +30,7 @@ export function jevPolicy(
 }
 /** Adapter contract tests mock the authorization port; runtime tests use real persistence. */
 export const adapterAuthorization: JevCallAuthorization = {
-  destination: "https://api.typesafe.ai",
+  destination: "typesafe/jev-latest",
   authorizeAttempt: async () => {},
   recordUsage: async () => {},
 };

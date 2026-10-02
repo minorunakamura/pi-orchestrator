@@ -4,7 +4,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Released platform boundary
 
-v1 production baseline: **Pi / @earendil-works/pi-coding-agent >=0.99.1**, **pi-subagents >=0.74.0**, **pi-typesafe >=0.8.1 transitional only until #19**。
+v1 production baseline: **Pi / @earendil-works/pi-coding-agent >=0.99.1**, **pi-subagents >=0.74.0**。#19 removes the transitional pi-typesafe dependency after native migration and live smoke。
 
 Use released public APIs only。Do not edit/fork/patch third-party packages or depend on main/Unreleased behavior。External shapes stay in `runtime/integrations/`; core sees normalized decisions/evidence/errors。Adapters do not mutate State or own Human authority。
 
@@ -16,7 +16,7 @@ The intended optional packages are **git:github.com/minorunakamura/pi-ketch** an
 
 Pi provides Extension lifecycle、commands/events/tools、Main/root Agent、project trust and native classifiers。
 
-#19 target: domain DecisionClassifierPort → Pi classifier adapter → `ctx.modelRegistry.findOfType("classifier", provider, modelId)` / `ctx.modelRegistry.classify()`。Default is explicitly `typesafe/jev-latest`。No Codemode is required for extension-owned classifier requests。Pi resolves credentials/provider transport; Orchestrator must reserve and authorize each request first。
+#19 implementation: domain DecisionClassifierPort → PiClassifierDecisionClient → `ctx.modelRegistry.findOfType("classifier", provider, modelId)` / `ctx.modelRegistry.classify()`。Default is explicitly `typesafe/jev-latest`。No Codemode is required for extension-owned classifier requests。Pi resolves credentials/provider transport; Orchestrator must reserve and authorize each request first。
 
 Native classifier Choice returns choice/probabilities/confidence, Score returns score/confidence (no probabilities field is guaranteed), Bool returns probability only。Use Yes/No Choice when domain Boolean confidence is required; don't relabel probability as confidence。
 
@@ -115,11 +115,11 @@ Codemode scripts cannot invoke model-only `subagent`, `subagents_enable`, `subag
 
 Workflow-specific `failureKind` is used only when the chosen public execution mode exposes it (primarily workflow-script status/details)。Do not require or fabricate workflow-only failureKind for single-agent completion。
 
-## 8. Jev transitional adapter / authorization
+## 8. Native Jev adapter / authorization
 
-Until #19 migration, pi-typesafe >=0.8.1 public library API (`createTypeSafe` / `ask` / bounded helpers) is transitional。Its backend registry must not become permanent v1 routing architecture。No model-facing typesafe_evaluate or `/typesafe enable` dependency。
+#19 replaces direct client construction with Pi's public ModelRegistry。`JevIntegration` and `PiClassifierDecisionClient` are the same adapter; no model-facing typesafe_evaluate, `/typesafe enable`, direct backend registry or automatic evaluator fallback。
 
-#18 implements default direct TypeSafe backend only。Optional legacy jev.endpoint accepts only https://api.typesafe.ai; custom destinations fail before client creation/dispatch。No custom backend is retained and no TypeSafe-authenticated URL rewrite remains。Remove obsolete direct endpoint/backend configuration and dependency after all native paths and live smoke pass。
+`jev.classifier` selects explicit provider/model (default typesafe/jev-latest); consent destination binds that exact provider/model。Legacy jev.endpoint / URL consent is rejected, not silently migrated。All six family contracts use native Choice; existing three production coding runners are connected, planning lifecycle remains #6/#8/#16。Pi 0.99.1 live native Jev smoke passed; `pi-typesafe` is removed。See [#19 verification and removal gate](../implementation/native-classifier-migration.md)。
 
 Orchestrator owns operator/project grant upper bounds, generated-workflow scoped consent and finite attempt budget (#11)。Credentials/model availability/Plan approval are not authorization。Reservation Artifact → State before every outbound attempt, including per-finding/retry。Timeout stays charged; no secret durability or silent transport fallback。
 

@@ -8,7 +8,7 @@ import {
 import { expect, test, vi } from "vitest";
 import { platformFixture } from "./fixtures.ts";
 
-test("host peers use wildcard ranges and dev/transitional dependencies verify the released baseline", async () => {
+test("host peers use wildcard ranges and released baseline no longer installs the direct classifier client", async () => {
   const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8"));
   expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe(
     "*",
@@ -20,7 +20,7 @@ test("host peers use wildcard ranges and dev/transitional dependencies verify th
     manifest.dependencies["@earendil-works/pi-coding-agent"],
   ).toBeUndefined();
   expect(manifest.dependencies["pi-subagents"]).toBe("0.74.0");
-  expect(manifest.dependencies["pi-typesafe"]).toBe("^0.8.1");
+  expect(manifest.dependencies["pi-typesafe"]).toBeUndefined();
   expect(VERSION).toBe("0.99.1");
 });
 

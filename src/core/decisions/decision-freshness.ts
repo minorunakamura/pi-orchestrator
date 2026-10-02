@@ -1,5 +1,9 @@
 import { isArtifactRef, type ArtifactRef } from "../artifacts/references.ts";
 import {
+  isClassifierIdentity,
+  type ClassifierIdentity,
+} from "../configuration.ts";
+import {
   hasOnlyKeys,
   isNonEmptyString,
   isNonNegativeInteger,
@@ -10,6 +14,7 @@ import {
 export interface DecisionFreshness {
   schemaVersion: 1;
   decisionSchemaVersion: 1;
+  classifier: ClassifierIdentity;
   policyVersion: string;
   planVersion: number;
   implementationRevision: number;
@@ -32,6 +37,7 @@ export interface DecisionFreshnessCheck {
 const freshnessKeys = [
   "schemaVersion",
   "decisionSchemaVersion",
+  "classifier",
   "policyVersion",
   "planVersion",
   "implementationRevision",
@@ -66,6 +72,7 @@ function hasFreshnessFields(value: unknown): value is DecisionFreshness {
   return (
     isSchemaVersion(value.schemaVersion) &&
     isSchemaVersion(value.decisionSchemaVersion) &&
+    isClassifierIdentity(value.classifier) &&
     isNonEmptyString(value.policyVersion) &&
     isNonNegativeInteger(value.planVersion) &&
     isNonNegativeInteger(value.implementationRevision) &&
@@ -92,6 +99,13 @@ export function checkDecisionFreshness(
   expected: DecisionFreshnessExpectation,
 ): DecisionFreshnessCheck {
   const mismatches: string[] = [];
+  if (
+    !isRecord(decision) ||
+    !isClassifierIdentity(decision.classifier) ||
+    decision.classifier.provider !== expected.classifier.provider ||
+    decision.classifier.model !== expected.classifier.model
+  )
+    mismatches.push("classifier");
   if (
     !isRecord(decision) ||
     decision.decisionSchemaVersion !== expected.decisionSchemaVersion

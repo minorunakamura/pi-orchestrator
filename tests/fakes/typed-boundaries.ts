@@ -2,7 +2,6 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import type { Evaluation, Questions } from "pi-typesafe";
 import { isRecord } from "../../src/core/schema.ts";
 
 export function requireRecord(value: unknown): Record<string, unknown> {
@@ -33,15 +32,4 @@ export function makeInvalidPayload<T>(value: unknown, _type?: T): T {
   // The unsafe shape is the subject of these negative-path tests.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return value as T;
-}
-
-/** Adapts dynamically keyed fake answers to pi-typesafe's question-dependent result. */
-export function makeEvaluation<Q extends Questions>(
-  value: Omit<Evaluation<Questions>, "answers"> & {
-    answers: Record<string, unknown>;
-  },
-): Evaluation<Q> {
-  // The fake constructs one answer for every supplied question immediately before this call.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  return value as Evaluation<Q>;
 }

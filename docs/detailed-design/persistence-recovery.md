@@ -4,7 +4,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 ## 1. Purpose
 
-This document defines v1 target persistence/recovery. Pi >=0.99.1 / pi-subagents >=0.74.0 public contracts apply; pi-typesafe >=0.8.1 is transitional until #19. Current v0.1.0 schemas/receipts are not automatically compatible authority.
+This document defines v1 target persistence/recovery. Pi >=0.99.1 / pi-subagents >=0.74.0 public contracts apply; #19 uses native typesafe/jev-latest and removes transitional pi-typesafe after live smoke. Current v0.1.0 schemas/receipts are not automatically compatible authority.
 
 Normal driveWorkflow() and recovery are separate: /wf-* and accepted Human/child results use the normal driver until genuine wait/block/failure/completion. /wf-resume reconciles first, then continues that same driver; it is not normal phase-stepping.
 

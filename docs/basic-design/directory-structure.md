@@ -89,7 +89,7 @@ docs/implementation/     Issue #13 dependency order / coverage / pending work
 docs/release/            historical verified release evidence, not target-design claims
 ```
 
-Issue #3 defines v1 target; #13 tracks implementation. Pi >=0.99.1 / pi-subagents >=0.74.0 / transitional pi-typesafe >=0.8.1 until #19 are platform contracts, not permission to modify package metadata in this design-only Issue。
+Issue #3 defines v1 target; #13 tracks implementation. Pi >=0.99.1 / pi-subagents >=0.74.0 / native classifier typesafe/jev-latest (#19, transitional pi-typesafe removed after live smoke) are platform contracts, not permission to modify package metadata in this design-only Issue。
 
 ## 5. Tests / Future Scope
 

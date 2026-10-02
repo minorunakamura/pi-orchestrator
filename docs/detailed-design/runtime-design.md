@@ -6,7 +6,7 @@ Version: 2.0 — v1 target contract (Issue #3)
 
 Commands/tools/events/UI → runtime → pure core。No core import of Pi/filesystem/network/classifier/Plannotator/pi-subagents transport types。
 
-Pi >=0.99.1 and pi-subagents >=0.74.0 are production baselines; pi-typesafe >=0.8.1 transitional only until #19。#18 package/contract verification uses exact 0.99.1 / 0.74.0 / 0.8.1 in the lockfile; [platform smoke evidence](../implementation/platform-baseline-smoke.md) is separate from full #12 production validation。Use only released public APIs; no package modification/private API dependency。
+Pi >=0.99.1 and pi-subagents >=0.74.0 are production baselines。#19 replaces and removes the transitional pi-typesafe 0.8.1 dependency after native classifier live smoke; #18 historical package/contract verification used exact 0.99.1 / 0.74.0 / 0.8.1; [platform smoke evidence](../implementation/platform-baseline-smoke.md) is separate from full #12 production validation。Use only released public APIs; no package modification/private API dependency。
 
 ## 2. Normal driver vs recovery
 
@@ -111,9 +111,9 @@ Both Gate results require unchanged current authority/source on settlement。Ide
 
 ## 8. Classifier / Jev Integration
 
-#19 native target: DecisionClassifierPort → Pi classifier adapter → ctx.modelRegistry.classify, explicit default typesafe/jev-latest。Pi owns transport/provider/auth; core sees domain decisions/normalized errors。Require stopReason:stop plus complete answers; error/aborted is returned without necessarily throwing。Bool has probability only, Score no guaranteed probabilities; use Yes/No Choice for Boolean confidence。Pass maxRetries:0 and finite cancellation/deadline so each retry stays separately reserved。
+#19 implementation: DecisionClassifierPort → PiClassifierDecisionClient → ctx.modelRegistry.classify, explicit default typesafe/jev-latest。Pi owns transport/provider/auth; core sees domain decisions/normalized errors。Require stopReason:stop plus complete answers; error/aborted is returned without necessarily throwing。Bool has probability only, Score no guaranteed probabilities; use Yes/No Choice for Boolean confidence。Pass maxRetries:0 and finite cancellation/deadline so each retry stays separately reserved。
 
-Until migration and live verification, pi-typesafe >=0.8.1 public library API remains transitional。#18 restricts direct Jev to the default TypeSafe destination; optional legacy endpoint cannot select another host/path。Client creation and every dispatch follow destination validation/authorization; no URL rewrite or silent second evaluator exists。Remove direct dependency/obsolete settings after all families migrate。
+The production command composition passes the active context.modelRegistry to the native adapter; absence fails closed rather than constructing another runtime/client。All six bounded family methods share the native boundary; existing Execution/Finding/Round runners use it, while Stage/mode/method lifecycle wiring remains #6/#8/#16。Old endpoint settings/URL consent fail closed。Reservation/result records bind native classifier, exact request and non-secret transport configuration digests, decision schema version and full validated Choice probabilities/confidence。Decision freshness includes classifier identity and relevant configuration for all coding families, including empty findings。Runtime authorization is revalidated separately。Pi 0.99.1 live native smoke passed and `pi-typesafe` is removed, with validation tracked in [#19 migration record](../implementation/native-classifier-migration.md)。
 
 ### Product Runtime Consent and Budget (I5)
 

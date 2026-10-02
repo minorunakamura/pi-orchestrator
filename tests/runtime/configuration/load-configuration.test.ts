@@ -26,7 +26,7 @@ const settings = {
     stopOnInfrastructureFailure: true,
   },
   jev: {
-    endpoint: "https://api.typesafe.ai",
+    classifier: { provider: "typesafe", model: "jev-latest" },
     apiKey: "do-not-persist",
   },
 };
@@ -39,7 +39,7 @@ test("loads safe defaults and removes runtime secrets from domain configuration"
     maxStrongerRetries: 1,
   });
   expect(configuration.jev).toEqual({
-    endpoint: "https://api.typesafe.ai",
+    classifier: { provider: "typesafe", model: "jev-latest" },
   });
   expect(JSON.stringify(configuration)).not.toContain("do-not-persist");
 });

@@ -1892,12 +1892,10 @@ export class WorkflowReconciler {
         !this.deps.configuration ||
         !isDecisionFresh(
           evaluation.freshness,
-          decisionFreshness(
-            state,
-            request,
-            refs,
-            this.deps.configuration.decision,
-          ),
+          decisionFreshness(state, request, refs, {
+            decision: this.deps.configuration.decision,
+            jev: this.deps.configuration.jev,
+          }),
         )
       )
         return "stale";

@@ -33,12 +33,12 @@ Pi loader は `pi.extensions: ./src/index.ts` の TypeScript source を読み込
 | --- | --- |
 | Pi / @earendil-works/pi-coding-agent | **>=0.99.1**、host peer dependency の range は Pi package 契約に従い `"*"` |
 | pi-subagents | **>=0.74.0**、released public single-agent RPC / preflight / lifecycle v3 |
-| pi-typesafe | **>=0.8.1 transitional only until #19**、native classifier 移行後は direct dependency 削除 |
+| Classifier | Pi native **typesafe/jev-latest**（Pi が credential/provider を解決。`pi-typesafe` dependency は削除済み） |
 | @plannotator/pi-extension | mandatory Human Plan/Code UI、Plan async / Code synchronous public contract |
 | [minorunakamura/pi-ketch](https://github.com/minorunakamura/pi-ketch) | conditional Research、pi-ketch.researcher。Same-name npm package は別契約 |
 | [minorunakamura/pi-ask-user-question](https://github.com/minorunakamura/pi-ask-user-question) | root/Main の Human clarification。Same-name npm askUserQuestion は代替ではない |
 
-package/lockfile は Pi **0.99.1** / pi-subagents **0.74.0** / pi-typesafe **0.8.1** で検証します。Pi は host peer のまま、pi-subagents は public preflight 用 runtime dependency です。実行 host は同じ released dependency の extension を明示 load してください（development smoke: `-e ./node_modules/pi-subagents`）。#19 が Jev decision transport を Pi native classifiers（default `typesafe/jev-latest`）へ移行します。現行 direct adapter は default TypeSafe backend のみ対応し、`jev.endpoint` は未指定または `https://api.typesafe.ai` のみ許可します。任意 host への credential 転送は行いません。
+package/lockfile は Pi **0.99.1** / pi-subagents **0.74.0** で検証します。Pi は host peer のまま、pi-subagents は public preflight 用 runtime dependency です。実行 host は同じ released dependency の extension を明示 load してください（development smoke: `-e ./node_modules/pi-subagents`）。Jev decision transport は Pi native classifiers（default `typesafe/jev-latest`）を使います。`jev.classifier: { provider, model }` を選び、workflow consent の `destination` は同じ `provider/model` に明示 binding してください。旧 `jev.endpoint` / URL consent は拒否され、自動変換・fallback はありません。Pi が credentials/provider transport を所有し、Orchestrator が request ごとの durable reservation と confidence policy を所有します。Pi 0.99.1 の live smoke 検証後に `pi-typesafe` dependency を削除しました。検証状況は [Issue #19 migration record](docs/implementation/native-classifier-migration.md) を参照してください。
 
 Platform の検証範囲・再現手順は [#18 platform smoke evidence](./docs/implementation/platform-baseline-smoke.md) を参照してください。後続 Issue の runtime 実装や v1 全体の production PASS を意味しません。
 

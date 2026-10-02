@@ -16,7 +16,7 @@ Task -> Scout -> Diagnosis? -> Conditional Research
  -> Human Plan Gate (all playbooks) -> Approved Plan
 ```
 
-Pi >=0.99.1 / pi-subagents >=0.74.0 public contracts apply; pi-typesafe >=0.8.1 is transitional until native classifier migration #19。All child roles use #21 launch policy/preflight, exact input refs, physical model/skills/tools/definition identity and durable attempts。
+Pi >=0.99.1 / pi-subagents >=0.74.0 public contracts apply; #19 uses native typesafe/jev-latest and removes the transitional pi-typesafe dependency after live smoke。All child roles use #21 launch policy/preflight, exact input refs, physical model/skills/tools/definition identity and durable attempts。
 
 ## 2. Sequential evidence / Stage routing
 

@@ -9,7 +9,11 @@ import { loadProductionConfiguration } from "./runtime/configuration/load-config
 // Composition callers supply the host event bus, ArtifactStore reader, and
 // workflow-scoped options. Importing these adapters does not dispatch work.
 export { SubagentsIntegration } from "./runtime/integrations/subagents.ts";
-export { JevIntegration } from "./runtime/integrations/jev.ts";
+export {
+  JevIntegration,
+  PiClassifierDecisionClient,
+} from "./runtime/integrations/jev.ts";
+export type { DecisionClassifierPort } from "./runtime/ports/jev-decision-client.ts";
 export { PlannotatorIntegration } from "./runtime/integrations/plannotator.ts";
 export {
   resumeWorkflow,
@@ -27,6 +31,7 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
         projectTrusted: context.isProjectTrusted(),
+        modelRegistry: context.modelRegistry,
         launchHost: {
           sessionId: context.sessionManager.getSessionId(),
           projectTrusted: context.isProjectTrusted(),

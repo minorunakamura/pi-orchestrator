@@ -5,6 +5,10 @@ import {
 import {
   isJevRuntimePolicy,
   jevDestination,
+  classifierIdentity,
+  jevEvidenceCategories,
+  isClassifierIdentity,
+  type ClassifierIdentity,
   type JevConfiguration,
   type JevEvidenceCategory,
 } from "../../core/configuration.ts";
@@ -14,6 +18,7 @@ import {
   isNonNegativeInteger,
   isOneOf,
   isRecord,
+  isConfidence,
 } from "../../core/schema.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
@@ -27,6 +32,7 @@ import type {
   JevAttempt,
   JevCallAuthorization,
   JevRequestFamily,
+  ClassifierChoiceEvidence,
 } from "../ports/jev-decision-client.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 import type { WorkflowStateWriter } from "./advance-workflow.ts";
@@ -40,6 +46,11 @@ interface JevRequestRecord {
   consentId: string;
   policyVersion: string;
   destination: string;
+  classifier: ClassifierIdentity;
+  requestDigest: string;
+  configurationDigest: string;
+  decisionSchemaVersion: 1;
+  answers?: Record<string, ClassifierChoiceEvidence>;
   evidenceCategories: readonly JevEvidenceCategory[];
   maxRequests: number;
   family: JevRequestFamily;
@@ -48,7 +59,7 @@ interface JevRequestRecord {
   previousRef?: ArtifactRef<"jev-request">;
   observedAt: string;
   requestRef?: ArtifactRef<"jev-request">;
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: { inputTokens?: number; outputTokens?: number };
 }
 function assertRecord(value: unknown): asserts value is JevRequestRecord {
   if (
@@ -62,6 +73,11 @@ function assertRecord(value: unknown): asserts value is JevRequestRecord {
       "consentId",
       "policyVersion",
       "destination",
+      "classifier",
+      "requestDigest",
+      "configurationDigest",
+      "decisionSchemaVersion",
+      "answers",
       "evidenceCategories",
       "maxRequests",
       "family",
@@ -86,20 +102,28 @@ function assertRecord(value: unknown): asserts value is JevRequestRecord {
     value.ordinal < 1 ||
     !isNonNegativeInteger(value.maxRequests) ||
     !isNonNegativeInteger(value.retryIndex) ||
-    !isOneOf(["routing", "finding", "round"] as const, value.family) ||
+    !isOneOf(
+      [
+        "stage",
+        "clarification",
+        "method",
+        "routing",
+        "finding",
+        "round",
+      ] as const,
+      value.family,
+    ) ||
+    !isClassifierIdentity(value.classifier) ||
+    value.destination !==
+      `${value.classifier.provider}/${value.classifier.model}` ||
+    value.decisionSchemaVersion !== 1 ||
+    typeof value.requestDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.requestDigest) ||
+    typeof value.configurationDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.configurationDigest) ||
     !Array.isArray(value.evidenceCategories) ||
     !value.evidenceCategories.every((item) =>
-      isOneOf(
-        [
-          "plan",
-          "context",
-          "implementation",
-          "review",
-          "validation",
-          "history",
-        ] as const,
-        item,
-      ),
+      isOneOf(jevEvidenceCategories, item),
     ) ||
     (value.findingId !== undefined && !isNonEmptyString(value.findingId))
   )
@@ -120,8 +144,28 @@ function assertRecord(value: unknown): asserts value is JevRequestRecord {
     (!value.requestRef ||
       !isRecord(value.usage) ||
       !hasOnlyKeys(value.usage, ["inputTokens", "outputTokens"]) ||
-      !isNonNegativeInteger(value.usage.inputTokens) ||
-      !isNonNegativeInteger(value.usage.outputTokens))
+      (value.usage.inputTokens !== undefined &&
+        !isNonNegativeInteger(value.usage.inputTokens)) ||
+      (value.usage.outputTokens !== undefined &&
+        !isNonNegativeInteger(value.usage.outputTokens)) ||
+      (value.answers !== undefined &&
+        (!isRecord(value.answers) ||
+          !Object.values(value.answers).every(
+            (answer) =>
+              isRecord(answer) &&
+              hasOnlyKeys(answer, [
+                "type",
+                "choice",
+                "confidence",
+                "probabilities",
+              ]) &&
+              answer.type === "choice" &&
+              isNonEmptyString(answer.choice) &&
+              isConfidence(answer.confidence) &&
+              isRecord(answer.probabilities) &&
+              Object.hasOwn(answer.probabilities, answer.choice) &&
+              Object.values(answer.probabilities).every(isConfidence),
+          ))))
   )
     throw Error("Invalid Jev usage evidence");
 }
@@ -147,7 +191,8 @@ export class JevAuthorization {
     this.state = state;
     let destination: string;
     try {
-      destination = jevDestination(configuration?.endpoint);
+      const identity = classifierIdentity(configuration);
+      destination = `${identity.provider}/${identity.model}`;
     } catch {
       destination = "invalid";
     }
@@ -220,7 +265,10 @@ export class JevAuthorization {
     if (
       attempt.family !== this.family ||
       attempt.destination !== this.context.destination ||
-      !isNonNegativeInteger(attempt.retryIndex)
+      !isNonNegativeInteger(attempt.retryIndex) ||
+      attempt.decisionSchemaVersion !== 1 ||
+      !/^[0-9a-f]{64}$/u.test(attempt.requestDigest) ||
+      !/^[0-9a-f]{64}$/u.test(attempt.configurationDigest)
     )
       throw new RuntimePortError(
         "policy",
@@ -241,7 +289,11 @@ export class JevAuthorization {
           previous.recordType !== "reservation" ||
           previous.ordinal !== usage.attemptsReserved ||
           previous.workflowId !== base.workflowId ||
-          previous.projectRoot !== base.projectRoot
+          previous.projectRoot !== base.projectRoot ||
+          previous.destination !== this.context.destination ||
+          previous.consentId !== policy.consent.id ||
+          previous.policyVersion !== policy.consent.policyVersion ||
+          previous.maxRequests !== policy.maxRequests
         )
           throw Error("Inconsistent prior usage");
       }
@@ -254,6 +306,10 @@ export class JevAuthorization {
         consentId: policy.consent.id,
         policyVersion: policy.consent.policyVersion,
         destination: this.context.destination,
+        classifier: classifierIdentity(this.configuration),
+        requestDigest: attempt.requestDigest,
+        configurationDigest: attempt.configurationDigest,
+        decisionSchemaVersion: attempt.decisionSchemaVersion,
         evidenceCategories: [...this.categories],
         maxRequests: policy.maxRequests,
         family: this.family,
@@ -285,10 +341,12 @@ export class JevAuthorization {
       );
     }
   }
-  private async recordUsage(usage: {
-    inputTokens: number;
-    outputTokens: number;
+  private async recordUsage(result: {
+    inputTokens?: number;
+    outputTokens?: number;
+    answers?: Record<string, ClassifierChoiceEvidence>;
   }): Promise<void> {
+    const { answers, ...usage } = result;
     const base = this.state;
     if (!this.latestReservation || !base.jevUsage?.latestRequestRef)
       throw new RuntimePortError(
@@ -303,6 +361,7 @@ export class JevAuthorization {
           observedAt: new Date().toISOString(),
           requestRef: base.jevUsage.latestRequestRef,
           usage,
+          ...(answers ? { answers } : {}),
         },
         "usage",
       );

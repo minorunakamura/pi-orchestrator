@@ -16,7 +16,7 @@ Version: 2.0 — v1 runtime redesign / GitHub Issue #3
 | --- | --- |
 | Pi / `@earendil-works/pi-coding-agent` | **>=0.99.1**。host / peer dependency、bundled runtime ではない |
 | `pi-subagents` | **>=0.74.0**。released public single-agent RPC / preflight / lifecycle contracts |
-| `pi-typesafe` | **>=0.8.1 transitional only until #19**。native classifier 移行後に direct dependency を削除 |
+| Classifier | Pi native **typesafe/jev-latest**。#19 live smoke 後に transitional pi-typesafe dependency を削除済み |
 | Plannotator | public event API。Plan Review async、Code Review synchronous |
 
 Jev decision transport の v1 target は Pi native classifier、default は `typesafe/jev-latest`。Virtual Models は v1 execution authority ではなく Future Scope。bounded read-only child Codemode は #20、全 child の Agent Launch Policy は #21 が実装する。

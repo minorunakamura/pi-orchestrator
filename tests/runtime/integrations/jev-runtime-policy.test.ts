@@ -2,10 +2,14 @@ import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { TypeSafeIntegrationError } from "pi-typesafe";
+import {
+  nativeRuntime,
+  firstChoices,
+  classification,
+} from "../../fakes/classifier.ts";
 import {
   JevIntegration,
-  type JevClient,
+  type PiClassifierRuntime,
 } from "../../../src/runtime/integrations/jev.ts";
 import { JevAuthorization } from "../../../src/runtime/orchestrator/jev-authorization.ts";
 import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
@@ -14,7 +18,6 @@ import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { succeeded, decisionEvidence } from "../../fakes/coding-scenario.ts";
 import { jevPolicy } from "../../fakes/jev-policy.ts";
 import type { ExecutionRoutingInput } from "../../../src/runtime/ports/jev-decision-client.ts";
-import { makeEvaluation } from "../../fakes/typed-boundaries.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -54,42 +57,12 @@ const request: ExecutionRoutingInput = {
 };
 function fakeClient(failFirst = false) {
   let calls = 0;
-  const client: JevClient = {
-    evaluate: async (value) => {
-      calls++;
-      if (failFirst && calls === 1)
-        throw new TypeSafeIntegrationError(
-          "connection",
-          "test transport failure",
-        );
-      const answers = Object.fromEntries(
-        Object.entries(value.questions).map(([key, question]) => {
-          const options = Object.keys(question.criteria ?? {});
-          const choice = options[0];
-          return [
-            key,
-            {
-              type: "choice",
-              choice,
-              confidence: 0.9,
-              probabilities: Object.fromEntries(
-                options.map((option) => [
-                  option,
-                  option === choice ? 0.9 : 0.1,
-                ]),
-              ),
-            },
-          ];
-        }),
-      );
-      return makeEvaluation({
-        answers,
-        model: "fake",
-        usage: { input_tokens: 2, output_tokens: 1 },
-        elapsedMs: 1,
-      });
-    },
-  };
+  const client: PiClassifierRuntime = nativeRuntime(async (_model, value) => {
+    calls++;
+    if (failFirst && calls === 1)
+      return classification({}, { stopReason: "aborted" });
+    return firstChoices(value);
+  });
   return {
     client,
     get calls() {
@@ -131,7 +104,7 @@ test.each([
   );
   const fake = fakeClient();
   await expect(
-    new JevIntegration({ client: fake.client }).routeExecution(
+    new JevIntegration({ modelRegistry: fake.client }).routeExecution(
       request,
       auth.context,
     ),
@@ -151,7 +124,7 @@ test("each finding and retry is durably charged, including across client recreat
   );
   const fake = fakeClient(true);
   const adapter = new JevIntegration({
-    client: fake.client,
+    modelRegistry: fake.client,
     maxTransportRetries: 1,
   });
   const finding = {
@@ -193,7 +166,7 @@ test("each finding and retry is durably charged, including across client recreat
     ["plan"],
   );
   await expect(
-    new JevIntegration({ client: fake.client }).routeExecution(
+    new JevIntegration({ modelRegistry: fake.client }).routeExecution(
       request,
       resumed.context,
     ),
@@ -222,7 +195,7 @@ test("reservation save failure and its orphan cannot dispatch", async () => {
     ["plan"],
   );
   await expect(
-    new JevIntegration({ client: fake.client }).routeExecution(
+    new JevIntegration({ modelRegistry: fake.client }).routeExecution(
       request,
       auth.context,
     ),
@@ -236,7 +209,7 @@ test("reservation save failure and its orphan cannot dispatch", async () => {
     ["plan"],
   );
   await expect(
-    new JevIntegration({ client: fake.client }).routeExecution(
+    new JevIntegration({ modelRegistry: fake.client }).routeExecution(
       request,
       second.context,
     ),
@@ -247,7 +220,7 @@ test("reservation save failure and its orphan cannot dispatch", async () => {
 test("competing reservations allow only one outbound request", async () => {
   const f = await fixture();
   const fake = fakeClient();
-  const adapter = new JevIntegration({ client: fake.client });
+  const adapter = new JevIntegration({ modelRegistry: fake.client });
   const attempts = [1, 2].map(
     () =>
       new JevAuthorization(
@@ -268,6 +241,68 @@ test("competing reservations allow only one outbound request", async () => {
   expect(fake.calls).toBe(1);
 });
 
+test("changing native classifier requires matching consent even when Pi could authenticate", async () => {
+  const f = await fixture();
+  const auth = new JevAuthorization(
+    f.state,
+    {
+      ...f.configuration,
+      classifier: { provider: "openrouter", model: "typesafe/jev-1.13" },
+    },
+    f.artifactStore,
+    f.stateStore,
+    "routing",
+    ["plan"],
+  );
+  const fake = fakeClient();
+  await expect(
+    new JevIntegration({
+      classifier: { provider: "openrouter", model: "typesafe/jev-1.13" },
+      modelRegistry: fake.client,
+    }).routeExecution(request, auth.context),
+  ).rejects.toMatchObject({ kind: "policy" });
+  expect(fake.calls).toBe(0);
+  expect(
+    (await new StateStore(f.runDirectory).loadState()).jevUsage
+      ?.attemptsReserved,
+  ).toBe(0);
+});
+
+test("native result probabilities, identity and request digest survive reload", async () => {
+  const f = await fixture();
+  const auth = new JevAuthorization(
+    f.state,
+    f.configuration,
+    f.artifactStore,
+    f.stateStore,
+    "routing",
+    ["plan"],
+  );
+  const fake = fakeClient();
+  await new JevIntegration({ modelRegistry: fake.client }).routeExecution(
+    request,
+    auth.context,
+  );
+  const state = await new StateStore(f.runDirectory).loadState();
+  const result = JSON.parse(
+    await f.artifactStore.readText!(state.jevUsage!.latestUsageRef!),
+  );
+  expect(result).toMatchObject({
+    classifier: { provider: "typesafe", model: "jev-latest" },
+    decisionSchemaVersion: 1,
+    requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    configurationDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    requestRef: state.jevUsage?.latestRequestRef,
+    answers: {
+      modelTier: {
+        choice: "ECONOMY",
+        confidence: 0.9,
+        probabilities: { ECONOMY: 0.9 },
+      },
+    },
+  });
+});
+
 test("timeout consumes the reservation without automatic refund", async () => {
   const f = await fixture(1);
   const auth = new JevAuthorization(
@@ -280,17 +315,7 @@ test("timeout consumes the reservation without automatic refund", async () => {
   );
   const adapter = new JevIntegration({
     timeoutMs: 10,
-    client: {
-      evaluate: (_request, options) =>
-        new Promise((_resolve, reject) => {
-          options?.signal?.addEventListener(
-            "abort",
-            () =>
-              reject(new TypeSafeIntegrationError("timeout", "test deadline")),
-            { once: true },
-          );
-        }),
-    },
+    modelRegistry: nativeRuntime(async () => new Promise(() => {})),
   });
   await expect(
     adapter.routeExecution(request, auth.context),

@@ -22,7 +22,7 @@ Pi owns provider/model/auth transport。core imports no Pi/TypeSafe transport ty
 
 classify() returns stop/error/aborted results for provider failure; require stopReason:stop, matching identities and complete schema-valid answers, not a resolved Promise as proof of success。Pass finite signal/deadline and maxRetries:0; stock System One otherwise internally retries twice, outside workflow reservation。Only Orchestrator explicitly reserved retries are allowed。
 
-`pi-typesafe >=0.8.1` is **transitional only until #19**。During migration use its released public library API, not the model-facing `typesafe_evaluate` tool。No parallel automatic transport / classifier / LLM fallback。Remove the direct dependency only after all production decision paths migrate and live smoke passes。Do not forward a TypeSafe credential to an arbitrary rewritten endpoint。
+#19 implementation uses `PiClassifierDecisionClient` / `DecisionClassifierPort` for all six bounded families; `JevIntegration` is a compatibility export of the same native adapter, not a second transport。Existing Execution/Finding/Round runners use this path; planning family lifecycle integration remains #6/#8/#16。No direct client or automatic transport/classifier/LLM fallback remains。The required Pi 0.99.1 live smoke passed and `pi-typesafe` was removed。See [migration verification](../implementation/native-classifier-migration.md)。
 
 ## 2. Deterministic / Human boundaries
 

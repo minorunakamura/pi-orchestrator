@@ -1,4 +1,8 @@
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
+import {
+  classifierIdentity,
+  type OrchestratorConfiguration,
+} from "../../core/configuration.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import type { ReviewFinding } from "../../core/coding/finding.ts";
 import type {
@@ -31,11 +35,13 @@ export function decisionFreshness(
   state: WorkflowState,
   input: unknown,
   inputRefs: readonly ArtifactRef[],
-  configuration: unknown,
+  configuration: Pick<OrchestratorConfiguration, "decision"> &
+    Partial<Pick<OrchestratorConfiguration, "jev">>,
 ): DecisionFreshness {
   return {
     schemaVersion: 1,
     decisionSchemaVersion: 1,
+    classifier: classifierIdentity(configuration.jev),
     policyVersion: "phase-c-authority-1",
     planVersion: state.planning.approvedPlanVersion!,
     implementationRevision: state.coding.implementationRevision,
@@ -47,7 +53,16 @@ export function decisionFreshness(
         bounds: CODING_EVIDENCE_LIMITS,
       }),
     ),
-    configurationDigest: calculateSha256(JSON.stringify(configuration)),
+    configurationDigest: calculateSha256(
+      JSON.stringify({
+        ...configuration,
+        jev: {
+          classifier: classifierIdentity(configuration.jev),
+          timeoutMs: configuration.jev?.timeoutMs ?? 15000,
+          maxTransportRetries: configuration.jev?.maxTransportRetries ?? 0,
+        },
+      }),
+    ),
   };
 }
 

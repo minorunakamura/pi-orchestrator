@@ -187,6 +187,9 @@ export class FakeJevDecisionClient implements JevDecisionClient {
   ): Promise<ExecutionRoutingRawDecision> {
     await authorization?.authorizeAttempt({
       family: "routing",
+      requestDigest: "a".repeat(64),
+      configurationDigest: "b".repeat(64),
+      decisionSchemaVersion: 1,
       destination: authorization.destination,
       retryIndex: 0,
     });
@@ -207,6 +210,9 @@ export class FakeJevDecisionClient implements JevDecisionClient {
       // oxlint-disable-next-line eslint/no-await-in-loop
       await authorization?.authorizeAttempt({
         family: "finding",
+        requestDigest: "a".repeat(64),
+        configurationDigest: "b".repeat(64),
+        decisionSchemaVersion: 1,
         destination: authorization.destination,
         retryIndex: 0,
         findingId: finding.id,
@@ -226,6 +232,9 @@ export class FakeJevDecisionClient implements JevDecisionClient {
   ): Promise<RoundDecisionRawDecision> {
     await authorization?.authorizeAttempt({
       family: "round",
+      requestDigest: "a".repeat(64),
+      configurationDigest: "b".repeat(64),
+      decisionSchemaVersion: 1,
       destination: authorization.destination,
       retryIndex: 0,
     });

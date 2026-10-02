@@ -56,4 +56,4 @@ Conflicts are resolved through explicit Issue/canonical design changes, never si
 
 /wf-* invokes normal driveWorkflow() until genuine Human/external wait, block, failure or completion。Accepted results continue the same driver。/wf-resume reconciles first, then continues normal driver; repeated resume is not normal progress。/wf-status is read-only。
 
-Production target: Pi >=0.99.1 / pi-subagents >=0.74.0; pi-typesafe >=0.8.1 transitional until #19。Implementation/migration/production smoke are still tracked child work. Release evidence/CHANGELOG update only after those required checks pass。
+Production target: Pi >=0.99.1 / pi-subagents >=0.74.0。[#19 native classifier migration](./implementation/native-classifier-migration.md) uses typesafe/jev-latest; pi-typesafe was removed after live smoke。Remaining lifecycle/authorization/production integration belongs to its tracked child Issues. Release evidence/CHANGELOG update only after those required checks pass。
