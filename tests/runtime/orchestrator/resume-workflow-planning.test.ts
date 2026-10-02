@@ -30,8 +30,8 @@ describe("ORCH-018 planning/context reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("planning");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-plan-review");
     expect(
       workflow.children.filter((child) => child.agent === "workflow-scout"),
     ).toHaveLength(scouts);
@@ -56,8 +56,9 @@ describe("ORCH-018 planning/context reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("awaiting-plan-review");
+    // Recovering the Plan alone cannot reconstruct its missing Human binding.
+    expect(resumed.status).toBe("blocked");
+    expect(resumed.state.block?.reason).toBe("operator-attention-required");
     expect(resumed.state.planning.currentPlanRef).toEqual(created.planRef);
     expect(
       workflow.children.filter((child) => child.agent === "planner"),
@@ -84,7 +85,8 @@ describe("ORCH-018 planning/context reconciliation", () => {
     const resumed = await next.resume({
       clarificationPrompt: "Choose the scope",
     });
-    expect(resumed.status).toBe("advanced");
-    expect(resumed.state.phase).toBe("planning");
+    expect(resumed.status).toBe("pending");
+    expect(resumed.state.phase).toBe("awaiting-plan-review");
+    expect(resumed.state.planning.context.clarificationRef).toBeDefined();
   });
 });

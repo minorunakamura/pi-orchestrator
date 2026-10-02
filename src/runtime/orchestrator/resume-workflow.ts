@@ -1,12 +1,10 @@
 import { join, resolve } from "node:path";
+import { driveWorkflow } from "./drive-workflow.ts";
 import type { WorkflowId } from "../../types.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import { ArtifactStore } from "../persistence/artifact-store.ts";
 import { StateStore } from "../persistence/state-store.ts";
-import {
-  PlanningOrchestrator,
-  type WorkflowArtifactWriter,
-} from "./planning-orchestrator.ts";
+import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
 import type { WorkflowStateWriter } from "./advance-workflow.ts";
 import {
   WorkflowReconciler,
@@ -28,6 +26,7 @@ export type ResumeWorkflowOptions = Omit<
   runsDirectory?: string;
   stateStore?: ResumeStateStore;
   artifactStore?: WorkflowArtifactWriter;
+  signal?: AbortSignal;
 };
 
 export interface ResumeWorkflowInput
@@ -74,7 +73,7 @@ function lockedWriter(store: ResumeStateStore): WorkflowStateWriter {
   };
 }
 
-async function runResume(
+async function runReconciliation(
   workflowId: WorkflowId | string,
   options: ResumeWorkflowOptions,
 ): Promise<ReconciliationResult> {
@@ -133,39 +132,11 @@ async function runResume(
   if ("result" in selected) return selected.result;
   const snapshot = selected.planning;
   // Planning dispatch is guarded by a durable CAS intent, not a lock held across a child wait.
-  const result = await new WorkflowReconciler({
+  return new WorkflowReconciler({
     ...deps,
     stateStore,
     plannotatorGate: undefined,
   }).reconcile(snapshot);
-  if (
-    result.state.phase !== "awaiting-plan-review" ||
-    !deps.plannotatorGate ||
-    result.state.external[
-      `plannotator.plan-review.v${result.state.planning.currentPlanVersion}`
-    ]
-  )
-    return result;
-  // Human Gate creation still uses the existing exclusive reconciliation boundary.
-  const gate = async (): Promise<ReconciliationResult> => {
-    const latest = await load();
-    if (latest.phase !== "awaiting-plan-review")
-      return { status: "advanced", state: latest, phase: latest.phase };
-    if (
-      latest.stateRevision !== result.state.stateRevision ||
-      latest.planning.planReview
-    )
-      return new WorkflowReconciler(deps).reconcile(latest);
-    const opened = await new PlanningOrchestrator(deps).openPlanReview({
-      state: latest,
-    });
-    return {
-      status: opened.status === "blocked" ? "blocked" : "pending",
-      state: opened.state,
-      phase: opened.state.phase,
-    };
-  };
-  return stateStore.withLock ? stateStore.withLock(gate) : gate();
 }
 
 export function resumeWorkflow(
@@ -185,10 +156,34 @@ export function resumeWorkflow(
         "Resume requires runDirectory, ArtifactStore.rootDirectory, or runsDirectory",
       );
     }
-    return runResume(workflowIdOrInput, options);
+    return resumeAndDrive(workflowIdOrInput, options);
   }
   const { workflowId, ...inputOptions } = workflowIdOrInput;
-  return runResume(workflowId, inputOptions);
+  return resumeAndDrive(workflowId, inputOptions);
+}
+
+async function resumeAndDrive(
+  workflowId: string,
+  options: ResumeWorkflowOptions,
+): Promise<ReconciliationResult> {
+  const reconciled = await runReconciliation(workflowId, options);
+  if (
+    reconciled.status !== "advanced" ||
+    reconciled.state.phase === "completed"
+  )
+    return reconciled;
+  const runDirectory = runDirectoryFor(workflowId, options);
+  const stateStore = options.stateStore ?? new StateStore(runDirectory);
+  return driveWorkflow(workflowId, {
+    ...options,
+    artifactStore: options.artifactStore ?? new ArtifactStore(runDirectory),
+    stateStore,
+    loadState:
+      options.loadState ??
+      (stateStore.loadState
+        ? stateStore.loadState.bind(stateStore)
+        : () => new StateStore(runDirectory).loadState()),
+  });
 }
 
 export class WorkflowController {
@@ -199,7 +194,19 @@ export class WorkflowController {
   }
 }
 
-export const reconcileWorkflow = resumeWorkflow;
+/** Recovery only; normal commands use resumeWorkflow to continue after reconciliation. */
+export const reconcileWorkflow: typeof resumeWorkflow = (
+  workflowIdOrInput: WorkflowId | string | ResumeWorkflowInput,
+  options?: ResumeWorkflowOptions,
+) => {
+  if (typeof workflowIdOrInput !== "string") {
+    const { workflowId, ...inputOptions } = workflowIdOrInput;
+    return runReconciliation(workflowId, inputOptions);
+  }
+  if (!options)
+    throw new Error("Reconciliation requires workflow runtime options");
+  return runReconciliation(workflowIdOrInput, options);
+};
 export type ResumeWorkflowResult = ReconciliationResult;
 
 // Keep the public runtime boundary available without making commands part of ORCH-018.

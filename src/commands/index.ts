@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { driveWorkflow } from "../runtime/orchestrator/drive-workflow.ts";
 import type {
   AgentLaunchHost,
   LaunchResolver,
@@ -40,7 +41,7 @@ import {
   type ResumeWorkflowResult,
 } from "../runtime/orchestrator/resume-workflow.ts";
 import {
-  startWorkflow,
+  createWorkflow,
   type StartWorkflowInput,
   type StartedWorkflow,
 } from "../runtime/orchestrator/start-workflow.ts";
@@ -81,6 +82,7 @@ export interface WorkflowCommandRuntimeOptions {
   jevDecisionClient?: JevDecisionClient;
   modelRegistry?: PiClassifierRuntime;
   validationExecutor?: ValidationExecutor;
+  onContinuationError?: (error: unknown) => void;
 }
 
 export interface WorkflowCommandRegistrationOptions {
@@ -156,6 +158,8 @@ function commandRuntime(
     return createWorkflowCommandRuntime(options.eventBus, context.cwd, {
       ...options.runtimeOptions,
       modelRegistry: context.modelRegistry,
+      onContinuationError: (error) =>
+        context.ui.notify(renderWorkflowCommandError(error), "error"),
     });
   throw new Error("Workflow command runtime is not configured");
 }
@@ -245,6 +249,12 @@ export function registerWorkflowCommands(
   });
 }
 
+const workflowListeners = new WeakMap<EventBus, Map<string, () => void>>();
+
+export function disposeWorkflowContinuations(events: EventBus): void {
+  for (const stop of workflowListeners.get(events)?.values() ?? []) stop();
+}
+
 export function createWorkflowCommandRuntime(
   events: EventBus,
   cwd: string,
@@ -252,56 +262,130 @@ export function createWorkflowCommandRuntime(
 ): WorkflowCommandRuntime {
   const root = runsDirectory(cwd);
   const configuration = options.configuration;
-  return {
-    start: (input) => {
-      const workflowId = randomUUID();
-      const artifactStore = new ArtifactStore(join(root, workflowId));
-      return startWorkflow(
-        { ...input, cwd: input.cwd ?? cwd },
-        {
-          runsDirectory: root,
-          workflowIdFactory: () => workflowId,
-          artifactStore,
-          subagentExecutor: new SubagentsIntegration(events, {
-            cwd,
-            projectTrusted: options.projectTrusted,
-            launchHost: options.launchHost,
-            launchResolver: options.launchResolver,
-            ownerRunId: workflowId,
-            artifactReader: artifactStore,
+  const dependencies = (workflowId: string) => {
+    const artifactStore = new ArtifactStore(join(root, workflowId));
+    const stateStore = new StateStore(join(root, workflowId));
+    return {
+      runsDirectory: root,
+      artifactStore,
+      stateStore,
+      loadState: () => stateStore.loadState(),
+      subagentExecutor: new SubagentsIntegration(events, {
+        cwd,
+        projectTrusted: options.projectTrusted,
+        launchHost: options.launchHost,
+        launchResolver: options.launchResolver,
+        ownerRunId: workflowId,
+        artifactReader: artifactStore,
+      }),
+      cwd,
+      repositoryCwd: cwd,
+      configuration,
+      jevDecisionClient:
+        options.jevDecisionClient ??
+        new JevIntegration({
+          ...configuration?.jev,
+          modelRegistry: options.modelRegistry,
+        }),
+      validationExecutor:
+        options.validationExecutor ?? new CommandValidationExecutor(),
+      plannotatorGate: new PlannotatorIntegration({
+        events,
+        planReader: artifactStore,
+      }),
+    };
+  };
+  const watch = (
+    workflowId: string,
+    deps: ReturnType<typeof dependencies>,
+    initial: (signal: AbortSignal) => Promise<ResumeWorkflowResult>,
+  ) => {
+    const key = join(root, workflowId);
+    let listeners = workflowListeners.get(events);
+    if (!listeners) workflowListeners.set(events, (listeners = new Map()));
+    listeners.get(key)?.();
+    let active = true;
+    const continuation = new AbortController();
+    let queue: Promise<ResumeWorkflowResult>;
+    const stop = () => {
+      active = false;
+      continuation.abort();
+      unsubscribe();
+      if (listeners.get(key) === stop) listeners.delete(key);
+    };
+    const settle = (value: ResumeWorkflowResult) => {
+      if (
+        value.status === "blocked" ||
+        value.status === "failed" ||
+        value.state.phase === "completed"
+      )
+        stop();
+      return value;
+    };
+    // Notifications only wake the driver. Exact persisted binding + public status remains authority.
+    const unsubscribe = events.on("plannotator:review-result", (payload) => {
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        !("reviewId" in payload) ||
+        typeof payload.reviewId !== "string"
+      )
+        return;
+      const reviewId = payload.reviewId;
+      queue = queue.then(async (previous) => {
+        if (!active) return previous;
+        const state = await deps.loadState();
+        if (
+          state.phase !== "awaiting-plan-review" ||
+          state.planning.planReview?.reviewId !== reviewId
+        )
+          return previous;
+        return settle(
+          await driveWorkflow(workflowId, {
+            ...deps,
+            signal: continuation.signal,
           }),
-        },
-      );
+        );
+      });
+      void queue.catch((error) => {
+        stop();
+        if (options.onContinuationError) options.onContinuationError(error);
+        // Standalone composition has no host UI; still report a redacted continuation failure.
+        // oxlint-disable-next-line eslint/no-console
+        else console.error(renderWorkflowCommandError(error));
+      });
+    });
+    listeners.set(key, stop);
+    queue = Promise.resolve()
+      .then(() => initial(continuation.signal))
+      .then(settle);
+    return queue.catch((error: unknown) => {
+      stop();
+      throw error;
+    });
+  };
+  return {
+    start: async (input) => {
+      const workflowId = randomUUID();
+      const deps = dependencies(workflowId);
+      let started: StartedWorkflow | undefined;
+      const driven = await watch(workflowId, deps, async (signal) => {
+        started = await createWorkflow(
+          { ...input, cwd: input.cwd ?? cwd },
+          {
+            ...deps,
+            workflowIdFactory: () => workflowId,
+          },
+        );
+        return driveWorkflow(workflowId, { ...deps, signal });
+      });
+      return { ...started!, state: driven.state };
     },
     resume: (workflowId) => {
-      const artifactStore = new ArtifactStore(join(root, workflowId));
-      return resumeWorkflow(workflowId, {
-        runsDirectory: root,
-        artifactStore,
-        subagentExecutor: new SubagentsIntegration(events, {
-          cwd,
-          projectTrusted: options.projectTrusted,
-          launchHost: options.launchHost,
-          launchResolver: options.launchResolver,
-          ownerRunId: workflowId,
-          artifactReader: artifactStore,
-        }),
-        cwd,
-        repositoryCwd: cwd,
-        configuration,
-        jevDecisionClient:
-          options.jevDecisionClient ??
-          new JevIntegration({
-            ...configuration?.jev,
-            modelRegistry: options.modelRegistry,
-          }),
-        validationExecutor:
-          options.validationExecutor ?? new CommandValidationExecutor(),
-        plannotatorGate: new PlannotatorIntegration({
-          events,
-          planReader: artifactStore,
-        }),
-      });
+      const deps = dependencies(workflowId);
+      return watch(workflowId, deps, (signal) =>
+        resumeWorkflow(workflowId, { ...deps, signal }),
+      );
     },
     loadState: async (workflowId) => {
       const state = await new StateStore(join(root, workflowId)).loadState();

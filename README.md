@@ -74,6 +74,8 @@ Skills は JavaScript runtime dependencies ではありません。wrapper grill
 
 v1 normal driver は pi-orchestrator の driveWorkflow() が所有します。single /wf-* invocation は genuine Human/external wait、blocked、failed、completed まで進み、accepted Human/child result は同じ driver で continuation します。繰り返し /wf-resume を使う phase-stepping は通常 progress ではなく、pi-subagents workflow scripts に control plane を移しません。
 
+#4 では **既存 runner 上の driver foundation** を実装しました。Commands は createWorkflow → driveWorkflow、/wf-resume は exact reconciliation → 同じ driver。Plan の公開 review-result notification は wake-up のみで、保存済み binding と取得した status を検証・保存してから継続します。既存 Validation/review/Fix loop は自動で進みますが、以下の target lifecycle 全体の実装済みを意味しません。[実装範囲・検証・後続 Issue](./docs/implementation/normal-workflow-driver.md) を参照してください。
+
 ```text
 Task -> Scout -> Diagnosis? (bugfix/hotfix required)
  -> conditional Research
@@ -139,7 +141,7 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver/root clarification/native classifier/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は未完了 child workです。共通 launch policy は #21 で実装済みですが、後続 stage の実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver foundation (#4)、native classifier transport (#19)、共通 launch policy (#21) は実装済みです。Conditional stages/Diagnosis/root clarification/generated-workflow consent/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 

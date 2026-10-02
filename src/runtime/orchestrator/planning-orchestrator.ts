@@ -551,6 +551,37 @@ export class PlanningOrchestrator {
       });
       return { status: "reconciled", state: outcome.state, outcome };
     }
+    const intentKey = `${planReviewIdentityKey(input.state.planning.currentPlanVersion)}.intent`;
+    if (input.state.external[intentKey])
+      throw new StalePlanReviewError(
+        "Plan Review open intent requires reconciliation before another open",
+      );
+    let intentRef: ArtifactRef<"plan-review">;
+    try {
+      intentRef = await this.dependencies.artifactStore.writeText(
+        "plan-review",
+        `plan-v${input.state.planning.currentPlanVersion}-open-intent.md`,
+        JSON.stringify({
+          planRef,
+          planVersion: input.state.planning.currentPlanVersion,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof ArtifactImmutableError)
+        throw new StalePlanReviewError(
+          "Possible orphan Plan Review open intent; reconciliation required",
+        );
+      throw error;
+    }
+    input = {
+      state: await this.dependencies.stateStore.saveState(
+        {
+          ...input.state,
+          external: { ...input.state.external, [intentKey]: intentRef.sha256 },
+        },
+        input.state.stateRevision,
+      ),
+    };
     let handle: PlanReviewHandle;
     try {
       handle = await gate.openPlanReview({

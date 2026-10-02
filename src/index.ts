@@ -3,6 +3,8 @@ import { physicalModelSnapshot } from "./runtime/integrations/subagent-launch.ts
 import {
   createWorkflowCommandRuntime,
   registerWorkflowCommands,
+  disposeWorkflowContinuations,
+  renderWorkflowCommandError,
 } from "./commands/index.ts";
 import { loadProductionConfiguration } from "./runtime/configuration/load-configuration.ts";
 
@@ -16,6 +18,10 @@ export {
 export type { DecisionClassifierPort } from "./runtime/ports/jev-decision-client.ts";
 export { PlannotatorIntegration } from "./runtime/integrations/plannotator.ts";
 export {
+  driveWorkflow,
+  type WorkflowDriverDependencies,
+} from "./runtime/orchestrator/drive-workflow.ts";
+export {
   resumeWorkflow,
   reconcileWorkflow,
   WorkflowController,
@@ -27,11 +33,16 @@ export {
 export default function piOrchestrator(pi: ExtensionAPI): void {
   // Agent discovery is manifest-owned. Registration is inert; runtime work
   // starts only from an explicit command invocation.
+  pi.on("session_shutdown", async () =>
+    disposeWorkflowContinuations(pi.events),
+  );
   registerWorkflowCommands(pi, {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
         projectTrusted: context.isProjectTrusted(),
         modelRegistry: context.modelRegistry,
+        onContinuationError: (error) =>
+          context.ui.notify(renderWorkflowCommandError(error), "error"),
         launchHost: {
           sessionId: context.sessionManager.getSessionId(),
           projectTrusted: context.isProjectTrusted(),

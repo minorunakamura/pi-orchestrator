@@ -304,17 +304,18 @@ describe("ORCH-019 workflow commands", () => {
 
       expect((await workflow.load()).phase).toBe("planning");
       expect((await resume()).phase).toBe("awaiting-plan-review");
-      expect((await resume()).phase).toBe("implementing");
-      expect((await resume()).phase).toBe("validating");
-      expect((await resume()).phase).toBe("validating");
-      expect((await resume()).phase).toBe("fixing");
-      expect((await resume()).phase).toBe("validating");
-      expect((await resume()).phase).toBe("reviewing");
-      expect((await resume()).phase).toBe("reviewing");
-      expect((await resume()).phase).toBe("reviewing");
-      expect((await resume()).phase).toBe("awaiting-code-review");
-      expect((await resume()).phase).toBe("awaiting-code-review");
-      expect((await resume()).phase).toBe("completed");
+      workflow.events.deliver("plannotator:review-result", {
+        reviewId: "plan-1",
+        approved: true,
+      });
+      await vi.waitFor(
+        async () =>
+          expect((await workflow.load()).coding.codeReview).toBeDefined(),
+        { timeout: 10_000 },
+      );
+      expect((await workflow.load()).phase).toBe("awaiting-code-review");
+      // The existing Code Gate port is still async until #9; accept its bound Human result normally.
+      expect((await workflow.drive()).state.phase).toBe("completed");
       expect((await resume()).phase).toBe("completed");
       expect(
         workflow.children.filter((child) => child.agent === "worker"),
@@ -363,6 +364,7 @@ describe("ORCH-019 workflow commands", () => {
       join(tmpdir(), "pi-orchestrator-command-runtime-"),
     );
     const childRequests: Record<string, unknown>[] = [];
+    let statusReads = 0;
     const rpc = new FakeSubagentRpc((request, bus) => {
       childRequests.push(request);
       const runId = `${String(request.agent)}-1`;
@@ -392,7 +394,13 @@ describe("ORCH-019 workflow commands", () => {
               status: "handled",
               result: { status: "pending", reviewId: "command-plan-1" },
             });
+            // The result notification races the durable binding; its payload is not approval authority.
+            rpc.deliver("plannotator:review-result", {
+              reviewId: "command-plan-1",
+              approved: true,
+            });
           } else if (request.action === "review-status") {
+            statusReads++;
             request.respond({
               status: "handled",
               result: { status: "pending", reviewId: "command-plan-1" },
@@ -408,9 +416,20 @@ describe("ORCH-019 workflow commands", () => {
         launchResolver: fakeLaunchResolver,
       });
       const started = await runtime.start({ task: "smoke", playbook: "chore" });
-      const planned = await runtime.resume(started.workflowId);
-      expect(planned.state.phase).toBe("awaiting-plan-review");
+      expect(started.state.phase).toBe("awaiting-plan-review");
+      expect(childRequests.map((request) => request.agent)).toEqual([
+        "workflow-scout",
+        "planner",
+      ]);
 
+      await vi.waitFor(() => expect(statusReads).toBe(1));
+      expect(
+        (await runtime.loadState(started.workflowId)).planning.approvedPlanRef,
+      ).toBeUndefined();
+      rpc.deliver("plannotator:review-result", {
+        reviewId: "unrelated",
+        approved: true,
+      });
       const reconciled = await runtime.resume(started.workflowId);
       expect(reconciled.status).toBe("pending");
       expect(reconciled.state.phase).toBe("awaiting-plan-review");

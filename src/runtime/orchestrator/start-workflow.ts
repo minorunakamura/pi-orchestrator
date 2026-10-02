@@ -66,7 +66,8 @@ function assertStartInput(input: StartWorkflowInput): void {
   }
 }
 
-export async function startWorkflow(
+/** Persist the task and initial authority; no child or Human side effects. */
+export async function createWorkflow(
   input: StartWorkflowInput,
   options: StartWorkflowOptions,
 ): Promise<StartedWorkflow> {
@@ -119,14 +120,7 @@ export async function startWorkflow(
 
   // This save is deliberately before any SubagentExecutor call.
   const persistedInitialState = await stateStore.saveState(initialState, 0);
-  const context = await new PlanningOrchestrator({
-    artifactStore,
-    stateStore,
-    subagentExecutor: options.subagentExecutor,
-  }).gatherContext({
-    state: persistedInitialState,
-    cwd: input.cwd,
-  });
+  const context: ContextGatheringResult = { state: persistedInitialState };
 
   return {
     workflowId,
@@ -139,4 +133,16 @@ export async function startWorkflow(
   };
 }
 
-export const createWorkflow = startWorkflow;
+/** Stage-level convenience retained for callers that explicitly manage Planning. */
+export async function startWorkflow(
+  input: StartWorkflowInput,
+  options: StartWorkflowOptions,
+): Promise<StartedWorkflow> {
+  const created = await createWorkflow(input, options);
+  const context = await new PlanningOrchestrator({
+    artifactStore: created.artifactStore,
+    stateStore: created.stateStore,
+    subagentExecutor: options.subagentExecutor,
+  }).gatherContext({ state: created.state, cwd: input.cwd });
+  return { ...created, state: context.state, context };
+}

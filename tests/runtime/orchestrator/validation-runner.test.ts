@@ -214,7 +214,10 @@ describe("ValidationRunner ORCH-013", () => {
       status: "failed",
     });
     expect(result.state.phase).toBe("validating");
-    expect(result.state.coding.validationRef).toBeUndefined();
+    expect(result.state.coding.validationRef).toEqual(result.validationRef);
+    expect((await fixture.stateStore.loadState()).coding.validationRef).toEqual(
+      result.validationRef,
+    );
     expect((await fixture.stateStore.loadState()).phase).toBe("validating");
 
     const decisionRef = ref(
