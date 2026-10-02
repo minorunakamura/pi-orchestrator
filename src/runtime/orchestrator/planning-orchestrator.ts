@@ -1,3 +1,4 @@
+import { agentLaunchPolicy } from "../../core/agent-launch.ts";
 import {
   runPlanningAgent,
   PlanningAgentPendingError,
@@ -176,6 +177,7 @@ function request(
 ): AgentRunRequest {
   return {
     agent,
+    launchPolicy: agentLaunchPolicy(agent),
     task,
     inputRefs,
     ...(cwd ? { cwd } : {}),

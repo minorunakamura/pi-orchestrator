@@ -11,6 +11,10 @@ export class SubagentNotDispatchedError extends RuntimePortError {
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import type { SubagentRunId } from "../../types.ts";
+import type {
+  AgentLaunchEvidence,
+  AgentLaunchPolicy,
+} from "../../core/agent-launch.ts";
 
 import type {
   AgentDispatch,
@@ -25,6 +29,10 @@ export interface AgentRunRequest {
   /** Orchestrator-owned correlation, persisted before dispatch. */
   dispatch?: AgentDispatch;
   onStarted?: (receipt: AgentRunReceipt) => Promise<void>;
+  /** Must persist intent/evidence and State before the adapter may emit spawn. */
+  onPrepared?: (launch: AgentLaunchEvidence) => Promise<void>;
+  launchPolicy?: AgentLaunchPolicy;
+  launch?: AgentLaunchEvidence;
   agent: string;
   task: string;
   cwd?: string;
@@ -68,6 +76,7 @@ export interface AgentRunStatus {
 }
 
 export interface SubagentExecutor {
+  preflight(input: AgentRunRequest): Promise<AgentLaunchEvidence>;
   run(input: AgentRunRequest): Promise<AgentRunResult>;
   runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]>;
   status(

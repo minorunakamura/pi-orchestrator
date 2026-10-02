@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type {
+  AgentLaunchHost,
+  LaunchResolver,
+} from "../runtime/integrations/subagent-launch.ts";
 import { join } from "node:path";
 import type {
   ExtensionAPI,
@@ -67,6 +71,8 @@ export interface WorkflowCommandRuntime {
 }
 
 export interface WorkflowCommandRuntimeOptions {
+  launchHost?: AgentLaunchHost;
+  launchResolver?: LaunchResolver;
   projectTrusted?: boolean;
   configuration?: OrchestratorConfiguration;
   jevDecisionClient?: JevDecisionClient;
@@ -256,6 +262,8 @@ export function createWorkflowCommandRuntime(
           subagentExecutor: new SubagentsIntegration(events, {
             cwd,
             projectTrusted: options.projectTrusted,
+            launchHost: options.launchHost,
+            launchResolver: options.launchResolver,
             ownerRunId: workflowId,
             artifactReader: artifactStore,
           }),
@@ -270,6 +278,8 @@ export function createWorkflowCommandRuntime(
         subagentExecutor: new SubagentsIntegration(events, {
           cwd,
           projectTrusted: options.projectTrusted,
+          launchHost: options.launchHost,
+          launchResolver: options.launchResolver,
           ownerRunId: workflowId,
           artifactReader: artifactStore,
         }),

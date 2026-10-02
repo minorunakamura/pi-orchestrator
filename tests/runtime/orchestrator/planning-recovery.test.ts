@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
-import { SubagentsIntegration } from "../../../src/runtime/integrations/subagents.ts";
+import {
+  SubagentsIntegration,
+  fakeLaunchResolver,
+} from "../../fakes/agent-launch.ts";
 import { startWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
 import { resumeWorkflow } from "../../../src/runtime/orchestrator/resume-workflow.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
@@ -85,13 +88,14 @@ async function setup(
     error = cause;
   }
   const freshEvents = new FakeSubagentRpc();
-  const resume = () =>
+  const resume = (launchResolver = fakeLaunchResolver) =>
     resumeWorkflow("recovery", {
       runDirectory,
       cwd: root,
       repositoryCwd: root,
       subagentExecutor: new SubagentsIntegration(freshEvents, {
         cwd: root,
+        launchResolver,
         artifactReader: new ArtifactStore(runDirectory),
       }),
     });
@@ -375,5 +379,51 @@ test("each recorded dispatch matches the request actually emitted", async () => 
     const attempt = state.planning.agentAttempts![String(request.nodeId)];
     expect(attempt.dispatch.requestId).toBe(request.requestId);
     expect(attempt.receipt?.requestId).toBe(request.requestId);
+    expect(attempt.launch?.launchContractDigest).toBe(
+      attempt.receipt?.launchContractDigest,
+    );
   }
 });
+
+test.each([
+  "model",
+  "thinking",
+  "skills",
+  "tools",
+  "definitionDigest",
+  "launchContractDigest",
+])(
+  "recovery rejects current %s drift without replacing historical evidence or dispatching",
+  async (dimension) => {
+    const h = await setup({ pause: "pi-ketch.researcher" });
+    const before = await h.states.loadState();
+    const historical = before.planning.agentAttempts!.research;
+    h.events.complete(
+      h.requests[1],
+      historical.receipt!.runId,
+      "complete",
+      "historical research",
+    );
+    const result = await h.resume(async (input, binding) => {
+      const launch = await fakeLaunchResolver(input, binding);
+      if (dimension === "model") launch.model = "fake/other";
+      else if (dimension === "thinking") launch.thinking = "high";
+      else if (dimension === "skills")
+        launch.skills = [
+          {
+            name: "other",
+            sourceDigest: "a".repeat(64),
+            contentDigest: "b".repeat(64),
+          },
+        ];
+      else if (dimension === "tools") launch.tools = ["read"];
+      else if (dimension === "definitionDigest")
+        launch.definitionDigest = "c".repeat(64);
+      else launch.launchContractDigest = "d".repeat(64);
+      return launch;
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.state.planning.agentAttempts!.research).toEqual(historical);
+    expect(h.freshEvents.emitted).toHaveLength(0);
+  },
+);

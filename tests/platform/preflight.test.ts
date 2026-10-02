@@ -19,7 +19,7 @@ test("host peers use wildcard ranges and dev/transitional dependencies verify th
   expect(
     manifest.dependencies["@earendil-works/pi-coding-agent"],
   ).toBeUndefined();
-  expect(manifest.devDependencies["pi-subagents"]).toBe("0.74.0");
+  expect(manifest.dependencies["pi-subagents"]).toBe("0.74.0");
   expect(manifest.dependencies["pi-typesafe"]).toBe("^0.8.1");
   expect(VERSION).toBe("0.99.1");
 });

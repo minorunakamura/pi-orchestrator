@@ -1,3 +1,4 @@
+import { fakeLaunchResolver } from "./agent-launch.ts";
 import type {
   ClarificationPort,
   ClarificationRequest,
@@ -83,22 +84,67 @@ export class FakeSubagentExecutor implements SubagentExecutor {
 
   constructor(private readonly outcomes: FakeSubagentExecutorOptions = {}) {}
 
-  run(input: AgentRunRequest): Promise<AgentRunResult> {
+  preflight(input: AgentRunRequest) {
+    return fakeLaunchResolver(input, {
+      task: input.task,
+      cwd: input.cwd ?? "/repo",
+      output: false,
+    });
+  }
+
+  async run(input: AgentRunRequest): Promise<AgentRunResult> {
     this.calls.run.push(input);
-    return resolve(
+    await input.onPrepared?.(await this.preflight(input));
+    const result = await resolve(
       "SubagentExecutor.run",
       this.outcomes.run,
       this.calls.run.length - 1,
     );
+    if (result.runId && input.dispatch)
+      await input.onStarted?.({
+        requestId: input.dispatch.requestId,
+        sessionId: "fixture-session",
+        runId: result.runId,
+        asyncDir: "/fixture/async",
+        outputPath: "/fixture/output",
+        cwd: input.cwd ?? "/repo",
+        agent: input.agent,
+        launchContractDigest: (await this.preflight(input))
+          .launchContractDigest,
+      });
+    return result;
   }
 
-  runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
+  async runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
     this.calls.runParallel.push([...inputs]);
-    return resolve(
+    for (const input of inputs) {
+      // oxlint-disable-next-line eslint/no-await-in-loop
+      await input.onPrepared?.(await this.preflight(input));
+    }
+    const results = await resolve(
       "SubagentExecutor.runParallel",
       this.outcomes.runParallel,
       this.calls.runParallel.length - 1,
     );
+    for (const [index, input] of inputs.entries()) {
+      const result = results[index];
+      if (result?.runId && input.dispatch) {
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await input.onStarted?.({
+          requestId: input.dispatch.requestId,
+          sessionId: "fixture-session",
+          runId: result.runId,
+          asyncDir: "/fixture/async",
+          outputPath: "/fixture/output",
+          cwd: input.cwd ?? "/repo",
+          agent: input.agent,
+          // oxlint-disable-next-line eslint/no-await-in-loop
+          launchContractDigest: (await this.preflight(input))
+            .launchContractDigest,
+        });
+      }
+    }
+    return results;
   }
 
   status(runId: SubagentRunId): Promise<AgentRunStatus> {

@@ -1,5 +1,9 @@
 import { isArtifactRef, type ArtifactRef } from "../artifacts/references.ts";
 import {
+  isAgentLaunchEvidence,
+  type AgentLaunchEvidence,
+} from "../agent-launch.ts";
+import {
   hasOnlyKeys,
   isNonEmptyString,
   isRecord,
@@ -29,6 +33,7 @@ export interface PlanningAgentAttempt {
   dispatch: AgentDispatch;
   inputRefs: readonly ArtifactRef[];
   inputHash: string;
+  launch?: AgentLaunchEvidence;
   receipt?: AgentRunReceipt;
   notDispatched?: true;
 }
@@ -64,6 +69,7 @@ export function isPlanningAgentAttempts(
           "dispatch",
           "inputRefs",
           "inputHash",
+          "launch",
           "receipt",
           "notDispatched",
         ])
@@ -90,6 +96,7 @@ export function isPlanningAgentAttempts(
         attempt.inputRefs.every(isArtifactRef) &&
         typeof attempt.inputHash === "string" &&
         /^[0-9a-f]{64}$/u.test(attempt.inputHash) &&
+        optional(attempt, "launch", isAgentLaunchEvidence) &&
         optional(attempt, "receipt", isAgentRunReceipt) &&
         optional(attempt, "notDispatched", (candidate) => candidate === true) &&
         !(attempt.receipt && attempt.notDispatched)

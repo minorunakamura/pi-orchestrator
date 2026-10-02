@@ -1,3 +1,4 @@
+import { fakeLaunchResolver } from "../fakes/agent-launch.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -288,6 +289,7 @@ describe("ORCH-019 workflow commands", () => {
         runtimeEvents,
         workflow.repositoryCwd,
         {
+          launchResolver: fakeLaunchResolver,
           configuration: workflow.configuration,
           jevDecisionClient: workflow.jevDecisionClient,
           validationExecutor: workflow.validationExecutor,
@@ -402,7 +404,9 @@ describe("ORCH-019 workflow commands", () => {
       },
     };
     try {
-      const runtime = createWorkflowCommandRuntime(events, root);
+      const runtime = createWorkflowCommandRuntime(events, root, {
+        launchResolver: fakeLaunchResolver,
+      });
       const started = await runtime.start({ task: "smoke", playbook: "chore" });
       const planned = await runtime.resume(started.workflowId);
       expect(planned.state.phase).toBe("awaiting-plan-review");

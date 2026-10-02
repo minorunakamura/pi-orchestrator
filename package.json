@@ -48,11 +48,11 @@
     "@types/node": "26.6.2",
     "oxlint": "^1.85.0",
     "oxlint-tsgolint": "^7.0.2003",
-    "pi-subagents": "0.74.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   },
   "dependencies": {
+    "pi-subagents": "0.74.0",
     "pi-typesafe": "^0.8.1"
   }
 }

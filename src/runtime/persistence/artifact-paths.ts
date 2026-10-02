@@ -13,6 +13,7 @@ export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   "plan-review": "plan-reviews",
   "execution-routing": "decisions",
   "jev-request": "decisions",
+  "agent-launch": "agent-runs",
   implementation: "implementation",
   validation: "validation",
   "correctness-review": "reviews",

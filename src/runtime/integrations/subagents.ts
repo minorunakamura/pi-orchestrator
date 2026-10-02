@@ -1,4 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import {
+  agentLaunchPolicy,
+  type AgentLaunchEvidence,
+} from "../../core/agent-launch.ts";
+import {
+  resolveAgentLaunch,
+  restrictAgentLaunch,
+  type AgentLaunchHost,
+  type LaunchResolver,
+} from "./subagent-launch.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import { isRecord } from "../../core/schema.ts";
@@ -6,8 +17,8 @@ import { subagentRunId, type SubagentRunId } from "../../types.ts";
 import type { ArtifactStore } from "../persistence/artifact-store.ts";
 import {
   captureRunReceipt,
+  agentOutputPath,
   prepareAgentOutput,
-  readAgentOutput,
   recoverAgentRun,
 } from "./subagent-recovery.ts";
 import type { AgentRunReceipt } from "../../core/planning/agent-attempt.ts";
@@ -35,6 +46,8 @@ export interface WorkerInput {
   executionProfile: ResolvedExecutionProfile;
   acceptedFindingsRef?: ArtifactRef<"accepted-findings">;
   humanCodeFeedbackRef?: ArtifactRef<"code-review">;
+  /** Selected by approved method authority, not ambient skill inheritance. */
+  skills?: readonly string[];
 }
 
 export interface WorkerRequestOptions {
@@ -57,6 +70,11 @@ export function createWorkerRequest(
   ];
   return {
     agent: "worker",
+    launchPolicy: agentLaunchPolicy(
+      "worker",
+      input.executionProfile,
+      input.skills,
+    ),
     task: options.task ?? defaultWorkerTask,
     inputRefs,
     executionProfile: input.executionProfile,
@@ -76,6 +94,9 @@ export interface SubagentsIntegrationOptions {
   /** Host trust decision; unknown trust excludes project Agent definitions/overrides. */
   projectTrusted?: boolean;
   timeoutMs?: number;
+  launchHost?: AgentLaunchHost;
+  /** Test seam; production uses the released public preflight resolver. */
+  launchResolver?: LaunchResolver;
 }
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 300_000;
@@ -93,12 +114,19 @@ export class SubagentsIntegration implements SubagentExecutor {
 
   constructor(
     private readonly events: EventBus,
-    options: SubagentsIntegrationOptions = {},
+    private readonly options: SubagentsIntegrationOptions = {},
   ) {
     this.artifactReader = options.artifactReader;
     this.ownerRunId = options.ownerRunId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
-    this.projectTrusted = options.projectTrusted === true;
+    this.projectTrusted =
+      options.launchHost?.projectTrusted ?? options.projectTrusted === true;
+    if (
+      options.launchHost &&
+      options.projectTrusted !== undefined &&
+      options.projectTrusted !== options.launchHost.projectTrusted
+    )
+      throw Error("Host launch trust snapshot mismatch");
     this.timeoutMs = options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
     if (
       !Number.isSafeInteger(this.timeoutMs) ||
@@ -108,7 +136,68 @@ export class SubagentsIntegration implements SubagentExecutor {
       throw new Error("Subagent timeout must be a positive finite integer");
   }
 
+  private async resolveLaunch(
+    input: AgentRunRequest,
+  ): Promise<AgentLaunchEvidence> {
+    try {
+      const output =
+        input.onStarted && this.artifactReader?.rootDirectory && input.dispatch
+          ? agentOutputPath(
+              this.artifactReader.rootDirectory,
+              input.dispatch.requestId,
+            )
+          : false;
+      return await (this.options.launchResolver ?? resolveAgentLaunch)(input, {
+        task: await taskWithArtifacts(input, this.artifactReader),
+        cwd: input.cwd ?? this.cwd,
+        output,
+        ...(output
+          ? {
+              sessionDir: join(
+                dirname(output),
+                `session-${input.dispatch!.requestId}`,
+              ),
+            }
+          : {}),
+        host: this.options.launchHost,
+      });
+    } catch (cause) {
+      throw new SubagentNotDispatchedError("Agent launch preflight rejected", {
+        cause,
+      });
+    }
+  }
+
+  private restrict(input: AgentRunRequest) {
+    try {
+      return restrictAgentLaunch(input, this.options.launchHost);
+    } catch (cause) {
+      throw new SubagentNotDispatchedError(
+        "Invalid Agent launch policy/ceiling",
+        { cause },
+      );
+    }
+  }
+
+  async preflight(input: AgentRunRequest): Promise<AgentLaunchEvidence> {
+    const restriction = this.restrict(input);
+    try {
+      return await this.resolveLaunch(input);
+    } finally {
+      restriction?.dispose();
+    }
+  }
+
   async run(input: AgentRunRequest): Promise<AgentRunResult> {
+    const restriction = this.restrict(input);
+    try {
+      return await this.runRestricted(input);
+    } finally {
+      restriction?.dispose();
+    }
+  }
+
+  private async runRestricted(input: AgentRunRequest): Promise<AgentRunResult> {
     const requestId = input.dispatch?.requestId ?? randomUUID();
     const dispatch = input.dispatch ?? {
       requestId,
@@ -116,7 +205,40 @@ export class SubagentsIntegration implements SubagentExecutor {
       nodeId: `worker-${requestId}`,
       deadline: new Date(Date.now() + this.timeoutMs).toISOString(),
     };
+    input = { ...input, dispatch };
     const task = await taskWithArtifacts(input, this.artifactReader);
+    const launch = await this.resolveLaunch(input);
+    // Preflight resolves intent, not the child models namespace/runtime isolation.
+    // #20 must supply enforced, verified isolation; no caller Boolean grants it.
+    if (
+      launch.tools.includes("codemode") ||
+      launch.policy.allowedTools.includes("codemode")
+    )
+      throw new SubagentNotDispatchedError(
+        "Codemode runtime isolation is unverified (#20); inspection does not permit dispatch",
+      );
+    if (input.launch && JSON.stringify(input.launch) !== JSON.stringify(launch))
+      throw new SubagentNotDispatchedError(
+        "Agent launch changed after durable preflight",
+      );
+    if (!input.onPrepared)
+      throw new SubagentNotDispatchedError(
+        "Durable launch evidence callback required",
+      );
+    try {
+      await input.onPrepared(launch);
+    } catch (cause) {
+      throw new SubagentNotDispatchedError(
+        "Unable to persist launch evidence",
+        { cause },
+      );
+    }
+    if (
+      JSON.stringify(await this.resolveLaunch(input)) !== JSON.stringify(launch)
+    )
+      throw new SubagentNotDispatchedError(
+        "Launch drift during evidence persistence; no child was dispatched",
+      );
     let outputPath: string | undefined;
     if (input.onStarted) {
       try {
@@ -167,11 +289,17 @@ export class SubagentsIntegration implements SubagentExecutor {
       // Keep a literal full text result, regardless of agent output defaults.
       output: outputPath ?? false,
       outputMode: "inline",
+      ...(outputPath
+        ? { sessionDir: join(dirname(outputPath), `session-${requestId}`) }
+        : {}),
       outputSchema: false,
       acceptance: false,
-      ...(profile
-        ? { model: `${profile.provider}/${profile.model}:${profile.thinking}` }
-        : {}),
+      // Pin the physical result, including evidence/review roles following host defaults.
+      model: `${launch.model}:${launch.thinking}`,
+      skill: [...launch.policy.skills],
+      intercomBridge: { mode: "off" },
+      reads: false,
+      progress: false,
       timeoutMs,
     };
     return this.spawnAndWait(
@@ -180,11 +308,18 @@ export class SubagentsIntegration implements SubagentExecutor {
       input.agent,
       timeoutMs,
       input.onStarted,
+      launch.launchContractDigest,
     );
   }
 
-  runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
-    return Promise.all(inputs.map((input) => this.run(input)));
+  async runParallel(inputs: AgentRunRequest[]): Promise<AgentRunResult[]> {
+    const settled = await Promise.allSettled(
+      inputs.map((input) => this.run(input)),
+    );
+    return settled.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
   }
 
   status(
@@ -220,6 +355,7 @@ export class SubagentsIntegration implements SubagentExecutor {
     agent: string,
     timeoutMs: number,
     onStarted?: (receipt: AgentRunReceipt) => Promise<void>,
+    expectedDigest?: string,
   ): Promise<AgentRunResult> {
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -250,13 +386,18 @@ export class SubagentsIntegration implements SubagentExecutor {
               try {
                 if (!this.artifactReader?.rootDirectory)
                   throw Error("Missing output root");
-                result = {
-                  ...result,
-                  output: await readAgentOutput(
-                    savedReceipt,
-                    this.artifactReader.rootDirectory,
-                  ),
-                };
+                const recovered = await recoverAgentRun(
+                  savedReceipt,
+                  this.artifactReader.rootDirectory,
+                );
+                if (
+                  recovered.status !== "succeeded" ||
+                  recovered.result?.status !== "succeeded"
+                )
+                  throw Error(
+                    "Terminal child status/output does not match the historical receipt",
+                  );
+                result = { ...result, output: recovered.result.output };
               } catch {
                 result = {
                   status: "ambiguous",
@@ -355,6 +496,8 @@ export class SubagentsIntegration implements SubagentExecutor {
                 return;
               }
               runId = subagentRunId(details.runId);
+              const digestMatches =
+                details.launchContractDigest === expectedDigest;
               if (onStarted) {
                 const identity = runId;
                 receiptSaved = (async () => {
@@ -376,6 +519,8 @@ export class SubagentsIntegration implements SubagentExecutor {
                   });
                   await onStarted(receipt);
                   savedReceipt = receipt;
+                  if (!digestMatches)
+                    throw Error("Actual launch digest differs from preflight");
                 })();
                 void receiptSaved.catch(() =>
                   finish({
@@ -383,6 +528,14 @@ export class SubagentsIntegration implements SubagentExecutor {
                     reason: "Unable to persist child launch receipt",
                   }),
                 );
+              }
+              if (!digestMatches) {
+                finish({
+                  status: "ambiguous",
+                  reason:
+                    "Actual launch digest differs from durable preflight; do not relaunch",
+                });
+                return;
               }
               const early = earlyCompletions.get(runId);
               earlyCompletions.clear();
