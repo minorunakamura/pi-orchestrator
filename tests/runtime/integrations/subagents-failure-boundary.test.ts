@@ -1,6 +1,6 @@
+import { SubagentsIntegration } from "../../fakes/agent-launch.ts";
 import { afterEach, expect, test, vi } from "vitest";
 import {
-  SubagentsIntegration,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   SUBAGENT_RPC_REPLY_PREFIX,
   type EventBus,

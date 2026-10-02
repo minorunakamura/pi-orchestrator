@@ -1,3 +1,4 @@
+import { fakeLaunchResolver } from "../../fakes/agent-launch.ts";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,8 +26,17 @@ class RecordingExecutor implements SubagentExecutor {
     private readonly onRun?: (request: AgentRunRequest) => Promise<void>,
   ) {}
 
+  preflight(input: AgentRunRequest) {
+    return fakeLaunchResolver(input, {
+      task: input.task,
+      cwd: input.cwd ?? "/repo",
+      output: false,
+    });
+  }
+
   async run(input: AgentRunRequest): Promise<AgentRunResult> {
     this.calls.push(input);
+    await input.onPrepared?.(await this.preflight(input));
     await this.onRun?.(input);
     return { status: "succeeded", runId, output: this.output };
   }

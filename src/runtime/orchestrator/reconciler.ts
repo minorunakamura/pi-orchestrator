@@ -1117,9 +1117,30 @@ export class WorkflowReconciler {
         "Worker dispatch identity is unresolved; redispatch is forbidden",
       );
     }
+    if (
+      !attempt.launch ||
+      !attempt.receipt ||
+      attempt.receipt.runId !== attempt.runId ||
+      attempt.receipt.requestId !== attempt.dispatch.requestId ||
+      attempt.receipt.launchContractDigest !==
+        attempt.launch.launchContractDigest ||
+      attempt.launch.model !==
+        `${attempt.executionProfile.provider}/${attempt.executionProfile.model}` ||
+      attempt.launch.thinking !== attempt.executionProfile.thinking
+    ) {
+      return this.block(
+        state,
+        "agent-execution-ambiguous",
+        ref,
+        "Historical Worker launch contract/receipt is missing or mismatched; do not redispatch",
+      );
+    }
     let status: AgentRunStatus;
     try {
-      status = await this.deps.subagentExecutor.status(attempt.runId);
+      status = await this.deps.subagentExecutor.status(
+        attempt.runId,
+        attempt.receipt,
+      );
     } catch (error) {
       return this.block(
         state,

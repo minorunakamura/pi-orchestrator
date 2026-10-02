@@ -9,6 +9,14 @@ import {
   isNonNegativeInteger,
   isOneOf,
 } from "../../core/schema.ts";
+import {
+  isAgentLaunchEvidence,
+  type AgentLaunchEvidence,
+} from "../../core/agent-launch.ts";
+import {
+  isAgentRunReceipt,
+  type AgentRunReceipt,
+} from "../../core/planning/agent-attempt.ts";
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import { isSubagentRunId, type SubagentRunId } from "../../types.ts";
 import type { AgentDispatch } from "../ports/subagent-executor.ts";
@@ -29,6 +37,8 @@ export interface WorkerAttemptEvidence {
   inputRefs: readonly ArtifactRef[];
   executionProfile: ResolvedExecutionProfile;
   dispatch: AgentDispatch;
+  launch?: AgentLaunchEvidence;
+  receipt?: AgentRunReceipt;
   observedAt: string;
   status: "intent" | "succeeded" | "failed" | "timed-out" | "ambiguous";
   runId?: SubagentRunId;
@@ -95,6 +105,8 @@ function assertWorkerAttempt(
       "inputRefs",
       "executionProfile",
       "dispatch",
+      "launch",
+      "receipt",
       "observedAt",
       "status",
       "runId",
@@ -140,6 +152,8 @@ function assertWorkerAttempt(
     ].every(isNonEmptyString) ||
     !date(value.dispatch.deadline) ||
     !date(value.observedAt) ||
+    (value.launch !== undefined && !isAgentLaunchEvidence(value.launch)) ||
+    (value.receipt !== undefined && !isAgentRunReceipt(value.receipt)) ||
     !snapshot(value.before) ||
     !isOneOf(
       ["intent", "succeeded", "failed", "timed-out", "ambiguous"] as const,

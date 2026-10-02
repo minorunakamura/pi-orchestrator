@@ -153,6 +153,27 @@ afterEach(async () => {
 });
 
 describe("ReviewRunner ORCH-014", () => {
+  test("reuses only exact historical review contracts and receipts without new fanout", async () => {
+    const current = await fixture();
+    const results = [
+      succeeded(output("correctness", [])),
+      succeeded(output("ponytail", [])),
+    ];
+    const executor = new FakeSubagentExecutor({
+      runParallel: { type: "result", value: results },
+      status: results.map((result) => ({
+        type: "result" as const,
+        value: { runId, status: "succeeded" as const, result },
+      })),
+    });
+    const runner = makeRunner(current, executor);
+    await runner.execute({ state: current.state });
+    const historical = await current.stateStore.loadState();
+    const resumed = await runner.execute({ state: historical });
+    expect(resumed.state.phase).toBe("reviewing");
+    expect(executor.calls.runParallel).toHaveLength(1);
+    expect(executor.calls.status).toHaveLength(2);
+  });
   test("rejects an explicit stale reviewer binding instead of relabeling it as current", async () => {
     const current = await fixture();
     const stale = {

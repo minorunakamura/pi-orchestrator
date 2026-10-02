@@ -7,6 +7,7 @@ import {
   type EventBus,
 } from "../../src/runtime/integrations/subagents.ts";
 import { requireRecord } from "./typed-boundaries.ts";
+import { fakeLaunchDigest } from "./agent-launch.ts";
 
 export function childRequest(payload: unknown): Record<string, unknown> {
   const envelope = requireRecord(payload);
@@ -53,7 +54,13 @@ export class FakeSubagentRpc implements EventBus {
 
   receipt(request: Record<string, unknown>, runId: string): void {
     let asyncDir: string | undefined;
-    const launchContractDigest = `digest-${runId}`;
+    const launchContractDigest = fakeLaunchDigest(
+      request.agent,
+      request.task,
+      request.cwd,
+      request.output,
+      request.model,
+    );
     if (typeof request.output === "string") {
       asyncDir = join(dirname(request.output), `async-${runId}`);
       this.asyncDirs.set(runId, asyncDir);

@@ -1,3 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { agentLaunchPolicy } from "../../core/agent-launch.ts";
+import {
+  isPlanningAgentAttempts,
+  isAgentRunReceipt,
+} from "../../core/planning/agent-attempt.ts";
+import { subagentRunId } from "../../types.ts";
+import { DEFAULT_SUBAGENT_TIMEOUT_MS } from "../integrations/subagents.ts";
 import type {
   ArtifactKind,
   ArtifactRef,
@@ -206,6 +214,7 @@ function createReviewRequest(
 ): AgentRunRequest {
   return {
     agent: reviewer.agent,
+    launchPolicy: agentLaunchPolicy(reviewer.agent),
     task: reviewTask(reviewer.source, state.coding.reviewRound),
     inputRefs: refs,
     ...(cwd ? { cwd } : {}),
@@ -455,12 +464,146 @@ export class ReviewRunner {
     const requests = fixedReviewerSet.map((reviewer) =>
       createReviewRequest(reviewer, input.state, refs, input.cwd),
     );
+    let state = input.state;
+    let saves = Promise.resolve();
+    const recovered = new Map<number, AgentRunResult>();
+    // Reconcile historical launches before admitting any new child.
+    // oxlint-disable eslint/no-await-in-loop
+    for (const [index, request] of requests.entries()) {
+      const key = `review.launch.p${state.planning.approvedPlanVersion}.i${state.coding.implementationRevision}.r${state.coding.reviewRound}.${fixedReviewerSet[index].source}`;
+      request.dispatch = {
+        requestId: randomUUID(),
+        ownerRunId: state.workflowId,
+        nodeId: key,
+        deadline: new Date(
+          Date.now() + DEFAULT_SUBAGENT_TIMEOUT_MS,
+        ).toISOString(),
+      };
+      if (state.external[key]) {
+        try {
+          const content = await store.readText({
+            kind: "agent-launch",
+            path: artifactRelativePath("agent-launch", `${key}-launch.json`),
+            schemaVersion: 1,
+            sha256: state.external[key],
+          });
+          const attempts: unknown = { scout: JSON.parse(content) };
+          if (!isPlanningAgentAttempts(attempts))
+            throw Error("Invalid historical review launch");
+          const previous = attempts.scout;
+          if (
+            !previous.launch ||
+            JSON.stringify(previous.inputRefs) !== JSON.stringify(refs)
+          )
+            throw Error("Invalid historical review launch");
+          const receipt: unknown = JSON.parse(
+            await store.readText({
+              kind: "agent-launch",
+              path: artifactRelativePath("agent-launch", `${key}-receipt.json`),
+              schemaVersion: 1,
+              sha256: state.external[`${key}.receipt`],
+            }),
+          );
+          if (
+            !isAgentRunReceipt(receipt) ||
+            receipt.requestId !== previous.dispatch.requestId ||
+            receipt.launchContractDigest !==
+              previous.launch.launchContractDigest ||
+            receipt.agent !== request.agent
+          )
+            throw Error("Invalid historical review receipt");
+          request.dispatch = previous.dispatch;
+          request.onStarted = async () => {};
+          const current =
+            await this.dependencies.subagentExecutor.preflight(request);
+          if (JSON.stringify(current) !== JSON.stringify(previous.launch))
+            throw Error("Review launch contract drift; do not redispatch");
+          const identity = subagentRunId(receipt.runId);
+          const status = await this.dependencies.subagentExecutor.status(
+            identity,
+            receipt,
+          );
+          if (
+            status.runId !== identity ||
+            status.status !== "succeeded" ||
+            status.result?.status !== "succeeded" ||
+            status.result.runId !== identity
+          )
+            throw Error("Historical review is unresolved; do not redispatch");
+          recovered.set(index, status.result);
+          continue;
+        } catch (error) {
+          return blockAndThrow(
+            state,
+            this.dependencies.stateStore,
+            "agent-execution-ambiguous",
+            error,
+          );
+        }
+      }
+      const saveEvidence = (suffix: string, value: unknown) => {
+        saves = saves.then(async () => {
+          if (suffix === "launch" && state.external[key])
+            throw Error(
+              "Historical review launch requires reconciliation; do not redispatch",
+            );
+          const schema = (candidate: unknown) => {
+            if (
+              suffix === "launch"
+                ? !isPlanningAgentAttempts({ scout: candidate })
+                : !isAgentRunReceipt(candidate)
+            )
+              throw Error("Invalid review launch evidence");
+            return candidate;
+          };
+          if (!store.writeJson)
+            throw Error("Schema-valid launch ArtifactStore required");
+          const ref = await store.writeJson(
+            "agent-launch",
+            `${key}-${suffix}.json`,
+            value,
+            schema,
+          );
+          state = await this.dependencies.stateStore.saveState(
+            {
+              ...state,
+              external: {
+                ...state.external,
+                [suffix === "launch" ? key : `${key}.receipt`]: ref.sha256,
+              },
+            },
+            state.stateRevision,
+          );
+        });
+        return saves;
+      };
+      request.onPrepared = (launch) =>
+        saveEvidence("launch", {
+          dispatch: request.dispatch,
+          inputRefs: refs,
+          inputHash: launch.taskDigest,
+          launch,
+        });
+      request.onStarted = (receipt) => saveEvidence("receipt", receipt);
+    }
+    // oxlint-enable eslint/no-await-in-loop
     let results: AgentRunResult[];
     try {
-      results = await this.dependencies.subagentExecutor.runParallel(requests);
+      const pending = requests.filter((_, index) => !recovered.has(index));
+      const dispatched = pending.length
+        ? await this.dependencies.subagentExecutor.runParallel(pending)
+        : [];
+      if (dispatched.length !== pending.length)
+        throw Error("Reviewer result coverage mismatch");
+      results = requests.map(
+        (_, index) => recovered.get(index) ?? dispatched.shift()!,
+      );
+      input = { ...input, state };
     } catch (error) {
+      // A sibling may already have persisted/dispatched; retain its latest State.
+      await saves.catch(() => {});
       return blockAndThrow(
-        input.state,
+        state,
         this.dependencies.stateStore,
         blockReason(error),
         error,
@@ -533,7 +676,6 @@ export class ReviewRunner {
       throw new ReviewRunnerError("Review artifacts were not persisted");
     }
 
-    let state: WorkflowState;
     try {
       state = await advanceWorkflow(
         input.state,

@@ -38,11 +38,11 @@ Pi loader は `pi.extensions: ./src/index.ts` の TypeScript source を読み込
 | [minorunakamura/pi-ketch](https://github.com/minorunakamura/pi-ketch) | conditional Research、pi-ketch.researcher。Same-name npm package は別契約 |
 | [minorunakamura/pi-ask-user-question](https://github.com/minorunakamura/pi-ask-user-question) | root/Main の Human clarification。Same-name npm askUserQuestion は代替ではない |
 
-#18 の package/lockfile は Pi **0.99.1** / pi-subagents **0.74.0** / pi-typesafe **0.8.1** で検証します。Pi は host peer のまま、pi-subagents は contract/smoke 用 dev dependency（実行 host に別途 install が必要）です。#19 が Jev decision transport を Pi native classifiers（default `typesafe/jev-latest`）へ移行します。現行 direct adapter は default TypeSafe backend のみ対応し、`jev.endpoint` は未指定または `https://api.typesafe.ai` のみ許可します。任意 host への credential 転送は行いません。
+package/lockfile は Pi **0.99.1** / pi-subagents **0.74.0** / pi-typesafe **0.8.1** で検証します。Pi は host peer のまま、pi-subagents は public preflight 用 runtime dependency です。実行 host は同じ released dependency の extension を明示 load してください（development smoke: `-e ./node_modules/pi-subagents`）。#19 が Jev decision transport を Pi native classifiers（default `typesafe/jev-latest`）へ移行します。現行 direct adapter は default TypeSafe backend のみ対応し、`jev.endpoint` は未指定または `https://api.typesafe.ai` のみ許可します。任意 host への credential 転送は行いません。
 
 Platform の検証範囲・再現手順は [#18 platform smoke evidence](./docs/implementation/platform-baseline-smoke.md) を参照してください。後続 Issue の runtime 実装や v1 全体の production PASS を意味しません。
 
-v1 target: all child roles use explicit orchestrator Agent Launch Policy (#21): public preflight で resolved physical model/thinking、explicit skills、effective callable tools、Agent definition digest、inheritance/trust、package/lifecycle/launch digest を検証・保存します。ambient capabilities を仮定せず、changed model/skill/tool/definition を同じ attempt と扱いません。
+全 production child launch は orchestrator Agent Launch Policy / public preflight を通し、resolved physical model/thinking、explicit skills と content hash、effective tools、Agent definition、inheritance/trust、package/lifecycle/launch digest を dispatch 前に保存します。Planning/review の recovery は exact historical contract/receipt を検証し、Worker は historical approved profile/receipt に bind します。ambient capabilities・legacy evidence の移行・blind relaunch は仮定しません。[#21 実装・検証・制限](docs/implementation/agent-launch-contract.md)を参照してください。
 
 Third-party package の変更/patch/fork/private API 利用は禁止。released contract で安全に実現できない経路は blocked/unsupported。Virtual Models は v1 execution authority ではなく Future Scope。Codemode (#20) は verified bounded read-only child capability のみで、lifecycle/approval を所有しません。
 
@@ -139,7 +139,7 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver/root clarification/native classifier/launch policy/TDD/simplicity/Oracle/deviation/ownership/non-Git/synchronous Code corrections は未完了 child workです。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver/root clarification/native classifier/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は未完了 child workです。共通 launch policy は #21 で実装済みですが、後続 stage の実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 

@@ -49,6 +49,8 @@ export async function runPlanningAgent(
       task: input.task,
       cwd: input.cwd ?? state.projectRoot,
       inputRefs,
+      launchPolicy: input.launchPolicy,
+      executionProfile: input.executionProfile,
     }),
   );
   try {
@@ -65,7 +67,10 @@ export async function runPlanningAgent(
       JSON.stringify(previous.inputRefs) !== JSON.stringify(inputRefs) ||
       previous.dispatch.ownerRunId !== state.workflowId ||
       previous.dispatch.nodeId !== stage ||
+      !previous.launch ||
       !previous.receipt ||
+      previous.receipt.launchContractDigest !==
+        previous.launch.launchContractDigest ||
       previous.receipt.requestId !== previous.dispatch.requestId ||
       previous.receipt.agent !== input.agent ||
       previous.receipt.cwd !== (input.cwd ?? state.projectRoot)
@@ -75,6 +80,15 @@ export async function runPlanningAgent(
       );
     }
     try {
+      const current = await dependencies.subagentExecutor.preflight({
+        ...input,
+        dispatch: previous.dispatch,
+        onStarted: async () => {},
+      });
+      if (JSON.stringify(current) !== JSON.stringify(previous.launch))
+        return unknown(
+          "Planning launch contract drift; historical attempt cannot be replaced or reused",
+        );
       const identity = subagentRunId(previous.receipt.runId);
       const status = await dependencies.subagentExecutor.status(
         identity,
@@ -99,7 +113,7 @@ export async function runPlanningAgent(
       return unknown("Planning run status is unavailable");
     }
   }
-  const attempt: PlanningAgentAttempt = {
+  let attempt: PlanningAgentAttempt = {
     dispatch: {
       requestId: randomUUID(),
       ownerRunId: state.workflowId,
@@ -130,6 +144,10 @@ export async function runPlanningAgent(
       ...input,
       inputRefs,
       dispatch: attempt.dispatch,
+      onPrepared: async (launch) => {
+        attempt = { ...attempt, launch };
+        await save(attempt);
+      },
       onStarted: async (receipt) => {
         await save({ ...attempt, receipt });
       },

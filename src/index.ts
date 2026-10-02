@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { physicalModelSnapshot } from "./runtime/integrations/subagent-launch.ts";
 import {
   createWorkflowCommandRuntime,
   registerWorkflowCommands,
@@ -26,6 +27,16 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
         projectTrusted: context.isProjectTrusted(),
+        launchHost: {
+          sessionId: context.sessionManager.getSessionId(),
+          projectTrusted: context.isProjectTrusted(),
+          availableModels: physicalModelSnapshot(context.modelRegistry),
+          parentModel: context.model,
+          scopedModelIds: context.scopedModels.map(
+            ({ model }) => `${model.provider}/${model.id}`,
+          ),
+          runtimeSnapshotHost: pi,
+        },
         configuration: loadProductionConfiguration(context.cwd, {
           projectTrusted: context.isProjectTrusted(),
         }),

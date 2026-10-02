@@ -44,6 +44,7 @@ import type { WorkflowState } from "../../core/workflow/state.ts";
 import type { PlanSection } from "../../core/planning/policy.ts";
 import {
   isSubagentRunId,
+  subagentRunId,
   plannotatorReviewId,
   type PlannotatorReviewId,
   type SubagentRunId,
@@ -58,6 +59,7 @@ import { artifactRelativePath } from "../persistence/artifact-paths.ts";
 import {
   RuntimePortError,
   type AgentRunResult,
+  type AgentRunRequest,
   type CodeReviewHandle,
   type CodeReviewStatus,
   type JevDecisionClient,
@@ -668,6 +670,8 @@ export async function validateCompletedWorkerAttempt(
     attempt.workflowId !== state.workflowId ||
     attempt.dispatch.ownerRunId !== state.workflowId ||
     attempt.launchStatus !== "observed" ||
+    !attempt.launch ||
+    !attempt.receipt ||
     !sameArtifactRef(attempt.implementationRef, state.coding.implementationRef)
   )
     throw new WorkerAttemptAuthorityError("authority-inconsistent", ref);
@@ -682,6 +686,13 @@ export async function validateCompletedWorkerAttempt(
       ),
     );
     if (
+      attempt.receipt.launchContractDigest !==
+        attempt.launch.launchContractDigest ||
+      attempt.receipt.runId !== attempt.runId ||
+      attempt.receipt.requestId !== attempt.dispatch.requestId ||
+      attempt.launch.model !==
+        `${attempt.executionProfile.provider}/${attempt.executionProfile.model}` ||
+      attempt.launch.thinking !== attempt.executionProfile.thinking ||
       implementation.implementationRevision !== attempt.targetRevision ||
       implementation.runId !== attempt.runId ||
       !sameArtifactRef(
@@ -733,6 +744,8 @@ export async function validateCompletedWorkerAttempt(
       "inputRefs",
       "executionProfile",
       "dispatch",
+      "launch",
+      "receipt",
       "runId",
       "launchStatus",
       "before",
@@ -1662,7 +1675,7 @@ export class CodingOrchestrator {
       nodeId: `worker-${attemptId}`,
       deadline: new Date(Date.now() + timeoutMs).toISOString(),
     };
-    const workerRequest = {
+    const workerRequest: AgentRunRequest = {
       ...createWorkerRequest(workerInput, { cwd: before.cwd }),
       dispatch,
     };
@@ -1704,6 +1717,47 @@ export class CodingOrchestrator {
     );
     let workerResult: AgentRunResult;
     try {
+      workerRequest.onPrepared = async (launch) => {
+        intent.launch = launch;
+        const ref = await persistJson(
+          store,
+          "implementation",
+          `attempt-${attemptId}-launch.json`,
+          { ...intent, previousRef: routedState.coding.workerAttemptRef },
+          parseWorkerAttempt,
+        );
+        routedState = await this.dependencies.stateStore.saveState(
+          {
+            ...routedState,
+            coding: { ...routedState.coding, workerAttemptRef: ref },
+          },
+          routedState.stateRevision,
+        );
+      };
+      workerRequest.onStarted = async (receipt) => {
+        intent.receipt = receipt;
+        const ref = await persistJson(
+          store,
+          "implementation",
+          `attempt-${attemptId}-receipt.json`,
+          {
+            ...intent,
+            previousRef: routedState.coding.workerAttemptRef,
+            status: "ambiguous",
+            launchStatus: "observed",
+            runId: subagentRunId(receipt.runId),
+            after: { status: "pending" },
+          },
+          parseWorkerAttempt,
+        );
+        routedState = await this.dependencies.stateStore.saveState(
+          {
+            ...routedState,
+            coding: { ...routedState.coding, workerAttemptRef: ref },
+          },
+          routedState.stateRevision,
+        );
+      };
       workerResult =
         await this.dependencies.subagentExecutor.run(workerRequest);
     } catch (error) {
@@ -1785,6 +1839,14 @@ export class CodingOrchestrator {
       validRunId &&
       typeof workerResult.output === "string" &&
       workerResult.output.trim() &&
+      intent.launch &&
+      intent.receipt &&
+      intent.receipt.launchContractDigest ===
+        intent.launch.launchContractDigest &&
+      intent.receipt.runId === validRunId &&
+      intent.receipt.requestId === dispatch.requestId &&
+      intent.receipt.agent === workerRequest.agent &&
+      intent.receipt.cwd === before.cwd &&
       after.status === "observed";
     if (!successful || workerResult.status !== "succeeded") {
       const status =

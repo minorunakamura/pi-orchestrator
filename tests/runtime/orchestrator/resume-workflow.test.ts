@@ -145,7 +145,7 @@ describe("ORCH-018 resumeWorkflow", () => {
     expect(created.state.phase).toBe("awaiting-plan-review");
   });
 
-  test("reconstructs a known Worker completion from durable evidence without dispatch", async () => {
+  test("blocks a legacy Worker completion without a historical launch contract and receipt", async () => {
     const runs = await root();
     const artifactStore = new ArtifactStore(join(runs, "workflow-1"));
     const stateStore = new StateStore(join(runs, "workflow-1"));
@@ -253,6 +253,9 @@ describe("ORCH-018 resumeWorkflow", () => {
     };
     await stateStore.saveState(state, 0);
     const executor: SubagentExecutor = {
+      preflight: async () => {
+        throw Error("must not preflight");
+      },
       run: async () => ({
         status: "succeeded",
         runId,
@@ -273,8 +276,8 @@ describe("ORCH-018 resumeWorkflow", () => {
       subagentExecutor: executor,
     });
 
-    expect(result.status).toBe("advanced");
-    expect(result.state.phase).toBe("validating");
+    expect(result.status).toBe("blocked");
+    expect(result.state.block?.reason).toBe("agent-execution-ambiguous");
   });
 
   test("does not redispatch an unresolved Worker attempt on resume", async () => {
@@ -361,6 +364,9 @@ describe("ORCH-018 resumeWorkflow", () => {
     };
     await stateStore.saveState(state, 0);
     const executor: SubagentExecutor = {
+      preflight: async () => {
+        throw Error("must not preflight");
+      },
       run: async () => ({
         status: "succeeded",
         runId,

@@ -74,12 +74,12 @@ describe("Phase C full fake end-to-end contract", () => {
       (await artifact(h, round.state.coding.acceptedFindingsRef)).accepted,
     ).toEqual([]);
     await approveCode(h);
-    expect(h.children.map((child) => child.agent)).toEqual([
-      "workflow-scout",
-      "planner",
-      "worker",
-      "reviewer",
+    const agents = h.children.map((child) => child.agent);
+    expect(agents.slice(0, 3)).toEqual(["workflow-scout", "planner", "worker"]);
+    // Parallel preflight/persistence does not promise reviewer dispatch order.
+    expect(agents.slice(3).toSorted()).toEqual([
       "ponytail-reviewer",
+      "reviewer",
     ]);
     expect(h.children.every((child) => child.context === "fresh")).toBe(true);
     expect(h.validations).toEqual([contract]);

@@ -1,8 +1,6 @@
 import { readFile, rm, writeFile, mkdir, rename } from "node:fs/promises";
-import {
-  SubagentsIntegration,
-  SUBAGENT_ASYNC_COMPLETE_EVENT,
-} from "../../../src/runtime/integrations/subagents.ts";
+import { SubagentsIntegration } from "../../fakes/agent-launch.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../../src/runtime/integrations/subagents.ts";
 import { FakeSubagentRpc } from "../../fakes/subagent-rpc.ts";
 import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
 import { execFile } from "node:child_process";

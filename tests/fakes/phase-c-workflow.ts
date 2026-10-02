@@ -27,7 +27,7 @@ import {
   type JevClient,
 } from "../../src/runtime/integrations/jev.ts";
 import { PlannotatorIntegration } from "../../src/runtime/integrations/plannotator.ts";
-import { SubagentsIntegration } from "../../src/runtime/integrations/subagents.ts";
+import { SubagentsIntegration } from "./agent-launch.ts";
 import { startWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
 import { PlanningOrchestrator } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { CodingOrchestrator } from "../../src/runtime/orchestrator/coding-orchestrator.ts";

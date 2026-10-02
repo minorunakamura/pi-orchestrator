@@ -1,4 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  SubagentsIntegration,
+  fakeLaunchResolver,
+} from "../../fakes/agent-launch.ts";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -8,10 +13,7 @@ import {
   createArtifactRef,
 } from "../../../src/runtime/persistence/artifact-store.ts";
 import type { ArtifactRef } from "../../../src/core/artifacts/references.ts";
-import {
-  SubagentsIntegration,
-  SUBAGENT_RPC_REQUEST_EVENT,
-} from "../../../src/runtime/integrations/subagents.ts";
+import { SUBAGENT_RPC_REQUEST_EVENT } from "../../../src/runtime/integrations/subagents.ts";
 import type { AgentRunRequest } from "../../../src/runtime/ports/index.ts";
 import {
   childRequest,
@@ -32,6 +34,57 @@ afterEach(async () => {
 });
 
 describe("SubagentsIntegration", () => {
+  test.each(["startup-projection-pending", "terminal-digest-mismatch"])(
+    "persists early receipt but requires exact terminal evidence: %s",
+    async (scenario) => {
+      const store = new ArtifactStore(await temporaryRoot());
+      await store.writeText("task", "task.md", "probe");
+      const events = new FakeEventBus((request, rpc) => {
+        rpc.receipt(request, "receipt-race");
+        const asyncDir = rpc.asyncDirs.get("receipt-race")!;
+        const path = join(asyncDir, "status.json");
+        const status = JSON.parse(readFileSync(path, "utf8"));
+        if (scenario === "startup-projection-pending") {
+          delete status.launchContractDigest;
+          status.steps = [];
+        } else status.launchContractDigest = "wrong-terminal-digest";
+        writeFileSync(path, JSON.stringify(status));
+      });
+      let saved = false;
+      const result = await new SubagentsIntegration(events, {
+        artifactReader: store,
+      }).run({
+        agent: "reviewer",
+        task: "probe",
+        onStarted: async (receipt) => {
+          saved = true;
+          if (scenario === "startup-projection-pending") {
+            const path = join(receipt.asyncDir, "status.json");
+            const status = JSON.parse(await readFile(path, "utf8"));
+            await writeFile(
+              path,
+              JSON.stringify({
+                ...status,
+                launchContractDigest: receipt.launchContractDigest,
+              }),
+            );
+          }
+          events.complete(
+            childRequest(events.emitted[0].payload),
+            receipt.runId,
+            "complete",
+            "canonical full output",
+          );
+        },
+      });
+      expect(saved).toBe(true);
+      expect(result.status).toBe(
+        scenario === "startup-projection-pending" ? "succeeded" : "ambiguous",
+      );
+      if (result.status === "succeeded")
+        expect(result.output).toBe("canonical full output");
+    },
+  );
   test.each([undefined, false, true])(
     "uses the public Agent discovery scope for host project trust %s",
     async (projectTrusted) => {
@@ -57,7 +110,7 @@ describe("SubagentsIntegration", () => {
       const runtime = createWorkflowCommandRuntime(
         events,
         await temporaryRoot(),
-        { projectTrusted },
+        { projectTrusted, launchResolver: fakeLaunchResolver },
       );
       await runtime.start({ task: "Read-only scout probe", playbook: "chore" });
       expect(childRequest(events.emitted[0].payload).agentScope).toBe(
@@ -240,7 +293,9 @@ describe("SubagentsIntegration", () => {
       if (request.agent === "pi-ketch.researcher") signalResearch?.(request);
       else rpc.complete(request, id, "complete", "local facts");
     });
-    const runtime = createWorkflowCommandRuntime(events, root);
+    const runtime = createWorkflowCommandRuntime(events, root, {
+      launchResolver: fakeLaunchResolver,
+    });
     let settled = false;
     const start = runtime
       .start({ task: "Reversi", playbook: "new-project" })
@@ -282,7 +337,9 @@ describe("SubagentsIntegration", () => {
   test("new-project commands supply task and scout contents and isolate concurrent workflows", async () => {
     const root = await temporaryRoot();
     const events = new FakeEventBus();
-    const runtime = createWorkflowCommandRuntime(events, root);
+    const runtime = createWorkflowCommandRuntime(events, root, {
+      launchResolver: fakeLaunchResolver,
+    });
     const tasks = ["ブラウザで遊べるリバーシゲーム", "別のプロジェクトの時計"];
     const started = await Promise.all(
       tasks.map((task) => runtime.start({ task, playbook: "new-project" })),
