@@ -17,6 +17,7 @@ export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   "execution-routing": "decisions",
   "jev-request": "decisions",
   "agent-launch": "agent-runs",
+  "oracle-advisory": "advisory",
   implementation: "implementation",
   validation: "validation",
   "correctness-review": "reviews",

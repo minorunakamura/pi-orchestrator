@@ -30,6 +30,7 @@ export interface PlannerInput {
   clarificationRef?: ArtifactRef<"clarification">;
   previousPlanRef?: ArtifactRef<"plan">;
   feedbackRef?: ArtifactRef<"plan-review">;
+  advisoryRef?: ArtifactRef<"oracle-advisory">;
   targetVersion: number;
 }
 
@@ -55,5 +56,6 @@ export function plannerInputRefs(input: PlannerInput): readonly ArtifactRef[] {
     ...(input.clarificationRef ? [input.clarificationRef] : []),
     ...(input.previousPlanRef ? [input.previousPlanRef] : []),
     ...(input.feedbackRef ? [input.feedbackRef] : []),
+    ...(input.advisoryRef ? [input.advisoryRef] : []),
   ];
 }

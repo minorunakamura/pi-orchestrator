@@ -20,6 +20,7 @@ export const artifactKinds = [
   "execution-routing",
   "jev-request",
   "agent-launch",
+  "oracle-advisory",
   "implementation",
   "validation",
   "correctness-review",

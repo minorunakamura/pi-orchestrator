@@ -42,6 +42,8 @@ These groups define ownership, not an already-implemented JSON schema。Child Is
 | workspace | canonical root, Git/filesystem observation policy, exclusions/unsupported entries/finite limits |
 | authorization | operator/project grant upper bounds → durable workflow consent and finite request reservations |
 
+#17 runtime は現時点で fixed policy `2 attempts/workflow` / `300000 ms/attempt` を使用し、任意の `oracle` configuration object は追加しない。Explicit supported-reason request と public launch ceiling の実装・検証は [Oracle advisory](../implementation/oracle-advisory.md) を参照。
+
 Human Gates are not configurable conditional stages。Stage matrix is fixed by [Basic Design §5](./basic-design.md#5-playbook-baseline); do not silently override required/skip with Jev。Stage decisions bind policy digest and accumulated evidence; changes require explicit reconciliation, not recomputation to skip。
 
 ## 4. Execution profile / launch identity

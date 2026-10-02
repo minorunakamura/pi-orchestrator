@@ -31,6 +31,7 @@ export async function runPlanningAgent(
     artifactStore: WorkflowArtifactWriter;
     stateStore: WorkflowStateWriter;
     subagentExecutor: SubagentExecutor;
+    timeoutMs?: number;
   },
 ): Promise<Outcome> {
   let state = initial;
@@ -119,7 +120,7 @@ export async function runPlanningAgent(
       ownerRunId: state.workflowId,
       nodeId: stage,
       deadline: new Date(
-        Date.now() + DEFAULT_SUBAGENT_TIMEOUT_MS,
+        Date.now() + (dependencies.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS),
       ).toISOString(),
     },
     inputRefs,

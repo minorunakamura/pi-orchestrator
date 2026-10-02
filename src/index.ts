@@ -10,12 +10,27 @@ import { loadProductionConfiguration } from "./runtime/configuration/load-config
 
 // Composition callers supply the host event bus, ArtifactStore reader, and
 // workflow-scoped options. Importing these adapters does not dispatch work.
+export {
+  createWorkflowCommandRuntime,
+  type WorkflowCommandRuntime,
+} from "./commands/index.ts";
 export { SubagentsIntegration } from "./runtime/integrations/subagents.ts";
 export {
   JevIntegration,
   PiClassifierDecisionClient,
 } from "./runtime/integrations/jev.ts";
 export type { DecisionClassifierPort } from "./runtime/ports/jev-decision-client.ts";
+export {
+  requestOracleAdvice,
+  runOracleAdvice,
+  freshOracleAdvice,
+  type OracleQuestion,
+} from "./runtime/orchestrator/oracle-advisory.ts";
+export {
+  oracleReasons,
+  ORACLE_MAX_ATTEMPTS,
+  ORACLE_TIMEOUT_MS,
+} from "./core/oracle.ts";
 export { PlannotatorIntegration } from "./runtime/integrations/plannotator.ts";
 export {
   driveWorkflow,

@@ -139,6 +139,8 @@ Worker is sole automated implementation executor after approval。Local internal
 
 Oracle is rare cross-cutting builtin read-only advisory, not stage/authority。Save trigger/finite budget/deadline/input refs/launch/attempt before dispatch, output after。Optional unavailable advice does not force mandatory consultation or grant permission; unresolved decisions use deterministic replan/Human attention。
 
+#17 implements explicit supported-reason requests, workflow-wide 2-attempt / 300000ms bounds, immutable request/full-output advice, current State/evidence/launch freshness, and pending-run reconciliation before the same normal driver. Production composition exposes `advise()`; fresh advice reaches Planner as evidence only. Existing Human/operator blocks are not resolved by advice. Producer lifecycle #7/#14/#15 and integrated #12 coverage remain separate; see [implementation / real Oracle smoke](../implementation/oracle-advisory.md).
+
 ## 10. Errors / concurrency / persistence
 
 Normalize external errors to domain blocked reasons: integration-unavailable, agent-infrastructure-unavailable, agent-execution-ambiguous, human-gate-unavailable, validation-infrastructure-error, operator-attention-required。Irrecoverable authority corruption alone is failed。

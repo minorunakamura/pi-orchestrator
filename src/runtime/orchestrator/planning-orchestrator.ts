@@ -1,3 +1,4 @@
+import { freshOracleAdvice } from "./oracle-advisory.ts";
 import {
   PlanningRouting,
   PlanningRoutingStoppedError,
@@ -523,6 +524,7 @@ export class PlanningOrchestrator {
           }
         : {}),
       targetVersion,
+      advisoryRef: await freshOracleAdvice(input.state, this.dependencies),
     };
     const planned = await this.runPlanner(
       input.state,
