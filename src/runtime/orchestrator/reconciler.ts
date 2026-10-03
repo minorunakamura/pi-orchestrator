@@ -1,3 +1,9 @@
+import { workerDeviation } from "../../core/coding/plan-deviation.ts";
+import {
+  publishPlanDeviation,
+  readPlanDeviation,
+  validateStoppedWorker,
+} from "./plan-deviation.ts";
 import { validateWorkerStrategy } from "../worker/development-strategy.ts";
 import {
   PlanningRouting,
@@ -721,6 +727,18 @@ export class WorkflowReconciler {
         undefined,
         "Legacy planning policy cannot establish conditional authority",
       );
+    if (state.coding.latestDeviationRef) {
+      try {
+        await readPlanDeviation(this.deps.artifactStore, state);
+      } catch {
+        return this.block(
+          state,
+          "operator-attention-required",
+          state.coding.latestDeviationRef,
+          "Deviation history does not match workflow authority",
+        );
+      }
+    }
     const candidate =
       state.planning.candidateCycleId === state.planning.cycleId &&
       state.planning.currentPlanRef;
@@ -1010,13 +1028,19 @@ export class WorkflowReconciler {
     const { ref, attempt } = current;
     try {
       if (
-        await validateCompletedWorkerAttempt(
+        (await validateStoppedWorker(
+          this.deps.artifactStore,
+          state,
+          ref,
+          attempt,
+        )) ||
+        (await validateCompletedWorkerAttempt(
           this.deps.artifactStore,
           state,
           ref,
           attempt,
           this.deps.subagentExecutor,
-        )
+        ))
       )
         return undefined;
     } catch (error) {
@@ -1027,8 +1051,19 @@ export class WorkflowReconciler {
           ref,
           error.message,
         );
-      if (!(error instanceof WorkerAttemptAuthorityError)) throw error;
-      return this.fail(state, error.reason, error.evidenceRef);
+      if (
+        attempt.status === "deviated" &&
+        sameArtifactRef(attempt.approvedPlanRef, state.planning.approvedPlanRef)
+      ) {
+        // Output/deviation State publication may have failed; recover the same exact terminal result below.
+      } else if (!(error instanceof WorkerAttemptAuthorityError)) {
+        return this.block(
+          state,
+          "operator-attention-required",
+          ref,
+          "Stopped Worker history is inconsistent; no redispatch",
+        );
+      } else return this.fail(state, error.reason, error.evidenceRef);
     }
     try {
       this.validateAttemptBinding(state, current.ref, current.attempt);
@@ -1393,6 +1428,30 @@ export class WorkflowReconciler {
           coding: { ...current.coding, workerAttemptRef: observedRef },
         },
         current.stateRevision,
+      );
+    }
+    try {
+      if (workerDeviation(result.output)) {
+        const stopped = await publishPlanDeviation(
+          current,
+          observedRef,
+          observed,
+          result.output,
+          this.deps,
+        );
+        return {
+          status: "advanced",
+          state: stopped.state,
+          phase: stopped.state.phase,
+        };
+      }
+    } catch (error) {
+      const durable = await this.loadCurrentState(current);
+      return this.block(
+        durable,
+        "agent-execution-ambiguous",
+        durable.coding.workerAttemptRef,
+        error instanceof Error ? error.message : String(error),
       );
     }
     const implementation: ImplementationArtifact = {
@@ -2248,6 +2307,7 @@ export class WorkflowReconciler {
       try {
         const status = await this.deps.subagentExecutor.status(
           attempt.attempt.runId,
+          attempt.attempt.receipt,
         );
         if (
           status.runId !== attempt.attempt.runId ||

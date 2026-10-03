@@ -40,7 +40,13 @@ export interface WorkerAttemptEvidence {
   launch?: AgentLaunchEvidence;
   receipt?: AgentRunReceipt;
   observedAt: string;
-  status: "intent" | "succeeded" | "failed" | "timed-out" | "ambiguous";
+  status:
+    | "intent"
+    | "succeeded"
+    | "deviated"
+    | "failed"
+    | "timed-out"
+    | "ambiguous";
   runId?: SubagentRunId;
   launchStatus: "unknown" | "observed" | "not-started";
   before: RepositorySnapshot;
@@ -156,7 +162,14 @@ function assertWorkerAttempt(
     (value.receipt !== undefined && !isAgentRunReceipt(value.receipt)) ||
     !snapshot(value.before) ||
     !isOneOf(
-      ["intent", "succeeded", "failed", "timed-out", "ambiguous"] as const,
+      [
+        "intent",
+        "succeeded",
+        "deviated",
+        "failed",
+        "timed-out",
+        "ambiguous",
+      ] as const,
       value.status,
     ) ||
     !isOneOf(
@@ -199,6 +212,18 @@ function assertWorkerAttempt(
     )
   )
     throw Error("Missing Worker post-run observation");
+  if (
+    value.status === "deviated" &&
+    (!value.runId ||
+      !value.launch ||
+      !value.receipt ||
+      value.implementationRef !== undefined ||
+      !isRecord(value.after) ||
+      value.after.status !== "observed")
+  )
+    throw Error(
+      "Deviation requires terminal Worker and observed workspace evidence, not implementation success",
+    );
   if (
     value.status === "succeeded" &&
     (!value.runId ||

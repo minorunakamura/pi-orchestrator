@@ -997,7 +997,7 @@ describe("CodingOrchestrator ORCH-012", () => {
           ...reviewing.coding,
           codeReview: {
             reviewId,
-            implementationRef: initial.implementationRef,
+            implementationRef: initial.implementationRef!,
             implementationRevision: 1,
           },
         },

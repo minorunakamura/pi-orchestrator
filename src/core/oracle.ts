@@ -78,6 +78,7 @@ export function assertOracleReason(
     "material-plan-deviation":
       phase === "planning" &&
       !!state.coding.workerAttemptRef &&
+      !!state.coding.latestDeviationRef &&
       !state.planning.approvedPlanRef,
     "post-implementation-escalation":
       phase === "reviewing" && !!state.coding.implementationRef,

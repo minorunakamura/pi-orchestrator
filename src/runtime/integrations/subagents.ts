@@ -1,3 +1,8 @@
+import {
+  PLAN_DEVIATION_MARKER,
+  deviationCategories,
+  type PlanDeviationBinding,
+} from "../../core/coding/plan-deviation.ts";
 import type { DevelopmentMethod } from "../../core/decisions/planning-routing.ts";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -42,6 +47,7 @@ export const SUBAGENT_RPC_REPLY_PREFIX = "subagents:rpc:v1:reply:";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
 export interface WorkerInput {
+  deviationBinding?: PlanDeviationBinding;
   developmentMethod?: DevelopmentMethod;
   testSeams?: string;
   developmentMethodRef?: ArtifactRef<"development-method">;
@@ -84,7 +90,7 @@ export function createWorkerRequest(
     launchPolicy: agentLaunchPolicy("worker", input.executionProfile, [
       ...new Set(skills),
     ]),
-    task: `${options.task ?? defaultWorkerTask}${tdd ? `\nDevelopment Method: TDD. Read and follow the explicitly selected upstream tdd skill before writing tests.${skills.includes("codebase-design") ? " Read codebase-design for the approved seam/interface vocabulary." : ""}\nHuman Plan approval already confirms these exact Test Seams; do not invent other seams or ask for implicit approval:\n${input.testSeams}\nTest public observable behavior only; do not test private helpers or internal collaborator calls. Work in vertical RED -> minimal GREEN -> next vertical slice: one failing test, observed failure, minimal implementation, observed pass. Never write all tests then all implementation. Report each slice's approved seam, test, observed RED and GREEN commands/results in the implementation evidence. A required method/seam change must stop for Human replanning. TDD never replaces the approved deterministic Validation Contract.` : "\nDevelopment Method: STANDARD. Do not load ambient tdd guidance; preserve the approved Validation Contract."}`,
+    task: `${options.task ?? defaultWorkerTask}\nThe exact approved Plan contents supplied below are the strategy/constraint authority, not a detailed execution recipe. Private helpers, local naming, test helpers and equivalent small internal organization are allowed without reapproval if they preserve that boundary. Accepted findings and Human Code feedback cannot expand it. Before knowingly introducing an unauthorized component/dependency, public API or repository/domain boundary change, persistence/integration change, scope expansion, method/seam/Validation change, STOP ALL mutation. Do not implement the proposed deviation or ask another Agent/Oracle to authorize it. Finish with ONLY ${PLAN_DEVIATION_MARKER} followed by a newline and JSON (no fences): ${JSON.stringify({ schemaVersion: 1, ...input.deviationBinding, category: deviationCategories.join(" | "), reason: "why continuation is unsafe", constraint: "verbatim approved Plan excerpt", proposedChange: "material change needed but NOT implemented", localAlternative: "safe narrower option or why unavailable", evidence: ["repository path:line and observed facts"] })}. Use one listed category, nonempty fields <=2000 chars, 1-8 evidence entries, total <=16000 chars. This is a stop/evidence request, not successful implementation. Existing authorized changes may remain; report them and do not rollback blindly. Oracle advice cannot approve this request; a new Plan, fresh simplicity review and Human Plan Gate are required.${tdd ? `\nDevelopment Method: TDD. Read and follow the explicitly selected upstream tdd skill before writing tests.${skills.includes("codebase-design") ? " Read codebase-design for the approved seam/interface vocabulary." : ""}\nHuman Plan approval already confirms these exact Test Seams; do not invent other seams or ask for implicit approval:\n${input.testSeams}\nTest public observable behavior only; do not test private helpers or internal collaborator calls. Work in vertical RED -> minimal GREEN -> next vertical slice: one failing test, observed failure, minimal implementation, observed pass. Never write all tests then all implementation. Report each slice's approved seam, test, observed RED and GREEN commands/results in the implementation evidence. A required method/seam change must stop for Human replanning. TDD never replaces the approved deterministic Validation Contract.` : "\nDevelopment Method: STANDARD. Do not load ambient tdd guidance; preserve the approved Validation Contract."}`,
     inputRefs,
     executionProfile: input.executionProfile,
     ...(options.cwd ? { cwd: options.cwd } : {}),

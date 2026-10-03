@@ -1,3 +1,8 @@
+import { workerDeviation } from "../../core/coding/plan-deviation.ts";
+import {
+  publishPlanDeviation,
+  validateStoppedWorker,
+} from "./plan-deviation.ts";
 import { validateWorkerStrategy } from "../worker/development-strategy.ts";
 import { PlanningRouting } from "./planning-routing.ts";
 import { randomUUID } from "node:crypto";
@@ -308,6 +313,16 @@ export interface CodingExecutionResult {
   runId?: SubagentRunId;
   executionProfile: ResolvedExecutionProfile;
 }
+
+export interface CodingStoppedResult {
+  state: WorkflowState;
+  routingRef: ArtifactRef<"execution-routing">;
+  deviationRef: ArtifactRef<"plan-deviation">;
+  implementationRef?: never;
+  runId?: SubagentRunId;
+  executionProfile: ResolvedExecutionProfile;
+}
+export type CodingResult = CodingExecutionResult | CodingStoppedResult;
 
 export interface CodeReviewOpenIntent {
   schemaVersion: 1;
@@ -1334,7 +1349,7 @@ export class CodingOrchestrator {
     }
   }
 
-  async execute(input: CodingEntryInput): Promise<CodingExecutionResult> {
+  async execute(input: CodingEntryInput): Promise<CodingResult> {
     const store = requireArtifactStore(this.dependencies.artifactStore);
     const approvedPlanRef = requireApprovedPlan(input.state);
     const previousAttemptRef = input.state.coding.workerAttemptRef;
@@ -1351,13 +1366,20 @@ export class CodingOrchestrator {
             ),
           ),
         );
-        completed = await validateCompletedWorkerAttempt(
-          store,
-          input.state,
-          previousAttemptRef,
-          previousAttempt,
-          this.dependencies.subagentExecutor,
-        );
+        completed =
+          (await validateStoppedWorker(
+            store,
+            input.state,
+            previousAttemptRef,
+            previousAttempt,
+          )) ||
+          (await validateCompletedWorkerAttempt(
+            store,
+            input.state,
+            previousAttemptRef,
+            previousAttempt,
+            this.dependencies.subagentExecutor,
+          ));
       } catch (error) {
         if (
           error instanceof RuntimePortError &&
@@ -1707,6 +1729,14 @@ export class CodingOrchestrator {
       }
       if (previousAttempt && previousAttempt.before.root !== before.root)
         throw new Error("Worker repository identity changed");
+      if (
+        previousAttempt?.status === "deviated" &&
+        (previousAttempt.after?.status !== "observed" ||
+          !isDeepStrictEqual(previousAttempt.after.snapshot, before))
+      )
+        throw new Error(
+          "Workspace changed since stopped Worker; reconcile before new mutation",
+        );
     } catch (error) {
       return blockAndThrow(
         routedState,
@@ -1727,7 +1757,19 @@ export class CodingOrchestrator {
       deadline: new Date(Date.now() + timeoutMs).toISOString(),
     };
     const workerRequest: AgentRunRequest = {
-      ...createWorkerRequest(workerInput, { cwd: before.cwd }),
+      ...createWorkerRequest(
+        {
+          ...workerInput,
+          deviationBinding: {
+            workflowId: routedState.workflowId,
+            attemptId,
+            approvedPlanRef,
+            planVersion: routedState.planning.approvedPlanVersion!,
+            inputRevision: routedState.coding.implementationRevision,
+          },
+        },
+        { cwd: before.cwd },
+      ),
       dispatch,
     };
     const intent: WorkerAttemptEvidence = {
@@ -1922,6 +1964,51 @@ export class CodingOrchestrator {
       throw new CodingOrchestrationError(`Worker did not succeed: ${status}`);
     }
 
+    // Transport success can be a terminal stop, never implementation success.
+    try {
+      if (workerDeviation(workerResult.output)) {
+        const observedRef = await recordObservation(
+          "ambiguous",
+          undefined,
+          "observed",
+        );
+        const observed = parseWorkerAttempt(
+          JSON.parse(
+            await readAuthoritativeText(store, observedRef, "stopped Worker"),
+          ),
+        );
+        const stopped = await publishPlanDeviation(
+          routedState,
+          observedRef,
+          observed,
+          workerResult.output,
+          this.dependencies,
+        );
+        return {
+          ...stopped,
+          routingRef,
+          runId: workerResult.runId,
+          executionProfile: resolvedProfile,
+        };
+      }
+    } catch (error) {
+      // Persistence/stop-signal failures leave the exact attempt as a recovery barrier.
+      try {
+        await advanceWorkflow(
+          routedState,
+          {
+            type: "BLOCK",
+            reason: "agent-execution-ambiguous",
+            evidenceRef: routedState.coding.workerAttemptRef,
+          },
+          this.dependencies.stateStore,
+        );
+      } catch {
+        /* Original error wins; CAS/attempt barrier still forbids redispatch. */
+      }
+      throw error;
+    }
+
     const implementationRevision =
       routedState.coding.implementationRevision + 1;
     if (!Number.isSafeInteger(implementationRevision)) {
@@ -2016,7 +2103,7 @@ export class CodingOrchestrator {
 export async function executeCodingEntry(
   input: CodingEntryInput,
   dependencies: CodingOrchestratorDependencies,
-): Promise<CodingExecutionResult> {
+): Promise<CodingResult> {
   return new CodingOrchestrator(dependencies).execute(input);
 }
 

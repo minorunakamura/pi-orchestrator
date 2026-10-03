@@ -389,11 +389,31 @@ function applyTransition(
       return next;
     }
 
+    case "PLAN_DEVIATION_REPORTED":
+      if (state.phase !== "implementing" && state.phase !== "fixing")
+        fail("Plan deviation requires a stopped implementing/fixing Worker");
+      requireApprovedPlan(state);
+      requireExecutionRouting(state);
+      if (!state.coding.workerAttemptRef)
+        fail("Plan deviation requires durable Worker evidence");
+      next.coding.latestDeviationRef = event.deviationRef;
+      if (state.coding.roundDecisionRef)
+        next.coding.previousRoundDecisionRef = state.coding.roundDecisionRef;
+      clearCurrentRoundEvidence(next);
+      delete next.planning.latestPlanReviewRef;
+      delete next.planning.planReview;
+      delete next.planning.simplicityReviewRef;
+      beginPlanningCycle(next);
+      invalidateArchitecture(next);
+      next.phase = "planning";
+      return next;
+
     case "REPLAN_REQUIRED":
       if (state.phase !== "validating" && state.phase !== "reviewing") {
         fail("REPLAN_REQUIRED is only valid while validating or reviewing");
       }
-      next.coding.roundDecisionRef = event.decisionRef;
+      next.coding.previousRoundDecisionRef = event.decisionRef;
+      clearCurrentRoundEvidence(next);
       delete next.planning.latestPlanReviewRef;
       delete next.planning.planReview;
       delete next.planning.simplicityReviewRef;

@@ -4,6 +4,7 @@ import {
   simplicityPresentation,
 } from "./plan-simplicity.ts";
 import { RuntimePortError } from "../ports/errors.ts";
+import { readPlanDeviation } from "./plan-deviation.ts";
 import { gatherDiagnosis } from "./diagnosis.ts";
 import {
   prepareClarification,
@@ -577,6 +578,7 @@ export class PlanningOrchestrator {
     }
     const scoutRef = input.state.planning.context.scoutRef;
     if (!scoutRef) throw new Error("Plan creation requires scout evidence");
+    await readPlanDeviation(this.dependencies.artifactStore, input.state);
 
     const reuseCandidate =
       input.state.planning.currentPlanRef &&
@@ -604,6 +606,7 @@ export class PlanningOrchestrator {
     const plannerInput: PlannerInput = {
       taskRef: input.state.taskRef,
       scoutRef,
+      deviationRef: input.state.coding.latestDeviationRef,
       ...(input.state.planning.context.diagnosisRef
         ? { diagnosisRef: input.state.planning.context.diagnosisRef }
         : {}),
@@ -658,7 +661,7 @@ export class PlanningOrchestrator {
       input.state,
       request(
         "planner",
-        `Target version: ${targetVersion}. Produce a plan from the supplied artifact refs. Include Scope / Requirements, ${architectureRequired ? "Architecture / Design, " : ""}Implementation Approach (strategy/constraints, not a detailed execution recipe), Expected Change Surface, New Components (explicit none if absent), New Dependencies (explicit none if absent), Non-goals, Development Method containing exactly ${method.method}, ${method.method === "TDD" ? "explicit Human-reviewable Test Seams (public observable behavior/interface, controllable dependencies, assertions/expected outcomes), Do not test (private helpers/internal collaborator calls), and optional Supporting Skills containing codebase-design only when seam/interface shape requires it, " : ""}and exactly one machine-readable Validation Contract. ${plannerInput.simplicityRef ? "This is the sole automatic refinement: address the exact supplied simplicity findings with repository evidence; preserve scope/method/seams/Validation and make remaining disagreements explicit. " : ""}Do not change the resolved method, implement source code or mutate State.`,
+        `Target version: ${targetVersion}. Produce a plan from the supplied artifact refs. Include Scope / Requirements, ${architectureRequired ? "Architecture / Design, " : ""}Implementation Approach (strategy/constraints, not a detailed execution recipe), Expected Change Surface, New Components (explicit none if absent), New Dependencies (explicit none if absent), Non-goals, Development Method containing exactly ${method.method}, ${method.method === "TDD" ? "explicit Human-reviewable Test Seams (public observable behavior/interface, controllable dependencies, assertions/expected outcomes), Do not test (private helpers/internal collaborator calls), and optional Supporting Skills containing codebase-design only when seam/interface shape requires it, " : ""}and exactly one machine-readable Validation Contract. ${plannerInput.simplicityRef ? "This is the sole automatic refinement: address the exact supplied simplicity findings with repository evidence; preserve scope/method/seams/Validation and make remaining disagreements explicit. " : ""}${plannerInput.deviationRef ? "The stopped Worker's deviation and retained authorized changes are evidence, not permission. Address the proposed boundary change explicitly in the new strategy; do not infer rollback or approval. " : ""}Do not change the resolved method, implement source code or mutate State.`,
         plannerInputRefs(plannerInput),
         input.cwd,
       ),

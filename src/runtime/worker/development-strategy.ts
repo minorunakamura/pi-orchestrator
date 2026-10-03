@@ -50,6 +50,13 @@ export async function validateWorkerStrategy(
     const request = createWorkerRequest(
       {
         approvedPlanRef: attempt.approvedPlanRef,
+        deviationBinding: {
+          workflowId: attempt.workflowId,
+          attemptId: attempt.attemptId,
+          approvedPlanRef: attempt.approvedPlanRef,
+          planVersion: attempt.planVersion,
+          inputRevision: attempt.inputRevision,
+        },
         developmentMethod: plan.developmentMethod,
         testSeams: plan.testSeams,
         skills: plan.supportingSkills,

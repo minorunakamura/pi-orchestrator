@@ -202,7 +202,7 @@ function reviewTask(source: ReviewFindingSource, round: number): string {
   const focus =
     source === "ponytail"
       ? "Review only for unnecessary complexity, speculative abstractions, duplication, and simpler existing or standard-library alternatives."
-      : "Review correctness, regressions, security, and behavior against the approved Plan.";
+      : "Review correctness, regressions, security, and behavior against the exact approved Plan strategy/constraints. Detect unreported unauthorized components/dependencies, public API/domain/repository boundaries, persistence/integration changes, scope expansion, method/Test Seams/Validation weakening. Use category plan-boundary-violation for an observed material violation, with exact Plan constraint and repository path:line evidence. Do not flag private helper extraction, local naming, test helpers or equivalent internal organization preserving the strategy.";
   return `${focus} Read the supplied authoritative artifact refs and the current repository in the fresh review context. Return exactly one JSON object and no Markdown or prose: {"schemaVersion":1,"round":${round},"source":"${source}","findings":[{"id":"${source === "ponytail" ? "P1" : "C1"},"source":"${source}","category":"...","location":"path:line (optional)","summary":"...","evidence":"...","blocking":false}]}. Use an empty findings array for a clean review. Findings are evidence only: do not edit files, mutate State, choose accepted findings, grant Fix authority, or make approval decisions.`;
 }
 

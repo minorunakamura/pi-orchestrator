@@ -22,6 +22,7 @@ export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   "agent-launch": "agent-runs",
   "oracle-advisory": "advisory",
   implementation: "implementation",
+  "plan-deviation": "implementation",
   validation: "validation",
   "correctness-review": "reviews",
   "ponytail-review": "reviews",

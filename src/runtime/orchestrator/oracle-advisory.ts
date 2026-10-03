@@ -1,3 +1,4 @@
+import { readPlanDeviation } from "./plan-deviation.ts";
 import { agentLaunchPolicy } from "../../core/agent-launch.ts";
 import {
   isArtifactRef,
@@ -215,6 +216,8 @@ export async function requestOracleAdvice(
   deps: Dependencies,
 ): Promise<WorkflowState> {
   assertOracleReason(state, question.reason);
+  if (question.reason === "material-plan-deviation")
+    await readPlanDeviation(deps.artifactStore, state);
   if (!state.oracle || !state.planning.agentAttempts || !state.projectRoot)
     throw Error(
       "Legacy Oracle budget/dispatch identity requires reconciliation",
