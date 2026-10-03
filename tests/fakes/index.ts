@@ -38,7 +38,11 @@ import {
   RuntimePortError,
   type PortFailureKind,
 } from "../../src/runtime/ports/index.ts";
-import type { SubagentRunId, PlannotatorReviewId } from "../../src/types.ts";
+import {
+  subagentRunId,
+  type SubagentRunId,
+  type PlannotatorReviewId,
+} from "../../src/types.ts";
 import type {
   ValidationContract,
   ValidationExecutionResult,
@@ -78,6 +82,7 @@ function resolve<T>(
 }
 
 export interface FakeSubagentExecutorOptions {
+  simplicity?: FakeSequence<AgentRunResult>;
   run?: FakeSequence<AgentRunResult>;
   runParallel?: FakeSequence<AgentRunResult[]>;
   status?: FakeSequence<AgentRunStatus>;
@@ -105,10 +110,22 @@ export class FakeSubagentExecutor implements SubagentExecutor {
   async run(input: AgentRunRequest): Promise<AgentRunResult> {
     this.calls.run.push(input);
     await input.onPrepared?.(await this.preflight(input));
+    const simplicity = input.agent === "plan-simplicity-reviewer";
     const result = await resolve(
       "SubagentExecutor.run",
-      this.outcomes.run,
-      this.calls.run.length - 1,
+      simplicity
+        ? (this.outcomes.simplicity ?? {
+            type: "result",
+            value: {
+              status: "succeeded",
+              runId: subagentRunId("fake-simplicity"),
+              output: '{"schemaVersion":1,"findings":[]}',
+            },
+          })
+        : this.outcomes.run,
+      this.calls.run.filter(
+        (call) => (call.agent === "plan-simplicity-reviewer") === simplicity,
+      ).length - 1,
     );
     if (result.runId && input.dispatch)
       await input.onStarted?.({
@@ -329,13 +346,19 @@ export class FakePlannotatorGate implements PlannotatorGate {
 
   constructor(private readonly outcomes: FakePlannotatorGateOptions = {}) {}
 
-  openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle> {
+  async openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle> {
     this.calls.openPlanReview.push(input);
-    return resolve(
+    const handle = await resolve(
       "PlannotatorGate.openPlanReview",
       this.outcomes.openPlanReview,
       this.calls.openPlanReview.length - 1,
     );
+    return {
+      ...handle,
+      ...(input.simplicityReviewRef
+        ? { simplicityReviewRef: input.simplicityReviewRef }
+        : {}),
+    };
   }
 
   getPlanReview(

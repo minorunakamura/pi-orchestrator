@@ -210,9 +210,15 @@ async function setup(script: Script = {}) {
       openPlanReview: async (input: {
         planRef: ArtifactRef<"plan">;
         planVersion: number;
+        simplicityReviewRef?: ArtifactRef<"plan-simplicity-review">;
       }) => {
         trace.push("human:plan");
-        return { ...input, reviewId: plannotatorReviewId("plan") };
+        return {
+          planRef: input.planRef,
+          planVersion: input.planVersion,
+          simplicityReviewRef: input.simplicityReviewRef,
+          reviewId: plannotatorReviewId("plan"),
+        };
       },
       getPlanReview: async () => {
         throw Error("not used");
@@ -259,6 +265,7 @@ test("normal driver sequences durable Research, clarification and Architecture w
     "decide:architecture",
     "decide:method",
     "child:planner",
+    "child:plan-simplicity-reviewer",
     "human:plan",
   ]);
   const refs = result.state.planning.stageDecisionRefs!;
@@ -827,7 +834,7 @@ test("completed Diagnosis is reused after runtime recreation without status call
   }));
   const stale = await h.drive();
   expect(stale.status).toBe("blocked");
-  expect(h.executor.calls.run).toHaveLength(3);
+  expect(h.executor.calls.run).toHaveLength(4);
 });
 
 test.each(["artifact", "state"] as const)(

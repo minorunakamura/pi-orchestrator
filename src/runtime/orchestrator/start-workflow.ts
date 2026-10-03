@@ -116,6 +116,8 @@ export async function createWorkflow(
       )
         ? "TDD"
         : (input.developmentIntent ?? "AUTO"),
+      cycleId: "cycle-v1",
+      automaticRefinementsUsed: 0,
       agentAttempts: {},
       context: {},
       stageDecisionRefs: {},

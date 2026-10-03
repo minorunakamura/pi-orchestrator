@@ -168,6 +168,8 @@ Simplicity findings must cite repository evidence for unnecessary abstraction/sp
 
 Any Plan change invalidates simplicity (including Human edits/refinement) and approval; no hash relabeling。One-shot cap survives restart/automatic version increments; unavailable reviewer blocks, not silent bypass。
 
+#14 implementation は cycleId / candidateCycleId / automaticRefinementsUsed / refinementReviewRef と per-version simplicity attempts を保存する。Findings は supplied Scout/Diagnosis の exact ref/location/verbatim excerpt を必要とし、各 input 64000 chars / total 128000 chars、report 64000 chars / 20 findings に bounded。Public Plan UI は unchanged Plan body に literal evidence-only annotation を付加し、Human binding/settled result に simplicity ref を含む。Legacy readiness/cycle は自動 upgrade しない。[実装・acceptance・focused real Pi evidence](../implementation/plan-simplicity.md)。
+
 ## 9. Human Plan Gate (async)
 
 Every playbook requires this Gate。Only exact current review-ready Plan may be submitted。Persist intent before public open, then external reviewId + exact planRef/version + simplicityReviewRef with versioned external index before handle/result use。

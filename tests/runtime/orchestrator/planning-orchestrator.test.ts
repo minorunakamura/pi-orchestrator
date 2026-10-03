@@ -22,8 +22,20 @@ Implement only the requested behavior.
 ## Architecture / Design
 Preserve the existing parser boundary.
 
-## Implementation Plan
+## Implementation Approach
 Add regression tests and the smallest change.
+
+## Expected Change Surface
+Existing parser and regression tests.
+
+## New Components
+none
+
+## New Dependencies
+none
+
+## Non-goals
+Unrelated refactoring.
 
 ## Development Method
 STANDARD
@@ -240,7 +252,7 @@ describe("PlanningOrchestrator candidate Plan", () => {
     ).toBe(validPlan);
   });
   test.each([
-    validPlan.replace("## Implementation Plan", "## Notes"),
+    validPlan.replace("## Implementation Approach", "## Notes"),
     validPlan.replace('"schemaVersion":1', '"schemaVersion":2'),
   ])("invalid Plan never emits PLAN_CREATED", async (output) => {
     const h = await setup({}, ["facts", output]);
@@ -274,7 +286,7 @@ describe("PlanningOrchestrator candidate Plan", () => {
     const second = await orchestration.createPlan({ state });
     expect(second.state.planning.currentPlanVersion).toBe(2);
     expect(second.state.planning.latestPlanReviewRef).toBeUndefined();
-    expect(h.subagentExecutor.calls.run[2]?.inputRefs).toEqual([
+    expect(h.subagentExecutor.calls.run[3]?.inputRefs).toEqual([
       h.taskRef,
       h.state.planning.context.scoutRef,
       ...second.plannerInput.decisionRefs!,

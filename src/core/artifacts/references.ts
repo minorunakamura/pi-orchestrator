@@ -18,6 +18,7 @@ export const artifactKinds = [
   "clarification",
   "domain-document-write",
   "plan",
+  "plan-simplicity-review",
   "plan-review",
   "execution-routing",
   "jev-request",

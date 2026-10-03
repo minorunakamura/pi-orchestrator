@@ -16,6 +16,7 @@ export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   "domain-document-write": "context",
   plan: "plans",
   "plan-review": "plan-reviews",
+  "plan-simplicity-review": "plan-reviews",
   "execution-routing": "decisions",
   "jev-request": "decisions",
   "agent-launch": "agent-runs",

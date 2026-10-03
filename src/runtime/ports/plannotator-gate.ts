@@ -5,6 +5,8 @@ import type { PlanReviewBinding } from "../../core/workflow/state.ts";
 export interface PlanReviewRequest {
   planRef: ArtifactRef<"plan">;
   planVersion: number;
+  simplicityReviewRef?: ArtifactRef<"plan-simplicity-review">;
+  simplicityPresentation?: string;
 }
 
 export type PlanReviewHandle = PlanReviewBinding;

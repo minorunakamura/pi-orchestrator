@@ -56,6 +56,10 @@ export function assertStateInvariants(state: WorkflowState): void {
     planning.planReview &&
     (!sameArtifactRef(planning.planReview.planRef, planning.currentPlanRef) ||
       planning.planReview.planVersion !== planning.currentPlanVersion ||
+      !sameArtifactRef(
+        planning.planReview.simplicityReviewRef,
+        planning.simplicityReviewRef,
+      ) ||
       state.external[
         `plannotator.plan-review.v${planning.planReview.planVersion}`
       ] !== planning.planReview.reviewId)
@@ -123,9 +127,23 @@ export function assertStateInvariants(state: WorkflowState): void {
       "Code Review binding must match the current implementation and external identity",
     );
 
-  if (phase === "awaiting-plan-review" && !planning.currentPlanRef) {
-    fail("awaiting-plan-review requires currentPlanRef");
+  if (
+    resumedPhase === "awaiting-plan-review" &&
+    (!planning.currentPlanRef ||
+      !planning.simplicityReviewRef ||
+      !planning.cycleId ||
+      planning.candidateCycleId !== planning.cycleId ||
+      sameArtifactRef(
+        planning.refinementReviewRef,
+        planning.simplicityReviewRef,
+      ))
+  ) {
+    fail(
+      "awaiting-plan-review requires a review-ready candidate and fresh simplicity evidence",
+    );
   }
+  if (planning.refinementReviewRef && planning.automaticRefinementsUsed !== 1)
+    fail("Refinement evidence requires consumed one-shot budget");
 
   if (
     (phase === "validating" ||

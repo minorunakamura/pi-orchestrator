@@ -1,4 +1,5 @@
 import type { ArtifactRef } from "../core/artifacts/references.ts";
+import { sameArtifactRef } from "../core/workflow/invariants.ts";
 import type {
   BlockState,
   FailureState,
@@ -260,7 +261,14 @@ export function projectWorkflowStatus(
   const phase = effectivePhase(state);
   const stage =
     phase === "planning"
-      ? `plan-v${state.planning.currentPlanVersion + 1}`
+      ? state.planning.currentPlanRef &&
+        state.planning.candidateCycleId === state.planning.cycleId &&
+        !sameArtifactRef(
+          state.planning.refinementReviewRef,
+          state.planning.simplicityReviewRef,
+        )
+        ? `simplicity-v${state.planning.currentPlanVersion}`
+        : `plan-v${state.planning.currentPlanVersion + 1}`
       : phase === "gathering-context"
         ? !state.planning.context.scoutRef
           ? "scout"

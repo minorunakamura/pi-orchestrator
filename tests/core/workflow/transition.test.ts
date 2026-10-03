@@ -26,6 +26,8 @@ function initialState(): WorkflowState {
     phase: "gathering-context",
     taskRef: ref("task", "context/task.json"),
     planning: {
+      cycleId: "cycle-v1",
+      automaticRefinementsUsed: 0,
       context: {},
       currentPlanVersion: 0,
     },
@@ -47,6 +49,21 @@ function initialState(): WorkflowState {
 function apply(state: WorkflowState, event: WorkflowEvent): WorkflowState {
   const result = transition(state, event);
   if (!result.ok) throw result.error;
+  if (event.type === "PLAN_CREATED") {
+    const simplicityRef = ref(
+      "plan-simplicity-review",
+      `plan-reviews/simplicity-v${event.version}.json`,
+    );
+    const reviewed = apply(result.state, {
+      type: "PLAN_SIMPLICITY_REVIEWED",
+      reviewRef: simplicityRef,
+    });
+    return apply(reviewed, {
+      type: "PLAN_REVIEW_READY",
+      planRef: event.planRef,
+      simplicityRef,
+    });
+  }
   return result.state;
 }
 

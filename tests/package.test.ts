@@ -57,7 +57,7 @@ test("entry exports integrations and registers commands without activating runti
   }
 });
 
-test("package declares existing Pi extension and three product Agent resources", async () => {
+test("package declares existing Pi extension and four product Agent resources", async () => {
   const manifest = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
   );
@@ -71,6 +71,7 @@ test("package declares existing Pi extension and three product Agent resources",
   const agentsDirectory = resolve(root, manifest["pi-subagents"].agents[0]);
   const files = (await readdir(agentsDirectory)).toSorted();
   expect(files).toEqual([
+    "plan-simplicity-reviewer.md",
     "planner.md",
     "ponytail-reviewer.md",
     "workflow-scout.md",

@@ -53,7 +53,7 @@ export const contract = {
     },
   ],
 };
-export const plan = `# Plan\n## Scope / Requirements\nPreserve the public API.\n## Architecture / Design\nKeep decisions in core.\n## Implementation Plan\nAdd a regression test.\n## Development Method\nSTANDARD\n## Validation Contract\n\`\`\`orchestrator-validation\n${JSON.stringify(contract)}\n\`\`\``;
+export const plan = `# Plan\n## Scope / Requirements\nPreserve the public API.\n## Architecture / Design\nKeep decisions in core.\n## Implementation Approach\nAdd a regression test.\n## Expected Change Surface\nExisting public API implementation and tests.\n## New Components\nnone\n## New Dependencies\nnone\n## Non-goals\nUnrelated behavior changes.\n## Development Method\nSTANDARD\n## Validation Contract\n\`\`\`orchestrator-validation\n${JSON.stringify(contract)}\n\`\`\``;
 export const configuration: OrchestratorConfiguration = {
   decision: { autoDecisionThreshold: 0.8, escalationThreshold: 0.5 },
   executionProfiles: {
@@ -131,7 +131,10 @@ export const succeeded = (output: string) => ({
   },
 });
 export const gate: PlannotatorGate = {
-  openPlanReview: async (input) => ({
+  openPlanReview: async ({
+    simplicityPresentation: _presentation,
+    ...input
+  }) => ({
     ...input,
     reviewId: plannotatorReviewId(`plan-${input.planVersion}`),
   }),

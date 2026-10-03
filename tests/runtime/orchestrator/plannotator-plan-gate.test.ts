@@ -29,9 +29,20 @@ Implement the requested behavior without changing unrelated code.
 ## Architecture / Design
 Keep parsing and orchestration behind their existing boundaries.
 
-## Implementation Plan
-1. Add focused tests.
-2. Implement the smallest safe change.
+## Implementation Approach
+Add focused tests and the smallest safe change.
+
+## Expected Change Surface
+Existing parser and focused tests.
+
+## New Components
+none
+
+## New Dependencies
+none
+
+## Non-goals
+Unrelated refactoring.
 
 ## Development Method
 STANDARD
@@ -170,7 +181,7 @@ describe("ORCH-009 Plannotator plan gate", () => {
         state,
       );
       expect(await readdir(join(started.runDirectory, "plan-reviews"))).toEqual(
-        ["plan-v1-open-intent.md"],
+        ["plan-v1-open-intent.md", "simplicity-v1.json"],
       );
     },
   );
@@ -321,7 +332,12 @@ describe("ORCH-009 Plannotator plan gate", () => {
         ...second.state,
         planning: {
           ...second.state.planning,
-          planReview: { reviewId, planRef: second.planRef, planVersion: 2 },
+          planReview: {
+            reviewId,
+            planRef: second.planRef,
+            planVersion: 2,
+            simplicityReviewRef: second.state.planning.simplicityReviewRef,
+          },
         },
         external: { "plannotator.plan-review.v2": reviewId },
       },
@@ -349,7 +365,11 @@ describe("ORCH-009 Plannotator plan gate", () => {
     ).rejects.toThrow(/current plan and version/iu);
     await expect(
       readdir(join(root, "workflow-1", "plan-reviews")),
-    ).resolves.toEqual(["feedback-before-v2.md"]);
+    ).resolves.toEqual([
+      "feedback-before-v2.md",
+      "simplicity-v1.json",
+      "simplicity-v2.json",
+    ]);
     expect(
       (await new StateStore(join(root, "workflow-1")).loadState()).phase,
     ).toBe("awaiting-plan-review");
@@ -417,7 +437,11 @@ describe("ORCH-009 Plannotator plan gate", () => {
     expect(gate.calls.getPlanReview).toHaveLength(2);
     await expect(
       readdir(join(root, "workflow-1", "plan-reviews")),
-    ).resolves.toEqual(["plan-review-1.md", "plan-v1-open-intent.md"]);
+    ).resolves.toEqual([
+      "plan-review-1.md",
+      "plan-v1-open-intent.md",
+      "simplicity-v1.json",
+    ]);
     void started;
   });
 
@@ -480,7 +504,11 @@ describe("ORCH-009 Plannotator plan gate", () => {
     ).toBe(reloaded.stateRevision);
     await expect(
       readdir(join(root, "workflow-1", "plan-reviews")),
-    ).resolves.toEqual(["plan-review-1.md", "plan-v1-open-intent.md"]);
+    ).resolves.toEqual([
+      "plan-review-1.md",
+      "plan-v1-open-intent.md",
+      "simplicity-v1.json",
+    ]);
   });
 
   test("does not emit an event when review artifact persistence fails", async () => {

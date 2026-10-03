@@ -16,7 +16,15 @@ test("defines planner as a read-only plan author without implementation authorit
   expect(frontmatter).not.toMatch(/(^|\n)tools:.*\b(edit|write|bash)\b/u);
   expect(prompt).toMatch(/Scope\s*\/\s*Requirements/iu);
   expect(prompt).toMatch(/Architecture\s*\/\s*Design/iu);
-  expect(prompt).toMatch(/Implementation Plan/iu);
+  for (const section of [
+    "Implementation Approach",
+    "Expected Change Surface",
+    "New Components",
+    "New Dependencies",
+    "Non-goals",
+  ])
+    expect(prompt).toContain(section);
+  expect(prompt).toMatch(/not a line-by-line recipe/u);
   expect(prompt).toMatch(/Validation Contract/iu);
   expect(prompt).toMatch(/orchestrator-validation/iu);
   expect(prompt).toMatch(/artifact refs?/iu);

@@ -272,8 +272,7 @@ export class PlannotatorIntegration implements PlannotatorGate {
 
     const result = assertReviewStartResult(
       await this.request("plan-review", {
-        planContent,
-        origin: "pi-orchestrator",
+        planContent: planContent + (input.simplicityPresentation ?? ""),
       }),
       "plan-review",
     );
@@ -281,6 +280,9 @@ export class PlannotatorIntegration implements PlannotatorGate {
       reviewId: plannotatorReviewId(result.reviewId),
       planRef: input.planRef,
       planVersion: input.planVersion,
+      ...(input.simplicityReviewRef
+        ? { simplicityReviewRef: input.simplicityReviewRef }
+        : {}),
     };
     this.reviews.set(reviewKey(handle.reviewId), handle);
     return handle;
@@ -297,7 +299,12 @@ export class PlannotatorIntegration implements PlannotatorGate {
         persistedBinding.reviewId !== reviewId ||
         (cached &&
           (cached.planVersion !== persistedBinding.planVersion ||
-            !sameArtifactRef(cached.planRef, persistedBinding.planRef))))
+            !sameArtifactRef(cached.planRef, persistedBinding.planRef) ||
+            (cached.simplicityReviewRef !== undefined &&
+              !sameArtifactRef(
+                cached.simplicityReviewRef,
+                persistedBinding.simplicityReviewRef,
+              )))))
     ) {
       throw new RuntimePortError(
         "reconciliation",

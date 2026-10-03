@@ -182,7 +182,8 @@ test("recovers an interrupted planner without creating another plan version or d
   expect((await h.resume()).status).toBe("pending");
   h.events.complete(h.requests[2], "planner-1", "complete", plan);
   const recovered = await h.resume();
-  expect(recovered.state.phase).toBe("awaiting-plan-review");
+  expect(recovered.state.phase).toBe("planning");
+  expect(recovered.state.planning.simplicityReviewRef).toBeUndefined();
   expect(recovered.state.planning.currentPlanVersion).toBe(1);
   expect(await h.store.readText(recovered.state.planning.currentPlanRef!)).toBe(
     plan,
@@ -343,7 +344,7 @@ test("resume does not hold the Workflow lock while a planner waits, and a concur
     if (request) bus.complete(request, "planner-active", "complete", plan);
     await active;
   }
-  expect(bus.emitted).toHaveLength(1);
+  expect(bus.emitted).toHaveLength(2); // One Planner, then the required simplicity review; no duplicate Planner.
   expect((await h.states.loadState()).planning.currentPlanVersion).toBe(1);
 });
 

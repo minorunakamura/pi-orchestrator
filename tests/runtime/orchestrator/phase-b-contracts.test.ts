@@ -22,7 +22,15 @@ const plan = `# Plan
 Preserve authority boundaries.
 ## Architecture / Design
 Use existing ports.
-## Implementation Plan
+## Expected Change Surface
+Existing implementation and tests.
+## New Components
+none
+## New Dependencies
+none
+## Non-goals
+Unrelated changes.
+## Implementation Approach
 Add regression tests and fix the contracts.
 ## Development Method
 STANDARD
@@ -69,7 +77,12 @@ async function ready() {
   const created = await new PlanningOrchestrator(dependencies).createPlan({
     state: started.state,
   });
-  const handle = { reviewId, planRef: created.planRef, planVersion: 1 };
+  const handle = {
+    reviewId,
+    planRef: created.planRef,
+    planVersion: 1,
+    simplicityReviewRef: created.state.planning.simplicityReviewRef,
+  };
   const gate = new FakePlannotatorGate({
     openPlanReview: { type: "result", value: handle },
   });
@@ -131,7 +144,9 @@ test("B1: a fresh real adapter cannot relabel stale approval without a persisted
   }
   expect(queries).toBe(0);
   expect((await store.loadState()).planning.approvedPlanRef).toBeUndefined();
-  expect(await readdir(store.rootDirectory)).not.toContain("plan-reviews");
+  expect(await readdir(join(store.rootDirectory, "plan-reviews"))).toEqual([
+    "simplicity-v1.json",
+  ]);
 });
 
 test("B1: both entry points reject mismatched persisted id, version and artifact identity", async () => {
@@ -283,17 +298,18 @@ test("explicit REPLAN_REQUIRED invalidation rejects old approval without restori
     store,
   );
   expect(state.planning.currentPlanRef).toEqual(handle.planRef);
-  expect(state.planning.planReview).toEqual(handle);
+  expect(state.planning.planReview).toBeUndefined();
   expect(state.planning.approvedPlanRef).toBeUndefined();
   expect(state.planning.latestPlanReviewRef).toBeUndefined();
   const fresh = new PlanningOrchestrator(dependencies);
   await expect(
     fresh.applyPlanReview({ state, reviewId, status }),
-  ).rejects.toThrow(/awaiting-plan-review/);
+  ).rejects.toThrow(/binding/);
   expect(await store.loadState()).toEqual(state);
   expect(await readdir(join(store.rootDirectory, "plan-reviews"))).toEqual([
     "plan-v1-open-intent.md",
     "review-1.md",
+    "simplicity-v1.json",
   ]);
 
   const next = await new PlanningOrchestrator({
@@ -560,5 +576,6 @@ test("M1: persisted settled artifact can be retried after approval State save fa
   expect(await readdir(join(store.rootDirectory, "plan-reviews"))).toEqual([
     "plan-v1-open-intent.md",
     "review-1.md",
+    "simplicity-v1.json",
   ]);
 });
