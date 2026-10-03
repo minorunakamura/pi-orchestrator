@@ -77,7 +77,7 @@ describe("PlannotatorIntegration", () => {
       request: {
         requestId: "request-1",
         action: "plan-review",
-        payload: { planContent: "# Plan", origin: "pi-orchestrator" },
+        payload: { planContent: "# Plan" },
       },
     });
   });

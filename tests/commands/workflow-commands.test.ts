@@ -496,7 +496,11 @@ describe("ORCH-019 workflow commands", () => {
           request,
           runId,
           "complete",
-          request.agent === "planner" ? plan : "facts",
+          request.agent === "planner"
+            ? plan
+            : request.agent === "plan-simplicity-reviewer"
+              ? '{"schemaVersion":1,"findings":[]}'
+              : "facts",
         ),
       );
     });
@@ -549,6 +553,7 @@ describe("ORCH-019 workflow commands", () => {
       expect(childRequests.map((request) => request.agent)).toEqual([
         "workflow-scout",
         "planner",
+        "plan-simplicity-reviewer",
       ]);
 
       await vi.waitFor(() => expect(statusReads).toBe(1));

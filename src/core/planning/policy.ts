@@ -4,7 +4,11 @@ import type { ArtifactRef } from "../artifacts/references.ts";
 export const planSections = [
   "Scope / Requirements",
   "Architecture / Design",
-  "Implementation Plan",
+  "Implementation Approach",
+  "Expected Change Surface",
+  "New Components",
+  "New Dependencies",
+  "Non-goals",
   "Development Method",
   "Test Seams",
   "Do not test",
@@ -16,7 +20,11 @@ export type PlanSection = (typeof planSections)[number];
 
 export const requiredPlanSections = [
   "Scope / Requirements",
-  "Implementation Plan",
+  "Implementation Approach",
+  "Expected Change Surface",
+  "New Components",
+  "New Dependencies",
+  "Non-goals",
   "Development Method",
   "Validation Contract",
 ] as const satisfies readonly PlanSection[];
@@ -39,6 +47,7 @@ export interface PlannerInput {
   previousPlanRef?: ArtifactRef<"plan">;
   feedbackRef?: ArtifactRef<"plan-review">;
   advisoryRef?: ArtifactRef<"oracle-advisory">;
+  simplicityRef?: ArtifactRef<"plan-simplicity-review">;
   targetVersion: number;
 }
 
@@ -66,5 +75,6 @@ export function plannerInputRefs(input: PlannerInput): readonly ArtifactRef[] {
     ...(input.previousPlanRef ? [input.previousPlanRef] : []),
     ...(input.feedbackRef ? [input.feedbackRef] : []),
     ...(input.advisoryRef ? [input.advisoryRef] : []),
+    ...(input.simplicityRef ? [input.simplicityRef] : []),
   ];
 }

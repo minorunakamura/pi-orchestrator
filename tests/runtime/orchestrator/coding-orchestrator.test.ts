@@ -46,7 +46,15 @@ Implement the requested behavior safely.
 ## Architecture / Design
 Keep runtime orchestration behind the existing ports.
 
-## Implementation Plan
+## Expected Change Surface
+Existing implementation and tests.
+## New Components
+none
+## New Dependencies
+none
+## Non-goals
+Unrelated changes.
+## Implementation Approach
 1. Add focused tests.
 2. Implement the smallest safe change.
 

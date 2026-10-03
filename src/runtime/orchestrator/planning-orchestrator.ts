@@ -1,3 +1,8 @@
+import {
+  reviewCandidate,
+  simplicityEvidence,
+  simplicityPresentation,
+} from "./plan-simplicity.ts";
 import { RuntimePortError } from "../ports/errors.ts";
 import { gatherDiagnosis } from "./diagnosis.ts";
 import {
@@ -107,6 +112,7 @@ export type ClarificationOutcome =
   | { status: "blocked"; state: WorkflowState };
 
 export interface CreatePlanInput {
+  recoverOnly?: boolean;
   state: WorkflowState;
   cwd?: string;
   previousPlanRef?: ArtifactRef<"plan">;
@@ -167,6 +173,7 @@ export class StalePlanReviewError extends Error {
 }
 
 interface PlanReviewArtifact {
+  simplicityReviewRef: ArtifactRef<"plan-simplicity-review">;
   schemaVersion: 1;
   reviewId: string;
   status: "approved" | "feedback";
@@ -238,9 +245,11 @@ function reviewArtifactContent(artifact: PlanReviewArtifact): string {
 
 function reviewArtifactRef(
   reviewId: PlannotatorReviewId,
+  simplicityReviewRef: ArtifactRef<"plan-simplicity-review">,
   status: Extract<PlanReviewStatus, { status: "approved" | "feedback" }>,
 ): ArtifactRef<"plan-review"> {
   const artifact: PlanReviewArtifact = {
+    simplicityReviewRef,
     schemaVersion: 1,
     reviewId,
     status: status.status,
@@ -269,7 +278,12 @@ function assertSettledReviewMatchesCurrentPlan(
   const plan = currentPlan(state);
   if (
     status.planVersion !== state.planning.currentPlanVersion ||
-    !sameArtifactRef(status.planRef, plan)
+    !sameArtifactRef(status.planRef, plan) ||
+    (status.simplicityReviewRef !== undefined &&
+      !sameArtifactRef(
+        status.simplicityReviewRef,
+        state.planning.simplicityReviewRef,
+      ))
   ) {
     throw new StalePlanReviewError();
   }
@@ -285,6 +299,10 @@ function requirePlanReviewBinding(
     binding.reviewId !== reviewId ||
     binding.planVersion !== state.planning.currentPlanVersion ||
     !sameArtifactRef(binding.planRef, state.planning.currentPlanRef) ||
+    !sameArtifactRef(
+      binding.simplicityReviewRef,
+      state.planning.simplicityReviewRef,
+    ) ||
     state.external[planReviewIdentityKey(binding.planVersion)] !== reviewId
   ) {
     throw new StalePlanReviewError(
@@ -492,13 +510,83 @@ export class PlanningOrchestrator {
   }
 
   async createPlan(input: CreatePlanInput): Promise<PlanCreationResult> {
+    if (
+      !input.state.planning.cycleId ||
+      input.state.planning.automaticRefinementsUsed === undefined
+    )
+      throw Error(
+        "Legacy planning cycle/budget requires explicit reconciliation",
+      );
+    // At most two candidates: original and one refinement; each has its own exact review.
+    // oxlint-disable eslint/no-await-in-loop
+    for (let round = 0; round < 2; round++) {
+      const created = await this.createCandidate(input);
+      if (
+        input.recoverOnly &&
+        !created.state.planning.simplicityReviewRef &&
+        !created.state.planning.agentAttempts?.[
+          `simplicity-v${created.state.planning.currentPlanVersion}`
+        ]
+      )
+        return created;
+      let state = await reviewCandidate(created.state, this.dependencies);
+      if (state.phase === "blocked") return { ...created, state };
+      const review = await simplicityEvidence(state, this.dependencies);
+      if (
+        review.findings.length > 0 &&
+        state.planning.automaticRefinementsUsed === 0
+      ) {
+        state = await advanceWorkflow(
+          state,
+          {
+            type: "PLAN_REFINEMENT_REQUESTED",
+            reviewRef: state.planning.simplicityReviewRef!,
+          },
+          this.dependencies.stateStore,
+        );
+        if (input.recoverOnly) return { ...created, state };
+        input = { ...input, state, previousPlanRef: created.planRef };
+        continue;
+      }
+      state = await advanceWorkflow(
+        state,
+        {
+          type: "PLAN_REVIEW_READY",
+          planRef: created.planRef,
+          simplicityRef: state.planning.simplicityReviewRef!,
+        },
+        this.dependencies.stateStore,
+      );
+      let planReview: PlanReviewHandle | undefined;
+      if (this.dependencies.plannotatorGate) {
+        const opened = await this.openPlanReview({ state });
+        state = opened.state;
+        if (opened.status === "opened") planReview = opened.handle;
+      }
+      return { ...created, state, ...(planReview ? { planReview } : {}) };
+    }
+    throw Error("Automatic Plan refinement exceeded one-shot bound");
+    // oxlint-enable eslint/no-await-in-loop
+  }
+
+  private async createCandidate(
+    input: CreatePlanInput,
+  ): Promise<PlanCreationResult> {
     if (input.state.phase !== "planning") {
       throw new Error("Plan creation requires planning phase");
     }
     const scoutRef = input.state.planning.context.scoutRef;
     if (!scoutRef) throw new Error("Plan creation requires scout evidence");
 
-    const targetVersion = input.state.planning.currentPlanVersion + 1;
+    const reuseCandidate =
+      input.state.planning.currentPlanRef &&
+      input.state.planning.candidateCycleId === input.state.planning.cycleId &&
+      !sameArtifactRef(
+        input.state.planning.refinementReviewRef,
+        input.state.planning.simplicityReviewRef,
+      );
+    const targetVersion =
+      input.state.planning.currentPlanVersion + (reuseCandidate ? 0 : 1);
     if (!Number.isSafeInteger(targetVersion)) {
       throw new Error("Plan version cannot be incremented safely");
     }
@@ -547,12 +635,30 @@ export class PlanningOrchestrator {
         : {}),
       targetVersion,
       advisoryRef: await freshOracleAdvice(input.state, this.dependencies),
+      simplicityRef: !reuseCandidate
+        ? input.state.planning.refinementReviewRef
+        : undefined,
     };
+    if (reuseCandidate) {
+      const planRef = input.state.planning.currentPlanRef!;
+      const content = await this.dependencies.artifactStore.readText!(planRef);
+      if (calculateSha256(content) !== planRef.sha256)
+        throw Error("Candidate Plan hash mismatch");
+      return {
+        state: input.state,
+        planRef,
+        plannerInput,
+        parsedPlan: parsePlan(content, {
+          architectureRequired,
+          developmentMethod: method.method,
+        }),
+      };
+    }
     const planned = await this.runPlanner(
       input.state,
       request(
         "planner",
-        `Target version: ${targetVersion}. Produce a plan from the supplied artifact refs. Include Scope / Requirements, ${architectureRequired ? "Architecture / Design, " : ""}Implementation Plan, Development Method containing exactly ${method.method}, ${method.method === "TDD" ? "explicit Human-reviewable Test Seams (public observable behavior/interface, controllable dependencies, assertions/expected outcomes), Do not test (private helpers/internal collaborator calls), and optional Supporting Skills containing codebase-design only when seam/interface shape requires it, " : ""}and exactly one machine-readable Validation Contract. Do not change the resolved method, implement source code or mutate State.`,
+        `Target version: ${targetVersion}. Produce a plan from the supplied artifact refs. Include Scope / Requirements, ${architectureRequired ? "Architecture / Design, " : ""}Implementation Approach (strategy/constraints, not a detailed execution recipe), Expected Change Surface, New Components (explicit none if absent), New Dependencies (explicit none if absent), Non-goals, Development Method containing exactly ${method.method}, ${method.method === "TDD" ? "explicit Human-reviewable Test Seams (public observable behavior/interface, controllable dependencies, assertions/expected outcomes), Do not test (private helpers/internal collaborator calls), and optional Supporting Skills containing codebase-design only when seam/interface shape requires it, " : ""}and exactly one machine-readable Validation Contract. ${plannerInput.simplicityRef ? "This is the sole automatic refinement: address the exact supplied simplicity findings with repository evidence; preserve scope/method/seams/Validation and make remaining disagreements explicit. " : ""}Do not change the resolved method, implement source code or mutate State.`,
         plannerInputRefs(plannerInput),
         input.cwd,
       ),
@@ -567,24 +673,12 @@ export class PlanningOrchestrator {
       `plan-v${targetVersion}.md`,
       plannerResult.output,
     );
-    let state = await advanceWorkflow(
+    const state = await advanceWorkflow(
       planned.state,
       { type: "PLAN_CREATED", planRef, version: targetVersion },
       this.dependencies.stateStore,
     );
-    let planReview: PlanReviewHandle | undefined;
-    if (this.dependencies.plannotatorGate) {
-      const opened = await this.openPlanReview({ state });
-      state = opened.state;
-      if (opened.status === "opened") planReview = opened.handle;
-    }
-    return {
-      state,
-      planRef,
-      plannerInput,
-      parsedPlan,
-      ...(planReview ? { planReview } : {}),
-    };
+    return { state, planRef, plannerInput, parsedPlan };
   }
 
   async openPlanReview(
@@ -629,6 +723,7 @@ export class PlanningOrchestrator {
         JSON.stringify({
           planRef,
           planVersion: input.state.planning.currentPlanVersion,
+          simplicityReviewRef: input.state.planning.simplicityReviewRef,
         }),
       );
     } catch (error) {
@@ -649,9 +744,15 @@ export class PlanningOrchestrator {
     };
     let handle: PlanReviewHandle;
     try {
+      const review = await simplicityEvidence(input.state, this.dependencies);
       handle = await gate.openPlanReview({
         planRef,
         planVersion: input.state.planning.currentPlanVersion,
+        simplicityReviewRef: input.state.planning.simplicityReviewRef!,
+        simplicityPresentation: simplicityPresentation(
+          review,
+          input.state.planning.automaticRefinementsUsed!,
+        ),
       });
     } catch {
       const state = await advanceWorkflow(
@@ -664,7 +765,11 @@ export class PlanningOrchestrator {
     if (
       !isPlanReviewBinding(handle) ||
       handle.planVersion !== input.state.planning.currentPlanVersion ||
-      !sameArtifactRef(handle.planRef, planRef)
+      !sameArtifactRef(handle.planRef, planRef) ||
+      !sameArtifactRef(
+        handle.simplicityReviewRef,
+        input.state.planning.simplicityReviewRef,
+      )
     ) {
       const state = await advanceWorkflow(
         input.state,
@@ -734,7 +839,11 @@ export class PlanningOrchestrator {
       };
     }
     assertSettledReviewMatchesCurrentPlan(state, status);
-    const expectedReviewRef = reviewArtifactRef(reviewId, status);
+    const expectedReviewRef = reviewArtifactRef(
+      reviewId,
+      state.planning.simplicityReviewRef!,
+      status,
+    );
     const alreadyApplied = sameArtifactRef(
       state.planning.latestPlanReviewRef,
       expectedReviewRef,
@@ -760,7 +869,11 @@ export class PlanningOrchestrator {
     }
 
     await this.validatePlanAuthority(state);
-    const reviewRef = await this.persistPlanReview(reviewId, status);
+    const reviewRef = await this.persistPlanReview(
+      reviewId,
+      state.planning.simplicityReviewRef!,
+      status,
+    );
     const event: WorkflowEvent =
       status.status === "approved"
         ? {
@@ -784,6 +897,13 @@ export class PlanningOrchestrator {
   }
 
   private async validatePlanAuthority(state: WorkflowState): Promise<void> {
+    try {
+      await simplicityEvidence(state, this.dependencies);
+    } catch {
+      throw new StalePlanReviewError(
+        "Plan Simplicity evidence is missing, corrupt or stale",
+      );
+    }
     const architecture = await new PlanningRouting(this.dependencies).stage(
       state,
       "architecture",
@@ -809,9 +929,11 @@ export class PlanningOrchestrator {
 
   private async persistPlanReview(
     reviewId: PlannotatorReviewId,
+    simplicityReviewRef: ArtifactRef<"plan-simplicity-review">,
     status: Extract<PlanReviewStatus, { status: "approved" | "feedback" }>,
   ): Promise<ArtifactRef<"plan-review">> {
     const artifact: PlanReviewArtifact = {
+      simplicityReviewRef,
       schemaVersion: 1,
       reviewId,
       status: status.status,
@@ -821,7 +943,11 @@ export class PlanningOrchestrator {
     };
     const content = reviewArtifactContent(artifact);
     const fileName = reviewFileName(reviewId);
-    const expectedRef = reviewArtifactRef(reviewId, status);
+    const expectedRef = reviewArtifactRef(
+      reviewId,
+      simplicityReviewRef,
+      status,
+    );
     try {
       return await this.dependencies.artifactStore.writeText(
         "plan-review",

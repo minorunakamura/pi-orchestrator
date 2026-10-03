@@ -274,14 +274,16 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       return;
     }
     const output =
-      request.agent === "planner"
-        ? nth === 1
-          ? fixturePlan
-          : fixturePlan.replace(
-              "Preserve the public API.",
-              `Preserve the public API with approved clarification ${nth}.`,
-            )
-        : "Repository facts";
+      request.agent === "plan-simplicity-reviewer"
+        ? '{"schemaVersion":1,"findings":[]}'
+        : request.agent === "planner"
+          ? nth === 1
+            ? fixturePlan
+            : fixturePlan.replace(
+                "Preserve the public API.",
+                `Preserve the public API with approved clarification ${nth}.`,
+              )
+          : "Repository facts";
     deliver(request, "completed", output);
   };
   const events = new FakeSubagentRpc((request, bus) => {

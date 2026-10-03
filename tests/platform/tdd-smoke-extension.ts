@@ -125,7 +125,15 @@ export default function (pi: ExtensionAPI) {
         const plan = `# Disposable TDD Worker smoke Plan
 ## Scope / Requirements
 Only in ${cwd}: implement greeting.mjs public greet(name), returning Hello, <trimmed name>! for the two approved observable cases. No repository source or operator settings may change.
-## Implementation Plan
+## Expected Change Surface
+Only greeting.mjs and greeting.test.mjs.
+## New Components
+none
+## New Dependencies
+none
+## Non-goals
+Unrelated refactoring and commits.
+## Implementation Approach
 Read the selected upstream tdd and codebase-design guidance. Use two vertical slices: first unpadded name Ada, then whitespace-padded name. Write one test, run node --test greeting.test.mjs to observe RED, implement only that slice, rerun to observe GREEN; then the next slice. Preserve command exit codes, no || true. Edit only greeting.mjs and greeting.test.mjs; no dependencies, refactoring or commits.
 ## Development Method
 TDD

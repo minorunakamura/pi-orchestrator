@@ -82,9 +82,17 @@ export interface PlanReviewBinding {
   reviewId: PlannotatorReviewId;
   planRef: ArtifactRef<"plan">;
   planVersion: number;
+  /** Missing legacy binding is diagnosable, never review-ready authority. */
+  simplicityReviewRef?: ArtifactRef<"plan-simplicity-review">;
 }
 
 export interface PlanningState {
+  /** Missing legacy cycle/budget requires explicit reconciliation. */
+  cycleId?: string;
+  candidateCycleId?: string;
+  automaticRefinementsUsed?: 0 | 1;
+  simplicityReviewRef?: ArtifactRef<"plan-simplicity-review">;
+  refinementReviewRef?: ArtifactRef<"plan-simplicity-review">;
   /** Captured Human intent; missing legacy intent is never inferred on resume. */
   developmentIntent?: DevelopmentIntent;
   developmentMethodRef?: ArtifactRef<"development-method">;
@@ -264,6 +272,19 @@ export type WorkflowEvent =
     }
   | { type: "PLAN_CREATED"; planRef: ArtifactRef<"plan">; version: number }
   | {
+      type: "PLAN_SIMPLICITY_REVIEWED";
+      reviewRef: ArtifactRef<"plan-simplicity-review">;
+    }
+  | {
+      type: "PLAN_REFINEMENT_REQUESTED";
+      reviewRef: ArtifactRef<"plan-simplicity-review">;
+    }
+  | {
+      type: "PLAN_REVIEW_READY";
+      planRef: ArtifactRef<"plan">;
+      simplicityRef: ArtifactRef<"plan-simplicity-review">;
+    }
+  | {
       type: "PLAN_APPROVED";
       planRef: ArtifactRef<"plan">;
       version: number;
@@ -341,7 +362,15 @@ export function isPlanReviewBinding(
 ): value is PlanReviewBinding {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["reviewId", "planRef", "planVersion"]) &&
+    hasOnlyKeys(value, [
+      "reviewId",
+      "planRef",
+      "planVersion",
+      "simplicityReviewRef",
+    ]) &&
+    optional(value, "simplicityReviewRef", (ref) =>
+      isArtifactOfKind(ref, "plan-simplicity-review"),
+    ) &&
     isNonEmptyString(value.reviewId) &&
     isArtifactOfKind(value.planRef, "plan") &&
     Number.isSafeInteger(value.planVersion) &&
@@ -355,6 +384,11 @@ function isPlanningState(value: unknown): value is PlanningState {
     !isRecord(value) ||
     !hasOnlyKeys(value, [
       "context",
+      "cycleId",
+      "candidateCycleId",
+      "automaticRefinementsUsed",
+      "simplicityReviewRef",
+      "refinementReviewRef",
       "developmentIntent",
       "developmentMethodRef",
       "clarificationRequestRef",
@@ -389,6 +423,19 @@ function isPlanningState(value: unknown): value is PlanningState {
         Object.values(refs).every((ref) =>
           isArtifactOfKind(ref, "conditional-stage"),
         ),
+    ) ||
+    !optional(value, "cycleId", isNonEmptyString) ||
+    !optional(value, "candidateCycleId", isNonEmptyString) ||
+    !optional(
+      value,
+      "automaticRefinementsUsed",
+      (used) => used === 0 || used === 1,
+    ) ||
+    !optional(value, "simplicityReviewRef", (ref) =>
+      isArtifactOfKind(ref, "plan-simplicity-review"),
+    ) ||
+    !optional(value, "refinementReviewRef", (ref) =>
+      isArtifactOfKind(ref, "plan-simplicity-review"),
     ) ||
     !optional(value, "developmentIntent", (intent) =>
       isOneOf(developmentIntents, intent),
@@ -653,6 +700,18 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
         isEvent(value, ["type", "planRef", "version"]) &&
         isArtifactOfKind(value.planRef, "plan") &&
         isNonNegativeInteger(value.version)
+      );
+    case "PLAN_SIMPLICITY_REVIEWED":
+    case "PLAN_REFINEMENT_REQUESTED":
+      return (
+        isEvent(value, ["type", "reviewRef"]) &&
+        isArtifactOfKind(value.reviewRef, "plan-simplicity-review")
+      );
+    case "PLAN_REVIEW_READY":
+      return (
+        isEvent(value, ["type", "planRef", "simplicityRef"]) &&
+        isArtifactOfKind(value.planRef, "plan") &&
+        isArtifactOfKind(value.simplicityRef, "plan-simplicity-review")
       );
     case "PLAN_APPROVED":
       return (

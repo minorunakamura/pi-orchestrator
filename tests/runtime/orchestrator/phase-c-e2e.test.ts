@@ -75,9 +75,14 @@ describe("Phase C full fake end-to-end contract", () => {
     ).toEqual([]);
     await approveCode(h);
     const agents = h.children.map((child) => child.agent);
-    expect(agents.slice(0, 3)).toEqual(["workflow-scout", "planner", "worker"]);
+    expect(agents.slice(0, 4)).toEqual([
+      "workflow-scout",
+      "planner",
+      "plan-simplicity-reviewer",
+      "worker",
+    ]);
     // Parallel preflight/persistence does not promise reviewer dispatch order.
-    expect(agents.slice(3).toSorted()).toEqual([
+    expect(agents.slice(4).toSorted()).toEqual([
       "ponytail-reviewer",
       "reviewer",
     ]);

@@ -45,6 +45,8 @@ Subsequent #11 update: `jev.runtimePolicy.grant` は未来の workflow ID を要
 
 Subsequent #16 update: captured Development Intent → Architecture後のdurable STANDARD/TDD routing → Planner / deterministic method・Test Seams validation → mandatory exact Plan approval → explicit isolated Worker skillsをnormal lifecycleへ接続した。Upstream `tdd` / optional `codebase-design`はreleased public launch/preflightで選択し、method/seams/skill-byte driftのresumeを拒否する。Actual Human Plan Gate / builtin Workerの2 vertical slices / deterministic Validation / zero-redispatch historical auditは [Development Method implementation / acceptance / validation](./development-method.md)。Strategy sections / simplicity readinessは #14、material deviation本体は #15、full production verificationは #12のまま。
 
+Subsequent #14 update: Planner/parser の必須 recipe を strategy sections に変更し、PLAN_CREATED は durable candidate として planning に留まる。Exact-bound read-only simplicity → durable one-shot refinement cap → fresh review → PLAN_REVIEW_READY → mandatory Human Plan Gate を normal driver / resume に接続した。Residual findings は public Plan payloadで全件表示し、Gate binding/settled evidenceはsimplicity refを含む。Focused tests / actual read-only reviewer・refinement Planner・pending Plannotator UI / zero-redispatch recovery は [Plan simplicity implementation / acceptance / validation](./plan-simplicity.md)。Material deviationは #15、Codemodeは #20、full production verificationは #12のまま。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order

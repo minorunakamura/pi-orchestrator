@@ -31,7 +31,15 @@ import {
 
 const roots: string[] = [];
 const runId = subagentRunId("worker-1");
-const plan = `# Plan\n\n## Scope / Requirements\nKeep the change small.\n\n## Architecture / Design\nUse the existing runtime boundary.\n\n## Implementation Plan\n1. Test.\n\n## Development Method\nSTANDARD\n\n## Validation Contract\n\`\`\`orchestrator-validation\n{"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}\n\`\`\``;
+const plan = `# Plan\n\n## Scope / Requirements\nKeep the change small.\n\n## Architecture / Design\nUse the existing runtime boundary.\n\n## Expected Change Surface
+Existing implementation and tests.
+## New Components
+none
+## New Dependencies
+none
+## Non-goals
+Unrelated changes.
+## Implementation Approach\n1. Test.\n\n## Development Method\nSTANDARD\n\n## Validation Contract\n\`\`\`orchestrator-validation\n{"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}\n\`\`\``;
 
 function succeeded(output: string): AgentRunResult {
   return { status: "succeeded", runId, output };
@@ -123,6 +131,24 @@ describe("ORCH-018 resumeWorkflow", () => {
       ...started,
       subagentExecutor: executor,
     }).createPlan({ state: started.state });
+    const intent = await started.artifactStore.writeText(
+      "plan-review",
+      "plan-v1-open-intent.md",
+      JSON.stringify({
+        planRef: created.planRef,
+        simplicityReviewRef: created.state.planning.simplicityReviewRef,
+      }),
+    );
+    await started.stateStore.saveState(
+      {
+        ...created.state,
+        external: {
+          ...created.state.external,
+          "plannotator.plan-review.v1.intent": intent.sha256,
+        },
+      },
+      created.state.stateRevision,
+    );
     const gate = new FakePlannotatorGate({
       openPlanReview: failure("infrastructure", "must not reopen"),
     });

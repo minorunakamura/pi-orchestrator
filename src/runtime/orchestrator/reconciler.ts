@@ -721,8 +721,22 @@ export class WorkflowReconciler {
         undefined,
         "Legacy planning policy cannot establish conditional authority",
       );
-    const version = state.planning.currentPlanVersion + 1;
-    const attempt = state.planning.agentAttempts?.[`plan-v${version}`];
+    const candidate =
+      state.planning.candidateCycleId === state.planning.cycleId &&
+      state.planning.currentPlanRef;
+    const refinementPending = sameArtifactRef(
+      state.planning.refinementReviewRef,
+      state.planning.simplicityReviewRef,
+    );
+    const version =
+      state.planning.currentPlanVersion +
+      (candidate && !refinementPending ? 0 : 1);
+    const attempt =
+      state.planning.agentAttempts?.[
+        candidate && !refinementPending
+          ? `simplicity-v${version}`
+          : `plan-v${version}`
+      ];
     if (attempt && !attempt.receipt && !attempt.notDispatched) {
       return {
         status: "blocked",
@@ -741,6 +755,7 @@ export class WorkflowReconciler {
     try {
       const result = await orchestrator.createPlan({
         state,
+        recoverOnly: true,
         cwd: this.deps.cwd ?? this.deps.repositoryCwd,
       });
       return {
@@ -799,6 +814,15 @@ export class WorkflowReconciler {
         "Plan review identity exists without its exact durable binding",
       );
     }
+    if (
+      !binding &&
+      !identity &&
+      !state.external[
+        `plannotator.plan-review.v${state.planning.currentPlanVersion}.intent`
+      ] &&
+      state.planning.simplicityReviewRef
+    )
+      return { status: "advanced", state, phase: state.phase };
     if (!binding) {
       // An open review is not transactional with State. Resume must not guess that no orphan exists.
       return this.block(

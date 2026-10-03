@@ -86,6 +86,13 @@ function invalidatePlan(state: WorkflowState): void {
   delete state.coding.executionRoutingRef;
 }
 
+function beginPlanningCycle(state: WorkflowState): void {
+  state.planning.cycleId = `cycle-v${state.planning.currentPlanVersion + 1}`;
+  state.planning.automaticRefinementsUsed = 0;
+  delete state.planning.refinementReviewRef;
+  invalidatePlan(state);
+}
+
 function invalidateArchitecture(state: WorkflowState): void {
   if (state.planning.stageDecisionRefs) {
     delete state.planning.stageDecisionRefs.architecture;
@@ -270,6 +277,7 @@ function applyTransition(
         fail("CLARIFICATION_COMPLETE is only valid while clarifying");
       next.planning.context.clarificationRef = event.clarificationRef;
       invalidateArchitecture(next);
+      beginPlanningCycle(next);
       next.phase = "planning";
       return next;
 
@@ -293,19 +301,73 @@ function applyTransition(
       if (event.version !== state.planning.currentPlanVersion + 1) {
         fail("PLAN_CREATED must use the next plan version");
       }
+      if (
+        !state.planning.cycleId ||
+        state.planning.automaticRefinementsUsed === undefined
+      )
+        fail(
+          "PLAN_CREATED requires a durable planning cycle and refinement budget",
+        );
+      next.planning.candidateCycleId = state.planning.cycleId;
+      delete next.planning.simplicityReviewRef;
       next.planning.currentPlanRef = event.planRef;
       next.planning.currentPlanVersion = event.version;
       delete next.planning.latestPlanReviewRef;
       delete next.planning.planReview;
       invalidatePlan(next);
-      next.phase = "awaiting-plan-review";
+      next.phase = "planning";
       return next;
     }
+
+    case "PLAN_SIMPLICITY_REVIEWED":
+      if (
+        state.phase !== "planning" ||
+        !state.planning.currentPlanRef ||
+        state.planning.candidateCycleId !== state.planning.cycleId ||
+        state.planning.simplicityReviewRef
+      )
+        fail("Simplicity review requires a current unreviewed candidate");
+      next.planning.simplicityReviewRef = event.reviewRef;
+      return next;
+
+    case "PLAN_REFINEMENT_REQUESTED":
+      if (
+        state.phase !== "planning" ||
+        state.planning.automaticRefinementsUsed !== 0 ||
+        !sameArtifactRef(event.reviewRef, state.planning.simplicityReviewRef)
+      )
+        fail(
+          "Automatic refinement requires current simplicity evidence and an unused budget",
+        );
+      next.planning.automaticRefinementsUsed = 1;
+      next.planning.refinementReviewRef = event.reviewRef;
+      return next;
+
+    case "PLAN_REVIEW_READY":
+      if (
+        state.phase !== "planning" ||
+        state.planning.candidateCycleId !== state.planning.cycleId ||
+        !sameArtifactRef(event.planRef, state.planning.currentPlanRef) ||
+        !sameArtifactRef(
+          event.simplicityRef,
+          state.planning.simplicityReviewRef,
+        ) ||
+        sameArtifactRef(
+          state.planning.refinementReviewRef,
+          state.planning.simplicityReviewRef,
+        )
+      )
+        fail(
+          "Review readiness requires a current candidate with fresh settled simplicity evidence",
+        );
+      next.phase = "awaiting-plan-review";
+      return next;
 
     case "PLAN_FEEDBACK":
       if (state.phase !== "awaiting-plan-review")
         fail("PLAN_FEEDBACK is only valid while awaiting plan review");
       next.planning.latestPlanReviewRef = event.feedbackRef;
+      beginPlanningCycle(next);
       invalidateArchitecture(next);
       next.phase = "planning";
       return next;
@@ -333,7 +395,9 @@ function applyTransition(
       }
       next.coding.roundDecisionRef = event.decisionRef;
       delete next.planning.latestPlanReviewRef;
-      invalidatePlan(next);
+      delete next.planning.planReview;
+      delete next.planning.simplicityReviewRef;
+      beginPlanningCycle(next);
       invalidateArchitecture(next);
       next.phase = "planning";
       return next;

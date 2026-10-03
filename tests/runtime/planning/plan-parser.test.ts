@@ -33,8 +33,12 @@ function plan(options: { architecture?: boolean } = {}): string {
     options.architecture === false
       ? ""
       : "## Architecture / Design\nKeep the runtime boundary explicit.",
-    "## Implementation Plan",
-    "1. Add the smallest safe implementation.",
+    "## Implementation Approach",
+    "Reuse the existing public seam.",
+    "## Expected Change Surface\nExisting parser and tests.",
+    "## New Components\nnone",
+    "## New Dependencies\nnone",
+    "## Non-goals\nUnrelated changes.",
     "## Development Method\nSTANDARD",
     contract,
   ]
@@ -43,6 +47,13 @@ function plan(options: { architecture?: boolean } = {}): string {
 }
 
 describe("parsePlan", () => {
+  test("requires explicit components/dependencies; strategy needs no detailed execution steps", () => {
+    expect(() => parsePlan(plan())).not.toThrow();
+    for (const section of ["New Components", "New Dependencies"])
+      expect(() =>
+        parsePlan(plan().replace(`## ${section}\nnone`, `## ${section}\nTBD`)),
+      ).toThrow(/explicit none/u);
+  });
   test("TDD requires explicit seams, exact method and allowlisted supporting vocabulary without replacing Validation", () => {
     const tdd = plan().replace(
       "## Development Method\nSTANDARD",
@@ -81,7 +92,11 @@ describe("parsePlan", () => {
       expect.arrayContaining([
         "Scope / Requirements",
         "Architecture / Design",
-        "Implementation Plan",
+        "Implementation Approach",
+        "Expected Change Surface",
+        "New Components",
+        "New Dependencies",
+        "Non-goals",
         "Validation Contract",
       ]),
     );
@@ -109,7 +124,11 @@ describe("parsePlan", () => {
 
   test.each([
     ["Scope / Requirements", /Scope \/ Requirements/iu],
-    ["Implementation Plan", /Implementation Plan/iu],
+    ["Implementation Approach", /Implementation Approach/iu],
+    ["Expected Change Surface", /Expected Change Surface/iu],
+    ["New Components", /New Components/iu],
+    ["New Dependencies", /New Dependencies/iu],
+    ["Non-goals", /Non-goals/iu],
     ["Validation Contract", /Validation Contract/iu],
   ])("rejects a plan missing %s", (section, heading) => {
     const withoutSection = plan().replace(
@@ -122,8 +141,8 @@ describe("parsePlan", () => {
 
   test("rejects duplicate logical sections", () => {
     expect(() =>
-      parsePlan(`${plan()}\n\n## Implementation Plan\nDuplicate.`),
-    ).toThrow(/duplicate.*Implementation Plan/iu);
+      parsePlan(`${plan()}\n\n## Implementation Approach\nDuplicate.`),
+    ).toThrow(/duplicate.*Implementation Approach/iu);
   });
 
   test("rejects a contract block outside the Validation Contract section", () => {
@@ -145,11 +164,11 @@ describe("parsePlan", () => {
 
   test("does not treat headings inside tilde code fences as plan sections", () => {
     const disguised = plan().replace(
-      "## Implementation Plan\n\n1. Add the smallest safe implementation.",
-      "~~~markdown\n## Implementation Plan\n1. This is only an example.\n~~~",
+      "## Implementation Approach\n\nReuse the existing public seam.",
+      "~~~markdown\n## Implementation Approach\nThis is only an example.\n~~~",
     );
 
-    expect(() => parsePlan(disguised)).toThrow(/Implementation Plan/iu);
+    expect(() => parsePlan(disguised)).toThrow(/Implementation Approach/iu);
   });
 
   test("exposes a stable validation error type", () => {

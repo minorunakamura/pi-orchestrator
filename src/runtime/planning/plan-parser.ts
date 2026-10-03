@@ -196,6 +196,16 @@ export function parsePlan(
           .trim()
       : undefined;
   };
+  for (const section of ["New Components", "New Dependencies"] as const) {
+    if (
+      /^(?:[-*]\s*)?(?:n\/a|tbd|unknown|later)[.!]?$/iu.test(
+        body(section) ?? "",
+      )
+    )
+      throw new PlanParseError(
+        `${section} must declare proposed additions or explicit none`,
+      );
+  }
   const method = body("Development Method")
     ?.replace(/^[-*]\s+/u, "")
     .trim();

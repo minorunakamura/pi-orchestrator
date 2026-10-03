@@ -97,7 +97,11 @@ export const CODING_ENTRY_EVIDENCE_LIMITS = {
 const routingPlanSections: readonly PlanSection[] = [
   "Scope / Requirements",
   "Architecture / Design",
-  "Implementation Plan",
+  "Implementation Approach",
+  "Expected Change Surface",
+  "New Components",
+  "New Dependencies",
+  "Non-goals",
 ];
 
 export interface ExecutionRoutingArtifact {
