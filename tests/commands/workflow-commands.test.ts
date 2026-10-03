@@ -1,3 +1,5 @@
+import { CLARIFICATION_COMPLETE_EVENT } from "../../src/runtime/integrations/clarification.ts";
+import { runClarificationRound } from "../../src/runtime/orchestrator/clarification.ts";
 import { fakeLaunchResolver } from "../fakes/agent-launch.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -334,6 +336,93 @@ describe("ORCH-019 workflow commands", () => {
       await workflow.cleanup();
     }
   }, 10_000);
+
+  test("production clarification completion automatically continues to the mandatory Plan Gate; wake hints cannot answer", async () => {
+    const workflow = await phaseCWorkflow({ clarification: true });
+    try {
+      const events: EventBus = {
+        on: (event, listener) => workflow.events.on(event, listener),
+        emit: (event, payload) =>
+          event === PLANNOTATOR_REQUEST_CHANNEL
+            ? workflow.gateEvents.emit(event, payload)
+            : workflow.events.emit(event, payload),
+      };
+      const runtime = createWorkflowCommandRuntime(
+        events,
+        workflow.repositoryCwd,
+        {
+          launchResolver: fakeLaunchResolver,
+          configuration: workflow.configuration,
+          jevDecisionClient: workflow.jevDecisionClient,
+          clarificationPort: {
+            setup: async () => ({ rootSessionId: "root-1", skills: [] }),
+            request: async () => ({ status: "pending" }),
+          },
+        },
+      );
+      const waiting = await runtime.resume("full-fake");
+      expect(waiting.state.phase).toBe("clarifying");
+      const requestHash =
+        waiting.state.planning.clarificationRequestRef!.sha256;
+      workflow.events.deliver(CLARIFICATION_COMPLETE_EVENT, {
+        workflowId: "full-fake",
+        requestHash,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect((await workflow.load()).phase).toBe("clarifying");
+      expect(
+        workflow.children.filter((child) => child.agent === "planner"),
+      ).toHaveLength(0);
+      const confirmed = await runClarificationRound(
+        waiting.state,
+        workflow,
+        {
+          requestHash,
+          rootSessionId: "root-1",
+          summary: "Preserve the existing boundary; all decisions settled.",
+        },
+        async (_id, questions) => ({
+          status: "answered",
+          questions,
+          cancelled: false,
+          answers: { [questions[0].question]: "Confirm" },
+          selections: [
+            {
+              question: questions[0].question,
+              header: "Confirm",
+              value: "Confirm",
+              labels: ["Confirm"],
+              selectedIndices: [1],
+            },
+          ],
+        }),
+      );
+      expect(confirmed.phase).toBe("planning");
+      workflow.events.deliver(CLARIFICATION_COMPLETE_EVENT, {
+        workflowId: "full-fake",
+        requestHash: "a".repeat(64),
+      });
+      expect((await workflow.load()).phase).toBe("planning");
+      workflow.events.deliver(CLARIFICATION_COMPLETE_EVENT, {
+        workflowId: "full-fake",
+        requestHash,
+      });
+      await vi.waitFor(
+        async () =>
+          expect((await workflow.load()).planning.planReview).toBeDefined(),
+        { timeout: 10000 },
+      );
+      expect(
+        workflow.children.filter((child) => child.agent === "planner"),
+      ).toHaveLength(1);
+      expect((await workflow.load()).planning.approvedPlanRef).toBeUndefined();
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(0);
+    } finally {
+      await workflow.cleanup();
+    }
+  });
 
   test("missing command runtime configuration blocks before Jev or Worker continuation", async () => {
     const workflow = await phaseCWorkflow();

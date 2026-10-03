@@ -23,7 +23,7 @@ Inspected sources before design revision:
 | #18 package/lockfile: Pi 0.99.1, pi-subagents 0.74.0 (contract-test dev), direct pi-typesafe 0.8.1 | native classifier/direct dependency removal #19; launch policy #21; [platform verification](./platform-baseline-smoke.md) |
 | commands start only startWorkflow/gatherContext; resume/Reconciler does phase work | #4 normal driveWorkflow; resume reconciliation + same-driver continuation |
 | core playbook flags resolved at start from transient hints; hotfix/chore Research skip; no Diagnosis | #6 sequential conditional evidence / #7 required Diagnosis |
-| ClarificationPort exists but production command composition lacks root Human bridge | #8 GRILL_ME / GRILL_WITH_DOCS / narrow docs intent |
+| #8 production root bridge, durable Human rounds/confirmation and narrow docs intents are connected | [Clarification evidence](./clarification.md); general ownership is #5, integrated verification is #12 |
 | parser/Planner require Implementation Plan, no method/seams/simplicity | #16 then #14 approved strategy/readiness contract |
 | AgentRunRequest lacks full explicit launch policy/preflight projection | #21 all child roles bind model/thinking/skills/tools/definition/digest |
 | direct Jev library adapter, exact future workflowId consent config | #19 native classifier / #11 project grant -> generated workflow consent |
@@ -38,6 +38,8 @@ Subsequent #4 update: commands now use createWorkflow → driveWorkflow over exi
 Subsequent #6 update: Research/Clarification/Architecture は Scout 後に accumulated durable evidence から逐次解決し、stage/mode decision の immutable persistence / freshness / conservative escalation を normal driver に接続した。旧 transient hints は authority にしない。Diagnosis ref を消費するが、bugfix/hotfix の missing producer は block し、実行は #7。root bridge は #8、consent capture は #11。Research は operator 指定の GitHub-only source / commit `e49fd9e` と実 Pi child を検証し、Ketch-only tools / context inheritance の policy 不整合を修正した。詳細は [#6 implementation / coverage / limitations](./conditional-stage-routing.md)。
 
 Subsequent #7 update: bugfix/hotfix は Scout → required read-only Diagnosis → routing を normal driver が自動継続する。Structured symptom/reproduction/root-cause/gap/dependency/scope/risk evidence を immutable Artifact と State に保存し、routing/Planner が exact input/launch freshness を検証する。Completed Diagnosis は再 dispatch せず、hotfix scope-exceeded/unknown は Human reclassification/replanning 待ちで停止する。詳細は [Diagnosis implementation / acceptance / validation](./diagnosis.md)。Root clarification/consent/TDD/Plan strategy/non-Git/Code corrections/full lifecycle は各既存 producer / #12 のまま。
+
+Subsequent #8 update: production root/Main は resolved grilling / mode-aware domain-modeling と public questionnaire v1 から durable request → rounds → final Human confirmation → exact CONTEXT/ADR intent/before/after → CLARIFICATION_COMPLETE → normal continuation を実行する。Transient prompt / prose-only answer / mode-only write grant に依存しない。Both-mode actual Human TUI + real Planner smoke と focused persistence/authority tests は [Clarification implementation / acceptance / validation](./clarification.md)。Generated-workflow consent は #11、general ownership は #5、full production Human Gates は #12 のまま。
 
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 

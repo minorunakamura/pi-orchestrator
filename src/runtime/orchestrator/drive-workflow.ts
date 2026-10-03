@@ -85,13 +85,15 @@ async function advance(
       return result(next.state, next.state.phase === state.phase);
     }
     case "clarifying": {
-      if (!deps.clarificationPort || !deps.clarificationPrompt)
-        return result(state, true);
+      if (!deps.clarificationPort) return result(state, true);
       const next = await planning.requestClarification({
         state,
         prompt: deps.clarificationPrompt,
       });
-      return result(next.state, next.status === "declined");
+      return result(
+        next.state,
+        next.status === "declined" || next.status === "pending",
+      );
     }
     case "planning":
       return result((await planning.createPlan({ state, cwd })).state);

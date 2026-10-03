@@ -241,6 +241,9 @@ function applyTransition(
       if (isRoundDecisionRef(event.reasonRef)) {
         next.coding.roundDecisionRef = event.reasonRef;
       }
+      delete next.planning.clarificationRequestRef;
+      delete next.planning.clarificationProgressRef;
+      delete next.planning.domainDocumentWriteRef;
       next.phase = "clarifying";
       return next;
 

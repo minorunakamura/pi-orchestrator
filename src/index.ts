@@ -1,3 +1,4 @@
+import { registerClarificationBridge } from "./runtime/integrations/clarification.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { physicalModelSnapshot } from "./runtime/integrations/subagent-launch.ts";
 import {
@@ -51,10 +52,12 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async () =>
     disposeWorkflowContinuations(pi.events),
   );
+  const clarificationPort = registerClarificationBridge(pi);
   registerWorkflowCommands(pi, {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
         projectTrusted: context.isProjectTrusted(),
+        clarificationPort: clarificationPort(context),
         modelRegistry: context.modelRegistry,
         onContinuationError: (error) =>
           context.ui.notify(renderWorkflowCommandError(error), "error"),

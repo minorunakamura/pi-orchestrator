@@ -1,5 +1,4 @@
-import { readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { mkdtemp } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
@@ -10,521 +9,280 @@ import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import {
   FakeClarificationPort,
   FakeSubagentExecutor,
-} from "../../../tests/fakes/index.ts";
+} from "../../fakes/index.ts";
 import type { PlaybookContext } from "../../../src/core/playbooks/policy.ts";
-import type { AgentRunResult } from "../../../src/runtime/ports/index.ts";
 import { subagentRunId } from "../../../src/types.ts";
 
 const roots: string[] = [];
-const runId = subagentRunId("run-1");
-
 const validPlan = `# Plan
 
 ## Scope / Requirements
-Implement the requested behavior without changing unrelated code.
+Implement only the requested behavior.
 
 ## Architecture / Design
-Keep parsing and orchestration behind their existing boundaries.
+Preserve the existing parser boundary.
 
 ## Implementation Plan
-1. Add focused tests.
-2. Implement the smallest safe change.
+Add regression tests and the smallest change.
 
 ## Validation Contract
 
 \`\`\`orchestrator-validation
-{
-  "schemaVersion": 1,
-  "checks": [
-    {
-      "id": "tests",
-      "type": "command",
-      "command": "pnpm test",
-      "cwd": ".",
-      "required": true
-    }
-  ]
-}
+{"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}
 \`\`\`
 `;
-
-function succeeded(output: string): AgentRunResult {
-  return { status: "succeeded", runId, output };
-}
-
-function providedPort(answer: string): FakeClarificationPort {
-  return new FakeClarificationPort({
+const succeeded = (output: string) => ({
+  status: "succeeded" as const,
+  runId: subagentRunId("run-1"),
+  output,
+});
+const providedPort = (answer: string) =>
+  new FakeClarificationPort({
     request: { type: "result", value: { status: "provided", answer } },
   });
-}
-
-async function makeRoot(): Promise<string> {
+async function setup(
+  context: PlaybookContext = {},
+  outputs = ["facts", validPlan],
+) {
   const root = await mkdtemp(join(tmpdir(), "pi-orchestrator-planning-"));
   roots.push(root);
-  return root;
-}
-
-async function makeStarted(
-  runsDirectory: string,
-  executor: FakeSubagentExecutor,
-  context?: PlaybookContext,
-) {
-  return startWorkflow(
+  const executor = new FakeSubagentExecutor({
+    run: outputs.map((output) => ({
+      type: "result" as const,
+      value: succeeded(output),
+    })),
+  });
+  const started = await startWorkflow(
+    { task: "Implement the planning change", playbook: "feature", context },
     {
-      task: "Implement the planning change",
-      playbook: "feature",
-      context,
-    },
-    {
-      runsDirectory,
+      runsDirectory: root,
       subagentExecutor: executor,
       workflowIdFactory: () => "workflow-1",
     },
   );
+  return { ...started, subagentExecutor: executor };
 }
-
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true })),
   );
 });
 
-describe("PlanningOrchestrator ORCH-008", () => {
-  test("invokes Human clarification with explicit context refs and persists the answer before completion", async () => {
-    const runsDirectory = await makeRoot();
-    const executor = new FakeSubagentExecutor({
-      run: { type: "result", value: succeeded("local facts") },
-    });
-    const started = await makeStarted(runsDirectory, executor, {
-      requiresClarification: true,
-    });
-    const clarification = new FakeClarificationPort({
-      request: {
-        type: "result",
-        value: {
-          status: "provided",
-          answer: "Use the existing parser boundary.",
+describe("PlanningOrchestrator clarification persistence", () => {
+  test("durable request/source/evidence precedes Human interaction; confirmed answer precedes completion", async () => {
+    const h = await setup({ requiresClarification: true });
+    const stateStore = new StateStore(h.runDirectory);
+    const port = providedPort("Preserve the existing parser boundary.");
+    const result = await new PlanningOrchestrator({
+      ...h,
+      clarificationPort: {
+        request: async (request) => {
+          const persisted = await stateStore.loadState();
+          expect(persisted.planning.clarificationRequestRef).toEqual(
+            request.requestRef,
+          );
+          const content = await h.artifactStore.readText!(request.requestRef!);
+          expect(content).toContain(request.prompt);
+          expect(request.contextRefs).toEqual(
+            expect.arrayContaining([
+              h.taskRef,
+              h.state.planning.context.scoutRef,
+            ]),
+          );
+          expect(request.evidence?.every((item) => item.content)).toBe(true);
+          expect(persisted.planning.approvedPlanRef).toBeUndefined();
+          return port.request(request);
         },
       },
-    });
-    const orchestrator = new PlanningOrchestrator({
-      ...started,
-      subagentExecutor: executor,
-      clarificationPort: clarification,
-    });
-
-    const result = await orchestrator.requestClarification({
-      state: started.state,
-      prompt: "Which parser boundary should the plan preserve?",
-    });
-
-    expect(clarification.calls[0]).toMatchObject({
-      prompt: "Which parser boundary should the plan preserve?",
-      contextRefs: [started.taskRef, started.state.planning.context.scoutRef],
-    });
+    }).requestClarification({ state: h.state });
     expect(result.status).toBe("provided");
     expect(result.state.phase).toBe("planning");
-    const clarificationRef = result.state.planning.context.clarificationRef!;
-    expect(clarificationRef.path).toMatch(
-      /^context\/clarification-r\d+-[a-f0-9]{64}\.md$/u,
+    expect(result.state.planning.context.clarificationRef).toEqual(
+      result.state.planning.clarificationProgressRef,
     );
     expect(
-      (await new StateStore(started.runDirectory).loadState()).planning.context
-        .clarificationRef,
-    ).toEqual(clarificationRef);
-    await expect(
-      readFile(join(started.runDirectory, clarificationRef.path), "utf8"),
-    ).resolves.toContain("Use the existing parser boundary.");
-  });
-
-  test("restart after State save failure reuses only identical confirmed clarification evidence", async () => {
-    const executor = new FakeSubagentExecutor({
-      run: { type: "result", value: succeeded("facts") },
-    });
-    const started = await makeStarted(await makeRoot(), executor, {
-      requiresClarification: true,
-    });
-    const answer = {
-      status: "provided" as const,
-      answer: "First scope choice",
-    };
-    const prompt = "Choose the scope";
-    await expect(
-      new PlanningOrchestrator({
-        ...started,
-        subagentExecutor: executor,
-        clarificationPort: new FakeClarificationPort({
-          request: { type: "result", value: answer },
-        }),
-        stateStore: {
-          saveState: async () => {
-            throw Error("State save interrupted");
-          },
-        },
-      }).requestClarification({ state: started.state, prompt }),
-    ).rejects.toThrow("State save interrupted");
-    const files = (await readdir(join(started.runDirectory, "context"))).filter(
-      (name) => name.startsWith("clarification-"),
-    );
-    expect(files).toHaveLength(1);
-    const original = await readFile(
-      join(started.runDirectory, "context", files[0]),
-      "utf8",
-    );
-    const store = new StateStore(started.runDirectory);
-    const before = await store.loadState();
-    expect(before.phase).toBe("clarifying");
-    expect(before.planning.context.clarificationRef).toBeUndefined();
-    const port = new FakeClarificationPort({
-      request: { type: "result", value: answer },
-    });
-    const result = await new PlanningOrchestrator({
-      ...started,
-      stateStore: store,
-      subagentExecutor: executor,
-      clarificationPort: port,
-    }).requestClarification({ state: before, prompt });
-    expect(port.calls).toHaveLength(1);
-    expect(result.state.planning.context.clarificationRef?.path).toBe(
-      `context/${files[0]}`,
-    );
-    expect(
-      (await readdir(join(started.runDirectory, "context"))).filter((name) =>
-        name.startsWith("clarification-"),
-      ),
-    ).toEqual(files);
-    expect(
-      await started.artifactStore.readText!(
+      await h.artifactStore.readText!(
         result.state.planning.context.clarificationRef!,
       ),
-    ).toBe(original);
-    expect((await store.loadState()).phase).toBe("planning");
+    ).toContain("Preserve the existing parser boundary.");
+    expect(result.state.coding.implementationRef).toBeUndefined();
   });
-
-  test.each(["answer", "prompt", "context"])(
-    "restart with changed %s never rebinds an orphan clarification",
-    async (change) => {
-      const executor = new FakeSubagentExecutor({
-        run: { type: "result", value: succeeded("facts") },
-      });
-      const started = await makeStarted(await makeRoot(), executor, {
-        requiresClarification: true,
-      });
-
-      await expect(
-        new PlanningOrchestrator({
-          ...started,
-          subagentExecutor: executor,
-          clarificationPort: providedPort("Choice one"),
-          stateStore: {
-            saveState: async () => {
-              throw Error("State save interrupted");
-            },
-          },
-        }).requestClarification({
-          state: started.state,
-          prompt: "Question one",
-        }),
-      ).rejects.toThrow("State save interrupted");
-      const first = (await readdir(join(started.runDirectory, "context"))).find(
-        (name) => name.startsWith("clarification-"),
-      )!;
-      const bytes = await readFile(
-        join(started.runDirectory, "context", first),
-        "utf8",
-      );
-      const store = new StateStore(started.runDirectory);
-      const result = await new PlanningOrchestrator({
-        ...started,
-        stateStore: store,
-        subagentExecutor: executor,
-        clarificationPort: providedPort(
-          change === "answer" ? "Choice two" : "Choice one",
-        ),
-      }).requestClarification({
-        state: await store.loadState(),
-        prompt: change === "prompt" ? "Question two" : "Question one",
-        ...(change === "context" ? { contextRefs: [started.taskRef] } : {}),
-      });
-      expect(result.state.planning.context.clarificationRef?.path).not.toBe(
-        `context/${first}`,
-      );
-      expect(
-        (await readdir(join(started.runDirectory, "context"))).filter((name) =>
-          name.startsWith("clarification-"),
-        ),
-      ).toHaveLength(2);
-      expect(
-        await readFile(join(started.runDirectory, "context", first), "utf8"),
-      ).toBe(bytes);
-      expect(
-        (await store.loadState()).planning.context.clarificationRef,
-      ).toEqual(result.state.planning.context.clarificationRef);
-    },
-  );
-
-  test("stale clarification State cannot replace the latest confirmed ref", async () => {
-    const executor = new FakeSubagentExecutor({
-      run: { type: "result", value: succeeded("facts") },
-    });
-    const started = await makeStarted(await makeRoot(), executor, {
-      requiresClarification: true,
-    });
-    const make = (answer: string) =>
-      new PlanningOrchestrator({
-        ...started,
-        subagentExecutor: executor,
-        clarificationPort: new FakeClarificationPort({
-          request: { type: "result", value: { status: "provided", answer } },
-        }),
-      });
-    const first = await make("Latest confirmed choice").requestClarification({
-      state: started.state,
-      prompt: "Scope?",
-    });
-    await expect(
-      make("Stale different choice").requestClarification({
-        state: started.state,
-        prompt: "Scope?",
-      }),
-    ).rejects.toThrow(/revision/iu);
-    const current = await new StateStore(started.runDirectory).loadState();
-    expect(current).toEqual(first.state);
-    expect(
-      await started.artifactStore.readText!(
-        current.planning.context.clarificationRef!,
-      ),
-    ).toContain("Latest confirmed choice");
-  });
-
-  test("a corrupt immutable clarification collision cannot publish a State ref", async () => {
-    const executor = new FakeSubagentExecutor({
-      run: { type: "result", value: succeeded("facts") },
-    });
-    const started = await makeStarted(await makeRoot(), executor, {
-      requiresClarification: true,
-    });
-
+  test("request State-save failure prevents all Human calls; corrupt request cannot be republished", async () => {
+    const h = await setup({ requiresClarification: true });
+    const port = providedPort("Choice");
     await expect(
       new PlanningOrchestrator({
-        ...started,
-        subagentExecutor: executor,
-        clarificationPort: providedPort("Confirmed choice"),
+        ...h,
+        clarificationPort: port,
         stateStore: {
           saveState: async () => {
-            throw Error("State save interrupted");
+            throw Error("State interrupted");
           },
         },
-      }).requestClarification({ state: started.state, prompt: "Scope?" }),
-    ).rejects.toThrow("State save interrupted");
-    const file = (await readdir(join(started.runDirectory, "context"))).find(
-      (name) => name.startsWith("clarification-"),
+      }).requestClarification({ state: h.state }),
+    ).rejects.toThrow("State interrupted");
+    expect(port.calls).toHaveLength(0);
+    const name = (await readdir(join(h.runDirectory, "context"))).find((n) =>
+      n.startsWith("human-request-"),
     )!;
-    await writeFile(
-      join(started.runDirectory, "context", file),
-      "external corruption",
-    );
-    const store = new StateStore(started.runDirectory);
+    await writeFile(join(h.runDirectory, "context", name), "corruption");
     await expect(
       new PlanningOrchestrator({
-        ...started,
-        stateStore: store,
-        subagentExecutor: executor,
-        clarificationPort: providedPort("Confirmed choice"),
-      }).requestClarification({
-        state: await store.loadState(),
-        prompt: "Scope?",
-      }),
-    ).rejects.toThrow(/hash|immutable/iu);
-    expect(
-      (await store.loadState()).planning.context.clarificationRef,
-    ).toBeUndefined();
-    expect((await store.loadState()).phase).toBe("clarifying");
+        ...h,
+        clarificationPort: port,
+      }).requestClarification({ state: h.state }),
+    ).rejects.toThrow(/hash/iu);
+    expect(port.calls).toHaveLength(0);
   });
-
-  test("keeps a declined Human decision in clarifying without inventing a fact or plan", async () => {
-    const runsDirectory = await makeRoot();
-    const executor = new FakeSubagentExecutor({
-      run: { type: "result", value: succeeded("facts only") },
-    });
-    const started = await makeStarted(runsDirectory, executor, {
-      requiresClarification: true,
-    });
-    const clarification = new FakeClarificationPort({
-      request: {
-        type: "result",
-        value: { status: "declined", reason: "Need a product owner." },
-      },
-    });
-    const orchestrator = new PlanningOrchestrator({
-      ...started,
-      subagentExecutor: executor,
-      clarificationPort: clarification,
-    });
-
-    const result = await orchestrator.requestClarification({
-      state: started.state,
-      prompt: "Choose the product scope.",
-    });
-
-    expect(result).toEqual({
-      status: "declined",
-      reason: "Need a product owner.",
-      state: started.state,
-    });
-    expect(result.state.phase).toBe("clarifying");
-    expect(executor.calls.run).toHaveLength(1);
+  test("completed durable answer recovers after transition-save failure without asking again", async () => {
+    const h = await setup({ requiresClarification: true });
+    const store = new StateStore(h.runDirectory);
+    const port = providedPort("Confirmed choice");
     await expect(
-      readdir(join(started.runDirectory, "context")),
-    ).resolves.toEqual(["scout.md", "task.md"]);
-  });
-
-  test("does not silently drop an evidence-routed architecture requirement", async () => {
-    const runsDirectory = await makeRoot();
-    const executor = new FakeSubagentExecutor({
-      run: [
-        { type: "result", value: succeeded("local facts") },
-        {
-          type: "result",
-          value: succeeded(
-            validPlan.replace(
-              "## Architecture / Design\nKeep parsing and orchestration behind their existing boundaries.\n\n",
-              "",
-            ),
-          ),
+      new PlanningOrchestrator({
+        ...h,
+        clarificationPort: port,
+        stateStore: {
+          saveState: (state, rev) => {
+            if (state.phase === "planning")
+              throw Error("Transition interrupted");
+            return store.saveState(state, rev);
+          },
         },
-      ],
-    });
-    const started = await makeStarted(runsDirectory, executor, {
-      requiresArchitecture: true,
-    });
-    const orchestrator = new PlanningOrchestrator({
-      ...started,
-      subagentExecutor: executor,
-    });
-
+      }).requestClarification({ state: h.state }),
+    ).rejects.toThrow("Transition interrupted");
+    const interrupted = await store.loadState();
+    expect(interrupted.phase).toBe("clarifying");
+    expect(interrupted.planning.clarificationProgressRef).toBeDefined();
+    const nextPort = providedPort("Must not replace the answer");
+    const result = await new PlanningOrchestrator({
+      ...h,
+      clarificationPort: nextPort,
+    }).requestClarification({ state: interrupted });
+    expect(nextPort.calls).toHaveLength(0);
+    expect(result.state.phase).toBe("planning");
+    expect(
+      await h.artifactStore.readText!(
+        result.state.planning.context.clarificationRef!,
+      ),
+    ).toContain("Confirmed choice");
+  });
+  test("stale State cannot replace a current confirmed answer", async () => {
+    const h = await setup({ requiresClarification: true });
+    const first = await new PlanningOrchestrator({
+      ...h,
+      clarificationPort: providedPort("Current choice"),
+    }).requestClarification({ state: h.state });
     await expect(
-      orchestrator.createPlan({ state: started.state }),
+      new PlanningOrchestrator({
+        ...h,
+        clarificationPort: providedPort("Stale choice"),
+      }).requestClarification({ state: h.state }),
+    ).rejects.toThrow(/revision/iu);
+    expect(await new StateStore(h.runDirectory).loadState()).toEqual(
+      first.state,
+    );
+  });
+  test("decline blocks and never creates Plan/implementation authority", async () => {
+    const h = await setup({ requiresClarification: true });
+    const result = await new PlanningOrchestrator({
+      ...h,
+      clarificationPort: new FakeClarificationPort({
+        request: {
+          type: "result",
+          value: { status: "declined", reason: "Need product owner" },
+        },
+      }),
+    }).requestClarification({ state: h.state });
+    expect(result.status).toBe("declined");
+    expect(result.state.phase).toBe("blocked");
+    expect(result.state.planning.context.clarificationRef).toBeUndefined();
+    expect(h.subagentExecutor.calls.run).toHaveLength(1);
+  });
+});
+
+describe("PlanningOrchestrator candidate Plan", () => {
+  test("does not drop evidence-routed Architecture", async () => {
+    const h = await setup({ requiresArchitecture: true }, [
+      "facts",
+      validPlan.replace(
+        "## Architecture / Design\nPreserve the existing parser boundary.\n\n",
+        "",
+      ),
+    ]);
+    await expect(
+      new PlanningOrchestrator(h).createPlan({ state: h.state }),
     ).rejects.toThrow(/Architecture \/ Design/iu);
-    expect((await new StateStore(started.runDirectory).loadState()).phase).toBe(
+    expect((await new StateStore(h.runDirectory).loadState()).phase).toBe(
       "planning",
     );
   });
-
-  test("passes only explicit artifact refs to planner and creates plan-v1 after validation", async () => {
-    const runsDirectory = await makeRoot();
-    const executor = new FakeSubagentExecutor({
-      run: [
-        { type: "result", value: succeeded("local facts") },
-        { type: "result", value: succeeded(validPlan) },
-      ],
+  test("passes exact refs and validates before publishing plan-v1", async () => {
+    const h = await setup();
+    const result = await new PlanningOrchestrator(h).createPlan({
+      state: h.state,
     });
-    const started = await makeStarted(runsDirectory, executor);
-    const orchestrator = new PlanningOrchestrator({
-      ...started,
-      subagentExecutor: executor,
-    });
-
-    const result = await orchestrator.createPlan({ state: started.state });
-
     expect(result.state.phase).toBe("awaiting-plan-review");
     expect(result.state.planning.currentPlanVersion).toBe(1);
-    expect(result.planRef.path).toBe("plans/plan-v1.md");
-    expect(executor.calls.run[1]?.agent).toBe("planner");
-    expect(executor.calls.run[1]?.inputRefs).toEqual([
-      started.taskRef,
-      started.state.planning.context.scoutRef,
+    expect(h.subagentExecutor.calls.run[1]?.inputRefs).toEqual([
+      h.taskRef,
+      h.state.planning.context.scoutRef,
       ...result.plannerInput.decisionRefs!,
     ]);
-    expect(executor.calls.run[1]?.task).toMatch(/target version.*1/iu);
-    await expect(
-      readFile(join(started.runDirectory, "plans", "plan-v1.md"), "utf8"),
-    ).resolves.toBe(validPlan);
+    expect(h.subagentExecutor.calls.run[1]?.task).toMatch(
+      /target version.*1/iu,
+    );
+    expect(
+      await readFile(join(h.runDirectory, "plans", "plan-v1.md"), "utf8"),
+    ).toBe(validPlan);
   });
-
   test.each([
-    [
-      "missing required plan section",
-      validPlan.replace("## Implementation Plan", "## Notes"),
-    ],
-    [
-      "invalid validation contract",
-      validPlan.replace('"schemaVersion": 1', '"schemaVersion": 2'),
-    ],
-  ])("does not emit PLAN_CREATED for %s", async (_name, plannerOutput) => {
-    const runsDirectory = await makeRoot();
-    const executor = new FakeSubagentExecutor({
-      run: [
-        { type: "result", value: succeeded("local facts") },
-        { type: "result", value: succeeded(plannerOutput) },
-      ],
-    });
-    const started = await makeStarted(runsDirectory, executor);
-    const orchestrator = new PlanningOrchestrator({
-      ...started,
-      subagentExecutor: executor,
-    });
-
+    validPlan.replace("## Implementation Plan", "## Notes"),
+    validPlan.replace('"schemaVersion":1', '"schemaVersion":2'),
+  ])("invalid Plan never emits PLAN_CREATED", async (output) => {
+    const h = await setup({}, ["facts", output]);
     await expect(
-      orchestrator.createPlan({ state: started.state }),
+      new PlanningOrchestrator(h).createPlan({ state: h.state }),
     ).rejects.toThrow();
-
-    const persistedState = await new StateStore(
-      started.runDirectory,
-    ).loadState();
-    expect(persistedState.phase).toBe("planning");
-    expect(persistedState.planning.currentPlanVersion).toBe(0);
-    await expect(
-      readdir(join(started.runDirectory, "plans")),
-    ).rejects.toThrow();
+    expect(
+      (await new StateStore(h.runDirectory).loadState()).planning
+        .currentPlanVersion,
+    ).toBe(0);
+    await expect(readdir(join(h.runDirectory, "plans"))).rejects.toThrow();
   });
-
-  test("creates immutable plan-v2 after feedback while preserving plan-v1 and forwarding feedback refs", async () => {
-    const runsDirectory = await makeRoot();
-    const executor = new FakeSubagentExecutor({
-      run: [
-        { type: "result", value: succeeded("local facts") },
-        { type: "result", value: succeeded(validPlan) },
-        {
-          type: "result",
-          value: succeeded(validPlan.replace("# Plan", "# Plan v2")),
-        },
-      ],
-    });
-    const started = await makeStarted(runsDirectory, executor);
-    const orchestrator = new PlanningOrchestrator({
-      ...started,
-      subagentExecutor: executor,
-    });
-    const first = await orchestrator.createPlan({ state: started.state });
-    const feedbackRef = await started.artifactStore.writeText(
+  test("Plan feedback creates immutable v2 and forwards exact feedback", async () => {
+    const h = await setup({}, [
+      "facts",
+      validPlan,
+      validPlan.replace("# Plan", "# Plan v2"),
+    ]);
+    const orchestration = new PlanningOrchestrator(h);
+    const first = await orchestration.createPlan({ state: h.state });
+    const feedbackRef = await h.artifactStore.writeText(
       "plan-review",
       "review-1.md",
-      "Clarify the validation command.",
+      "Clarify validation",
     );
-    const planningState = await advanceWorkflow(
+    const state = await advanceWorkflow(
       first.state,
       { type: "PLAN_FEEDBACK", feedbackRef },
-      started.stateStore,
+      h.stateStore,
     );
-
-    const second = await orchestrator.createPlan({ state: planningState });
-
-    expect(second.planRef.path).toBe("plans/plan-v2.md");
+    const second = await orchestration.createPlan({ state });
     expect(second.state.planning.currentPlanVersion).toBe(2);
     expect(second.state.planning.latestPlanReviewRef).toBeUndefined();
-    expect(executor.calls.run[2]?.inputRefs).toEqual([
-      started.taskRef,
-      started.state.planning.context.scoutRef,
+    expect(h.subagentExecutor.calls.run[2]?.inputRefs).toEqual([
+      h.taskRef,
+      h.state.planning.context.scoutRef,
       ...second.plannerInput.decisionRefs!,
       first.planRef,
       feedbackRef,
     ]);
-    await expect(
-      readFile(join(started.runDirectory, "plans", "plan-v1.md"), "utf8"),
-    ).resolves.toBe(validPlan);
-    await expect(
-      readFile(join(started.runDirectory, "plans", "plan-v2.md"), "utf8"),
-    ).resolves.toContain("# Plan v2");
+    expect(
+      await readFile(join(h.runDirectory, "plans", "plan-v1.md"), "utf8"),
+    ).toBe(validPlan);
+    expect(
+      await readFile(join(h.runDirectory, "plans", "plan-v2.md"), "utf8"),
+    ).toContain("# Plan v2");
   });
 });
