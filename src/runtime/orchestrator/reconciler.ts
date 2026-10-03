@@ -617,7 +617,12 @@ export class WorkflowReconciler {
         undefined,
         "Legacy planning policy cannot establish conditional authority",
       );
-    const stage = state.planning.context.scoutRef ? "research" : "scout";
+    const stage = !state.planning.context.scoutRef
+      ? "scout"
+      : ["bugfix", "hotfix"].includes(state.playbook) &&
+          !state.planning.context.diagnosisRef
+        ? "diagnosis"
+        : "research";
     const attempt =
       stage === "research" &&
       (!state.planning.researchRequired || state.planning.context.researchRef)
@@ -655,6 +660,12 @@ export class WorkflowReconciler {
         phase: result.state.phase,
       };
     } catch (error) {
+      if (error instanceof PlanningAgentPendingError)
+        return {
+          status: "pending",
+          state: error.state,
+          phase: error.state.phase,
+        };
       if (error instanceof PlanningRoutingStoppedError)
         return {
           status: "blocked",
@@ -2053,9 +2064,12 @@ export class WorkflowReconciler {
       const stage =
         blockedFrom === "planning"
           ? `plan-v${state.planning.currentPlanVersion + 1}`
-          : state.planning.context.scoutRef
-            ? "research"
-            : "scout";
+          : !state.planning.context.scoutRef
+            ? "scout"
+            : ["bugfix", "hotfix"].includes(state.playbook) &&
+                !state.planning.context.diagnosisRef
+              ? "diagnosis"
+              : "research";
       const attempt = state.planning.agentAttempts?.[stage];
       if (
         !state.planning.agentAttempts ||

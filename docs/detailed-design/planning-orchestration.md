@@ -32,6 +32,18 @@ Each resolution persists stage/policy/input refs+hash/digest、raw decision/conf
 
 Reusing prior evidence requires current input/policy freshness and historical launch identity。Running/ambiguous child is not permission to rerun。Scout/Research cannot run in parallel where Research decision depends on Scout/Diagnosis。
 
+### 2.1 Required Diagnosis evidence (#7)
+
+Implementation は既存 read-only `workflow-scout` を fresh context / explicit Launch Policy で再利用する。独立 mutating role / linear phase は追加しない。Scout 後の `agentAttempts.diagnosis` が exact Task/Scout refs/hash、canonical project root、request/receipt、resolved launch を bind する。Intent/launch → State → dispatch、structured output → immutable `context/diagnosis.md` → `DIAGNOSIS_PERSISTED` → State → routing の順序。
+
+Diagnosis report は observed symptom、expected behavior（unknown は null）、reproduction status（reproduced/not-reproduced/unavailable）・steps・observed evidence または unavailable reason、workspace locations、root-cause status/explanation/strength・support/contradiction evidence、unresolved factual gaps、external dependency signals、affected scope、hotfix scope assessment/reason/risk notes を保存する。空配列は explicit none。Confirmed cause は strong supporting evidence、reproduced は steps/evidence を必要とし、構造不正なら後続を止める。
+
+`read/grep/find/ls` のみで implementation files を変更しない。Command-based reproduction はこの ceiling では unavailable と理由を残す。既存 test/log の observed failure と「今回実行して再現した」を混同しない。Tool ceiling は OS sandbox ではない。
+
+全 routing frontier / Planner は exact Diagnosis evidence を消費し、artifact/input/launch freshness を再検証する。Completed evidence は status query / redispatch なしで reuse。Artifact publication 前の中断は exact historical public status/full output を回収し、running は wait、receipt loss/ambiguous/drift は block。Missing legacy evidence を成功/SKIP と扱わない。
+
+Hotfix は `within-scope` assessment のときだけ先へ進み、Architecture は SKIP。`scope-exceeded` / `unknown` は Diagnosis を durable に残して Human/operator attention で止める。Human が明示的に reclassify/replan する必要があり、runtime が playbook/scope を自動変更しない。Diagnosis assessment は Human scope/architecture decision や Plan approval を代替しない。[実装・acceptance coverage・検証記録](../implementation/diagnosis.md)。
+
 ## 3. Clarification production bridge
 
 | Mode | Required execution |

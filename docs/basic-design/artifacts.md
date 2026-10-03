@@ -25,7 +25,7 @@ Paths below are naming patterns, created on demand; N/attempt identity must be u
 | --- | --- | --- |
 | task | task.md | Human task capture → Scout/Planner; exact workflow |
 | scout | context/scout-*.md | workflow-scout → Diagnosis/routing/Planner; launch + input refs |
-| diagnosis | context/diagnosis-*.md | read-only Diagnosis → Research/clarification/Architecture/Planner; symptom/repro/hypotheses/evidence |
+| diagnosis | context/diagnosis.md | read-only workflow-scout Diagnosis → Research/clarification/Architecture/Planner; structured report + exact Task/Scout refs/input hash/launch digest; [contract](../detailed-design/planning-orchestration.md#21-required-diagnosis-evidence-7) |
 | research | context/research-*.md | pi-ketch.researcher → later routing/Planner; sources + inputs |
 | conditional-stage | decisions/conditional-stage-*.json | Jev or deterministic required/skip policy → Orchestrator; stage/policy/accumulated refs |
 | clarification-mode | decisions/clarification-mode-*.json | bounded routing + policy → root/Main clarification; mode + input identity, no write authority |

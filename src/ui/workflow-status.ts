@@ -262,9 +262,12 @@ export function projectWorkflowStatus(
     phase === "planning"
       ? `plan-v${state.planning.currentPlanVersion + 1}`
       : phase === "gathering-context"
-        ? state.planning.context.scoutRef
-          ? "research"
-          : "scout"
+        ? !state.planning.context.scoutRef
+          ? "scout"
+          : ["bugfix", "hotfix"].includes(state.playbook) &&
+              !state.planning.context.diagnosisRef
+            ? "diagnosis"
+            : "research"
         : undefined;
   const attempt = stage ? state.planning.agentAttempts?.[stage] : undefined;
   const planningIdentity = attempt

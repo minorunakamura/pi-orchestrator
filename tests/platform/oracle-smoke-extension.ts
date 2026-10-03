@@ -18,7 +18,8 @@ import { StateStore } from "../../src/runtime/persistence/state-store.ts";
 import { createWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
 import { driveWorkflow } from "../../src/runtime/orchestrator/drive-workflow.ts";
 import { requestOracleAdvice } from "../../src/runtime/orchestrator/oracle-advisory.ts";
-import { FakeJevDecisionClient } from "../fakes/index.ts";
+import { FakeJevDecisionClient, FakeSubagentExecutor } from "../fakes/index.ts";
+import { gatherDiagnosis } from "../../src/runtime/orchestrator/diagnosis.ts";
 import { configuration } from "../fakes/coding-scenario.ts";
 import { jevPolicy } from "../fakes/jev-policy.ts";
 
@@ -98,21 +99,63 @@ export default function (pi: ExtensionAPI) {
           "scout.md",
           "Fixture facts: evidence.txt contains competing cache and timeout hypotheses. No approved Plan exists.",
         );
-        const diagnosisRef = await store.writeText(
-          "diagnosis",
-          "diagnosis.md",
-          "Observed failure: stale response. Competing hypotheses: stale cache versus delayed upstream response. Evidence is inconclusive; ask Human before new scope.",
-        );
-        const source = await states.saveState(
+        const scoutState = await states.saveState(
           {
             ...created.state,
             planning: {
               ...created.state.planning,
-              context: { scoutRef, diagnosisRef },
+              context: { scoutRef },
             },
           },
           created.state.stateRevision,
         );
+        // Synthetic Diagnosis result/receipt, with real side-effect-free launch inspection.
+        // This remains fixture evidence: only Oracle is a real child in this smoke.
+        const fixtureExecutor = new FakeSubagentExecutor({
+          run: {
+            type: "result",
+            value: {
+              status: "succeeded",
+              runId: subagentRunId("fixture-diagnosis"),
+              output: JSON.stringify({
+                observedSymptom: "Stale response",
+                expectedBehavior: "Fresh response",
+                reproduction: {
+                  status: "unavailable",
+                  steps: [],
+                  evidence:
+                    "Fixture-only supplied evidence; no command execution",
+                },
+                workspaceEvidence: [
+                  "evidence.txt: competing cache/upstream hypotheses",
+                ],
+                rootCause: {
+                  status: "suspected",
+                  explanation: "Stale cache versus delayed upstream response",
+                  evidenceStrength: "limited",
+                  supportingEvidence: ["evidence.txt"],
+                  contradictingEvidence: [],
+                },
+                unresolvedFactualGaps: [
+                  "Cache timestamps and upstream timings",
+                ],
+                externalDependencySignals: ["Upstream timing uncertainty"],
+                affectedScope: ["Cache/upstream response boundary"],
+                hotfix: {
+                  scope: "unknown",
+                  reason: "Ask Human before new scope",
+                  riskNotes: [],
+                },
+              }),
+            },
+          },
+        });
+        fixtureExecutor.preflight = (input) => adapter.preflight(input);
+        const source = await gatherDiagnosis(scoutState, {
+          artifactStore: store,
+          stateStore: states,
+          subagentExecutor: fixtureExecutor,
+        });
         await requestOracleAdvice(
           source,
           {

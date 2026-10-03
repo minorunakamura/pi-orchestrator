@@ -23,6 +23,22 @@ export class PlanningAgentPendingError extends Error {
 
 type Outcome = { state: WorkflowState; result: AgentRunResult };
 
+export function planningAgentInputHash(
+  state: WorkflowState,
+  input: AgentRunRequest,
+): string {
+  return calculateSha256(
+    JSON.stringify({
+      agent: input.agent,
+      task: input.task,
+      cwd: input.cwd ?? state.projectRoot,
+      inputRefs: input.inputRefs ?? [],
+      launchPolicy: input.launchPolicy,
+      executionProfile: input.executionProfile,
+    }),
+  );
+}
+
 export async function runPlanningAgent(
   initial: WorkflowState,
   stage: string,
@@ -44,16 +60,7 @@ export async function runPlanningAgent(
       "Legacy planning state has no dispatch ledger; operator reconciliation required",
     );
   const inputRefs = structuredClone(input.inputRefs ?? []);
-  const inputHash = calculateSha256(
-    JSON.stringify({
-      agent: input.agent,
-      task: input.task,
-      cwd: input.cwd ?? state.projectRoot,
-      inputRefs,
-      launchPolicy: input.launchPolicy,
-      executionProfile: input.executionProfile,
-    }),
-  );
+  const inputHash = planningAgentInputHash(state, input);
   try {
     const store = dependencies.artifactStore;
     if (!store.readText) throw Error("Readable ArtifactStore required");

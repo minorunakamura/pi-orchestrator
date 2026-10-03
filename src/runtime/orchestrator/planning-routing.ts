@@ -1,3 +1,5 @@
+import { diagnosisEvidence } from "./diagnosis.ts";
+import type { SubagentExecutor } from "../ports/subagent-executor.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import {
   classifierIdentity,
@@ -46,6 +48,7 @@ export const PLANNING_EVIDENCE_LIMITS = {
 export interface PlanningRoutingDependencies {
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
+  subagentExecutor?: SubagentExecutor;
   configuration?: OrchestratorConfiguration;
   jevDecisionClient?: JevDecisionClient &
     Partial<Pick<DecisionClassifierPort, "routeStage" | "routeClarification">>;
@@ -114,12 +117,13 @@ export class PlanningRouting {
     requirePlanningRouting(state);
     const context = state.planning.context;
     if (!context.scoutRef) attention("Routing requires durable Scout evidence");
+    const diagnosis = await diagnosisEvidence(state, this.deps);
     if (
-      (state.playbook === "bugfix" || state.playbook === "hotfix") &&
-      !context.diagnosisRef
+      state.playbook === "hotfix" &&
+      diagnosis?.hotfix.scope !== "within-scope"
     )
       attention(
-        "Bugfix/Hotfix require durable Diagnosis; its producer is Issue #7",
+        "Hotfix scope requires Human reclassification/replanning before routing or Planner",
       );
     const refs: ArtifactRef[] = [state.taskRef, context.scoutRef];
     if (context.diagnosisRef) refs.push(context.diagnosisRef);

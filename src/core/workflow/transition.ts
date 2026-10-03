@@ -141,6 +141,24 @@ function applyTransition(
   const next = cloneState(state);
 
   switch (event.type) {
+    case "DIAGNOSIS_PERSISTED":
+      if (
+        state.phase !== "gathering-context" ||
+        !["bugfix", "hotfix"].includes(state.playbook) ||
+        !state.planning.context.scoutRef ||
+        Object.keys(state.planning.stageDecisionRefs ?? {}).length > 0 ||
+        (state.planning.context.diagnosisRef &&
+          !sameArtifactRef(
+            state.planning.context.diagnosisRef,
+            event.diagnosisRef,
+          ))
+      )
+        fail(
+          "Diagnosis requires Scout, bugfix/hotfix and no later routing; evidence cannot be replaced",
+        );
+      next.planning.context.diagnosisRef = event.diagnosisRef;
+      return next;
+
     case "STAGE_RESOLVED": {
       if (
         state.phase !==

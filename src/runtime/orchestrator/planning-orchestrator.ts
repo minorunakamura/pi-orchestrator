@@ -1,3 +1,4 @@
+import { gatherDiagnosis } from "./diagnosis.ts";
 import { freshOracleAdvice } from "./oracle-advisory.ts";
 import {
   PlanningRouting,
@@ -326,6 +327,9 @@ export class PlanningOrchestrator {
         this.dependencies.stateStore,
       );
     }
+
+    state = await gatherDiagnosis(state, this.dependencies);
+    if (state.phase === "blocked") return { state, scoutRef };
 
     const routing = new PlanningRouting(this.dependencies);
     let research;

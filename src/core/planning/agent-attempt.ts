@@ -63,7 +63,9 @@ export function isPlanningAgentAttempts(
     isRecord(value) &&
     Object.entries(value).every(([stage, attempt]) => {
       if (
-        !/^(scout|research|plan-v[1-9][0-9]*|oracle-[1-2])$/u.test(stage) ||
+        !/^(scout|diagnosis|research|plan-v[1-9][0-9]*|oracle-[1-2])$/u.test(
+          stage,
+        ) ||
         !isRecord(attempt) ||
         !hasOnlyKeys(attempt, [
           "dispatch",
