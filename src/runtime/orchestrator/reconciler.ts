@@ -1,4 +1,8 @@
-import { PlanningRoutingStoppedError } from "./planning-routing.ts";
+import { validateWorkerStrategy } from "../worker/development-strategy.ts";
+import {
+  PlanningRouting,
+  PlanningRoutingStoppedError,
+} from "./planning-routing.ts";
 import { recoverClarification } from "./clarification.ts";
 import { randomUUID } from "node:crypto";
 import { PlanningAgentPendingError } from "./planning-agent-run.ts";
@@ -927,6 +931,7 @@ export class WorkflowReconciler {
       state.planning.context.scoutRef,
       state.planning.context.researchRef,
       state.planning.context.clarificationRef,
+      state.planning.developmentMethodRef,
       state.coding.acceptedFindingsRef,
       state.coding.latestCodeReviewRef,
     ]) {
@@ -986,10 +991,18 @@ export class WorkflowReconciler {
           state,
           ref,
           attempt,
+          this.deps.subagentExecutor,
         )
       )
         return undefined;
     } catch (error) {
+      if (error instanceof RuntimePortError && error.kind === "reconciliation")
+        return this.block(
+          state,
+          "operator-attention-required",
+          ref,
+          error.message,
+        );
       if (!(error instanceof WorkerAttemptAuthorityError)) throw error;
       return this.fail(state, error.reason, error.evidenceRef);
     }
@@ -1042,6 +1055,29 @@ export class WorkflowReconciler {
         "agent-execution-ambiguous",
         ref,
         "Historical Worker launch contract/receipt is missing or mismatched; do not redispatch",
+      );
+    }
+    try {
+      await new PlanningRouting(this.deps).method(state, true);
+      await validateWorkerStrategy(
+        this.deps.artifactStore,
+        state,
+        attempt,
+        this.deps.subagentExecutor,
+      );
+    } catch (error) {
+      if (error instanceof PlanningRoutingStoppedError)
+        return {
+          status: "blocked",
+          state: error.state,
+          phase: error.state.phase,
+          reason: error.state.block?.reason,
+        };
+      return this.block(
+        state,
+        "operator-attention-required",
+        ref,
+        "Approved method/seams or historical skills/launch changed; no redispatch",
       );
     }
     let status: AgentRunStatus;

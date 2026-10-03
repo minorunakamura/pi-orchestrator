@@ -179,6 +179,7 @@ export class FakeSubagentExecutor implements SubagentExecutor {
 export interface FakeJevDecisionClientOptions {
   stages?: Partial<Record<ConditionalStage, StageOutcome>>;
   mode?: ClarificationMode;
+  method?: "STANDARD" | "TDD" | "ESCALATE";
   routeExecution?: FakeSequence<ExecutionRoutingRawDecision>;
   evaluateFindings?: FakeSequence<FindingEvaluationRawDecision[]>;
   decideRound?: FakeSequence<RoundDecisionRawDecision>;
@@ -188,6 +189,7 @@ export class FakeJevDecisionClient implements JevDecisionClient {
   readonly calls = {
     routeStage: [] as ConditionalStageRoutingInput[],
     routeClarification: [] as PlanningClassifierInput[],
+    routeDevelopmentMethod: [] as PlanningClassifierInput[],
     routeExecution: [] as ExecutionRoutingInput[],
     evaluateFindings: [] as FindingEvaluationInput[],
     decideRound: [] as RoundDecisionInput[],
@@ -212,6 +214,21 @@ export class FakeJevDecisionClient implements JevDecisionClient {
       value: this.outcomes.stages?.[input.stage] ?? "SKIP",
       confidence: 0.99,
     };
+  }
+  async routeDevelopmentMethod(
+    input: PlanningClassifierInput,
+    authorization?: JevCallAuthorization,
+  ) {
+    await authorization?.authorizeAttempt({
+      family: "method",
+      requestDigest: calculateSha256(JSON.stringify(input)),
+      configurationDigest: "b".repeat(64),
+      decisionSchemaVersion: 1,
+      destination: authorization.destination,
+      retryIndex: 0,
+    });
+    this.calls.routeDevelopmentMethod.push(input);
+    return { value: this.outcomes.method ?? "STANDARD", confidence: 0.99 };
   }
   async routeClarification(
     input: PlanningClassifierInput,

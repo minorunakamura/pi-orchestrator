@@ -509,6 +509,10 @@ export class PlanningOrchestrator {
     );
     input = { ...input, state: architecture.state };
     const architectureRequired = architecture.outcome === "RUN";
+    const method = await new PlanningRouting(this.dependencies).method(
+      input.state,
+    );
+    input = { ...input, state: method.state };
     const plannerInput: PlannerInput = {
       taskRef: input.state.taskRef,
       scoutRef,
@@ -518,6 +522,7 @@ export class PlanningOrchestrator {
       decisionRefs: [
         ...Object.values(input.state.planning.stageDecisionRefs!),
         input.state.planning.clarificationModeRef!,
+        input.state.planning.developmentMethodRef!,
       ],
       ...(input.state.planning.context.researchRef
         ? { researchRef: input.state.planning.context.researchRef }
@@ -547,7 +552,7 @@ export class PlanningOrchestrator {
       input.state,
       request(
         "planner",
-        `Target version: ${targetVersion}. Produce a plan from the supplied artifact refs. Include Scope / Requirements, ${architectureRequired ? "Architecture / Design, " : ""}Implementation Plan, and exactly one machine-readable Validation Contract. Do not implement source code or mutate State.`,
+        `Target version: ${targetVersion}. Produce a plan from the supplied artifact refs. Include Scope / Requirements, ${architectureRequired ? "Architecture / Design, " : ""}Implementation Plan, Development Method containing exactly ${method.method}, ${method.method === "TDD" ? "explicit Human-reviewable Test Seams (public observable behavior/interface, controllable dependencies, assertions/expected outcomes), Do not test (private helpers/internal collaborator calls), and optional Supporting Skills containing codebase-design only when seam/interface shape requires it, " : ""}and exactly one machine-readable Validation Contract. Do not change the resolved method, implement source code or mutate State.`,
         plannerInputRefs(plannerInput),
         input.cwd,
       ),
@@ -555,6 +560,7 @@ export class PlanningOrchestrator {
     const plannerResult = planned.result;
     const parsedPlan = parsePlan(plannerResult.output, {
       architectureRequired,
+      developmentMethod: method.method,
     });
     const planRef = await this.writeOutput(
       "plan",
@@ -791,8 +797,13 @@ export class PlanningOrchestrator {
     const content = await store.readText(ref);
     if (calculateSha256(content) !== ref.sha256)
       throw new Error("Authoritative Plan artifact hash mismatch");
+    const method = await new PlanningRouting(this.dependencies).method(
+      state,
+      true,
+    );
     parsePlan(content, {
       architectureRequired: architecture.outcome === "RUN",
+      developmentMethod: method.method,
     });
   }
 

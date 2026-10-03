@@ -13,6 +13,10 @@ import {
   parsePlanningDecisionArtifact,
   isConditionalStageDecision,
   isClarificationModeDecision,
+  isDevelopmentMethodDecision,
+  developmentMethodOutcome,
+  type DevelopmentMethod,
+  type PlanningDecisionStage,
   type ConditionalStage,
   type StageOutcome,
   type ClarificationMode,
@@ -52,7 +56,12 @@ export interface PlanningRoutingDependencies {
   subagentExecutor?: SubagentExecutor;
   configuration?: OrchestratorConfiguration;
   jevDecisionClient?: JevDecisionClient &
-    Partial<Pick<DecisionClassifierPort, "routeStage" | "routeClarification">>;
+    Partial<
+      Pick<
+        DecisionClassifierPort,
+        "routeStage" | "routeClarification" | "routeDevelopmentMethod"
+      >
+    >;
 }
 export class PlanningRoutingStoppedError extends Error {
   constructor(readonly state: WorkflowState) {
@@ -91,6 +100,7 @@ function planningCategories(
       [
         "conditional-stage",
         "clarification-mode",
+        "development-method",
         "plan-review",
         "round-decision",
       ].includes(item.kind),
@@ -137,10 +147,28 @@ export class PlanningRouting {
     return { state: result.state, mode: result.artifact.outcome };
   }
 
+  async method(
+    state: WorkflowState,
+    reuseOnly = false,
+  ): Promise<{ state: WorkflowState; method: DevelopmentMethod }> {
+    const result = await this.resolve(
+      state,
+      "development-method",
+      "method",
+      reuseOnly,
+    );
+    if (
+      result.artifact.family !== "method" ||
+      result.artifact.outcome === "ESCALATE"
+    )
+      throw Error("Unresolved Development Method");
+    return { state: result.state, method: result.artifact.outcome };
+  }
+
   private async inputs(
     state: WorkflowState,
-    stage: ConditionalStage,
-    family: "stage" | "clarification",
+    stage: PlanningDecisionStage,
+    family: "stage" | "clarification" | "method",
   ): Promise<{ refs: ArtifactRef[]; clarificationStage?: StageOutcome }> {
     requirePlanningRouting(state);
     const context = state.planning.context;
@@ -178,20 +206,30 @@ export class PlanningRouting {
       await verifyClarificationDocuments(state, this.deps);
       refs.push(state.planning.domainDocumentWriteRef);
     }
+    if (family === "method") {
+      await this.stage(state, "architecture", true);
+      refs.push(state.planning.stageDecisionRefs!.architecture!);
+      if (!state.planning.developmentIntent)
+        attention(
+          "Missing captured Development Intent; legacy state cannot select a method",
+        );
+    }
     return { refs };
   }
 
   private async resolve(
     source: WorkflowState,
-    stage: ConditionalStage,
-    family: "stage" | "clarification",
+    stage: PlanningDecisionStage,
+    family: "stage" | "clarification" | "method",
     reuseOnly: boolean,
   ): Promise<{ state: WorkflowState; artifact: PlanningDecisionArtifact }> {
     let state = source;
     let authorization: JevAuthorization | undefined;
     let artifact: PlanningDecisionArtifact;
     let ref:
-      | ArtifactRef<"conditional-stage" | "clarification-mode">
+      | ArtifactRef<
+          "conditional-stage" | "clarification-mode" | "development-method"
+        >
       | undefined;
     try {
       const { refs, clarificationStage } = await this.inputs(
@@ -199,11 +237,18 @@ export class PlanningRouting {
         stage,
         family,
       );
-      const policy = getPlaybookStagePolicy(state.playbook)[stage];
+      const policy =
+        stage === "development-method"
+          ? state.planning.developmentIntent === "TDD"
+            ? "required"
+            : state.planning.developmentIntent === "BEHAVIOR_FREE"
+              ? "skip"
+              : "conditional"
+          : getPlaybookStagePolicy(state.playbook)[stage];
       const called =
-        family === "stage"
-          ? policy === "conditional"
-          : clarificationStage === "RUN";
+        family === "clarification"
+          ? clarificationStage === "RUN"
+          : policy === "conditional";
       const configuration = this.deps.configuration;
       if (called && !configuration)
         attention("Planning classifier configuration is required");
@@ -232,6 +277,12 @@ export class PlanningRouting {
           policy,
           projectRoot: state.projectRoot,
           artifacts: evidence,
+          ...(family === "method"
+            ? {
+                developmentIntent: state.planning.developmentIntent,
+                eligibility: "eligible-or-ambiguous",
+              }
+            : {}),
           ...(clarificationStage ? { stageOutcome: clarificationStage } : {}),
         },
       };
@@ -266,9 +317,11 @@ export class PlanningRouting {
         classifier: called ? classifierIdentity(configuration?.jev) : null,
       };
       ref =
-        family === "stage"
-          ? state.planning.stageDecisionRefs?.[stage]
-          : state.planning.clarificationModeRef;
+        family === "method"
+          ? state.planning.developmentMethodRef
+          : family === "stage" && stage !== "development-method"
+            ? state.planning.stageDecisionRefs?.[stage]
+            : state.planning.clarificationModeRef;
       if (ref) {
         if (called) {
           authorization = new JevAuthorization(
@@ -296,16 +349,19 @@ export class PlanningRouting {
             "Stale planning decision; explicit reconciliation is required",
           );
         const effective =
-          artifact.family === "stage"
-            ? stageOutcome(policy, artifact.rawDecision, threshold)
-            : clarificationOutcome(
-                clarificationStage!,
-                artifact.rawDecision,
-                threshold,
-              );
+          artifact.family === "method"
+            ? developmentMethodOutcome(policy, artifact.rawDecision, threshold)
+            : artifact.family === "stage"
+              ? stageOutcome(policy, artifact.rawDecision, threshold)
+              : clarificationOutcome(
+                  clarificationStage!,
+                  artifact.rawDecision,
+                  threshold,
+                );
         if (
           effective !== artifact.outcome ||
           (family === "stage" &&
+            stage !== "development-method" &&
             state.planning[`${stage}Required`] !== (effective === "RUN"))
         )
           attention("Planning decision contradicts deterministic policy");
@@ -321,7 +377,12 @@ export class PlanningRouting {
         if (reuseOnly) attention("Missing preceding planning decision");
         if (called) {
           const client = this.deps.jevDecisionClient;
-          if (!client?.routeStage || !client.routeClarification)
+          if (
+            !client ||
+            (family === "method"
+              ? !client.routeDevelopmentMethod
+              : !client.routeStage || !client.routeClarification)
+          )
             throw new RuntimePortError(
               "infrastructure",
               "Planning classifier is unavailable",
@@ -336,8 +397,26 @@ export class PlanningRouting {
             categories,
           );
           await authorization.assertAllowed();
-          if (family === "stage") {
-            const rawDecision = await client.routeStage(
+          if (family === "method") {
+            const rawDecision = await client.routeDevelopmentMethod!(
+              input,
+              authorization.context,
+            );
+            if (!isDevelopmentMethodDecision(rawDecision))
+              throw new RuntimePortError(
+                "infrastructure",
+                "Invalid Development Method decision",
+              );
+            artifact = {
+              ...binding,
+              family,
+              rawDecision,
+              outcome: developmentMethodOutcome(policy, rawDecision, threshold),
+            };
+          } else if (family === "stage") {
+            if (stage === "development-method")
+              throw Error("Wrong stage decision family");
+            const rawDecision = await client.routeStage!(
               { ...input, stage, policy: "conditional" },
               authorization.context,
             );
@@ -353,7 +432,7 @@ export class PlanningRouting {
               outcome: stageOutcome(policy, rawDecision, threshold),
             };
           } else {
-            const rawDecision = await client.routeClarification(
+            const rawDecision = await client.routeClarification!(
               input,
               authorization.context,
             );
@@ -390,14 +469,21 @@ export class PlanningRouting {
             artifact.usageRef = state.jevUsage!.latestUsageRef;
         } else {
           artifact =
-            family === "stage"
+            family === "method"
               ? {
                   ...binding,
                   family,
                   rawDecision: null,
-                  outcome: stageOutcome(policy, null, threshold),
+                  outcome: developmentMethodOutcome(policy, null, threshold),
                 }
-              : { ...binding, family, rawDecision: null, outcome: "SKIP" };
+              : family === "stage"
+                ? {
+                    ...binding,
+                    family,
+                    rawDecision: null,
+                    outcome: stageOutcome(policy, null, threshold),
+                  }
+                : { ...binding, family, rawDecision: null, outcome: "SKIP" };
         }
       }
     } catch (error) {
@@ -417,7 +503,11 @@ export class PlanningRouting {
     if (!ref) {
       // Artifact -> CAS State -> next external effect. Persistence failures are never retried here.
       const kind =
-        family === "stage" ? "conditional-stage" : "clarification-mode";
+        family === "method"
+          ? "development-method"
+          : family === "stage"
+            ? "conditional-stage"
+            : "clarification-mode";
       const file = `${kind}-${stage}-${digest(artifact)}.json`;
       const content = JSON.stringify(parsePlanningDecisionArtifact(artifact));
       const expected = createArtifactRef(
@@ -447,17 +537,22 @@ export class PlanningRouting {
         throw Error("Planning decision Artifact identity mismatch");
       state = await advanceWorkflow(
         state,
-        family === "stage"
+        family === "method"
           ? {
-              type: "STAGE_RESOLVED",
-              stage,
-              decisionRef: { ...ref, kind: "conditional-stage" },
-              required: artifact.outcome === "RUN",
+              type: "DEVELOPMENT_METHOD_RESOLVED",
+              methodRef: { ...ref, kind: "development-method" },
             }
-          : {
-              type: "CLARIFICATION_MODE_RESOLVED",
-              decisionRef: { ...ref, kind: "clarification-mode" },
-            },
+          : family === "stage" && stage !== "development-method"
+            ? {
+                type: "STAGE_RESOLVED",
+                stage,
+                decisionRef: { ...ref, kind: "conditional-stage" },
+                required: artifact.outcome === "RUN",
+              }
+            : {
+                type: "CLARIFICATION_MODE_RESOLVED",
+                decisionRef: { ...ref, kind: "clarification-mode" },
+              },
         this.deps.stateStore,
       );
     }

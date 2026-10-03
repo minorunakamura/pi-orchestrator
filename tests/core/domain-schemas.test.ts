@@ -224,6 +224,68 @@ test("validates stage/mode/Diagnosis references and rejects incomplete or determ
   ).toBe(false);
 });
 
+test("Development Method is a durable strategy attribute, not a phase or approval; canonical methodRef event cannot replace a decision", () => {
+  const methodRef = {
+    ...taskRef,
+    kind: "development-method",
+    path: "decisions/method.json",
+  } as const;
+  expect(
+    isWorkflowEvent({ type: "DEVELOPMENT_METHOD_RESOLVED", methodRef }),
+  ).toBe(true);
+  expect(
+    isWorkflowEvent({
+      type: "DEVELOPMENT_METHOD_RESOLVED",
+      decisionRef: methodRef,
+    }),
+  ).toBe(false);
+  const stageRef = { ...taskRef, kind: "conditional-stage" } as const;
+  const current = parseWorkflowState({
+    ...state,
+    planning: {
+      ...state.planning,
+      developmentIntent: "TDD",
+      stageDecisionRefs: {
+        research: stageRef,
+        clarification: stageRef,
+        architecture: stageRef,
+      },
+      clarificationModeRef: { ...taskRef, kind: "clarification-mode" },
+      researchRequired: false,
+      clarificationRequired: false,
+    },
+  });
+  expect(
+    transition(current, { type: "PLAN_CREATED", planRef, version: 1 }).ok,
+  ).toBe(false);
+  const resolved = transition(current, {
+    type: "DEVELOPMENT_METHOD_RESOLVED",
+    methodRef,
+  });
+  expect(resolved.ok).toBe(true);
+  if (!resolved.ok) throw resolved.error;
+  expect(resolved.state.phase).toBe("planning");
+  expect(resolved.state.planning.approvedPlanRef).toBeUndefined();
+  expect(
+    transition(resolved.state, {
+      type: "DEVELOPMENT_METHOD_RESOLVED",
+      methodRef: { ...methodRef, sha256: "b".repeat(64) },
+    }).ok,
+  ).toBe(false);
+  expect(
+    isWorkflowState({
+      ...current,
+      planning: { ...current.planning, developmentIntent: "guessed" },
+    }),
+  ).toBe(false);
+  expect(
+    isWorkflowState({
+      ...current,
+      planning: { ...current.planning, developmentMethodRef: planRef },
+    }),
+  ).toBe(false);
+});
+
 test("validates structured findings independently from fix authority", () => {
   const finding = {
     id: "C1",

@@ -50,6 +50,9 @@ Keep runtime orchestration behind the existing ports.
 1. Add focused tests.
 2. Implement the smallest safe change.
 
+## Development Method
+STANDARD
+
 ## Validation Contract
 
 \`\`\`orchestrator-validation
@@ -570,7 +573,7 @@ describe("CodingOrchestrator ORCH-012", () => {
           subagentExecutor: worker,
         }),
       ).execute({ state: started.state }),
-    ).rejects.toThrow(/consent|budget/iu);
+    ).rejects.toThrow(/consent|budget|operator attention/iu);
     expect(jev.calls.routeExecution).toHaveLength(0);
     expect(worker.calls.run).toHaveLength(0);
     expect((await persistedState(started.runDirectory)).block?.reason).toBe(
@@ -705,6 +708,7 @@ describe("CodingOrchestrator ORCH-012", () => {
         started.state.planning.approvedPlanRef,
         started.taskRef,
         started.state.planning.context.scoutRef,
+        started.state.planning.developmentMethodRef,
       ],
       executionProfile: {
         provider: "provider-standard",

@@ -1,3 +1,4 @@
+import type { DevelopmentMethod } from "../../core/decisions/planning-routing.ts";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
@@ -41,6 +42,9 @@ export const SUBAGENT_RPC_REPLY_PREFIX = "subagents:rpc:v1:reply:";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
 export interface WorkerInput {
+  developmentMethod?: DevelopmentMethod;
+  testSeams?: string;
+  developmentMethodRef?: ArtifactRef<"development-method">;
   approvedPlanRef: ArtifactRef<"plan">;
   contextRefs: readonly ArtifactRef[];
   executionProfile: ResolvedExecutionProfile;
@@ -65,17 +69,22 @@ export function createWorkerRequest(
   const inputRefs = [
     input.approvedPlanRef,
     ...input.contextRefs,
+    ...(input.developmentMethodRef ? [input.developmentMethodRef] : []),
     ...(input.acceptedFindingsRef ? [input.acceptedFindingsRef] : []),
     ...(input.humanCodeFeedbackRef ? [input.humanCodeFeedbackRef] : []),
   ];
+  const tdd = input.developmentMethod === "TDD";
+  if (tdd && !input.testSeams?.trim())
+    throw Error("TDD Worker requires approved Test Seams");
+  const skills = tdd ? ["tdd", ...(input.skills ?? [])] : (input.skills ?? []);
+  if (!tdd && skills.includes("tdd"))
+    throw Error("STANDARD Worker cannot select tdd");
   return {
     agent: "worker",
-    launchPolicy: agentLaunchPolicy(
-      "worker",
-      input.executionProfile,
-      input.skills,
-    ),
-    task: options.task ?? defaultWorkerTask,
+    launchPolicy: agentLaunchPolicy("worker", input.executionProfile, [
+      ...new Set(skills),
+    ]),
+    task: `${options.task ?? defaultWorkerTask}${tdd ? `\nDevelopment Method: TDD. Read and follow the explicitly selected upstream tdd skill before writing tests.${skills.includes("codebase-design") ? " Read codebase-design for the approved seam/interface vocabulary." : ""}\nHuman Plan approval already confirms these exact Test Seams; do not invent other seams or ask for implicit approval:\n${input.testSeams}\nTest public observable behavior only; do not test private helpers or internal collaborator calls. Work in vertical RED -> minimal GREEN -> next vertical slice: one failing test, observed failure, minimal implementation, observed pass. Never write all tests then all implementation. Report each slice's approved seam, test, observed RED and GREEN commands/results in the implementation evidence. A required method/seam change must stop for Human replanning. TDD never replaces the approved deterministic Validation Contract.` : "\nDevelopment Method: STANDARD. Do not load ambient tdd guidance; preserve the approved Validation Contract."}`,
     inputRefs,
     executionProfile: input.executionProfile,
     ...(options.cwd ? { cwd: options.cwd } : {}),

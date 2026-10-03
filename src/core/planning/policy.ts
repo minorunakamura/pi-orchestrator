@@ -1,9 +1,14 @@
+import type { DevelopmentMethod } from "../decisions/planning-routing.ts";
 import type { ArtifactRef } from "../artifacts/references.ts";
 
 export const planSections = [
   "Scope / Requirements",
   "Architecture / Design",
   "Implementation Plan",
+  "Development Method",
+  "Test Seams",
+  "Do not test",
+  "Supporting Skills",
   "Validation Contract",
 ] as const;
 
@@ -12,11 +17,13 @@ export type PlanSection = (typeof planSections)[number];
 export const requiredPlanSections = [
   "Scope / Requirements",
   "Implementation Plan",
+  "Development Method",
   "Validation Contract",
 ] as const satisfies readonly PlanSection[];
 
 export interface PlanParserPolicy {
   architectureRequired?: boolean;
+  developmentMethod?: DevelopmentMethod;
 }
 
 export interface PlannerInput {
@@ -24,7 +31,7 @@ export interface PlannerInput {
   scoutRef: ArtifactRef<"scout">;
   diagnosisRef?: ArtifactRef<"diagnosis">;
   decisionRefs?: readonly ArtifactRef<
-    "conditional-stage" | "clarification-mode"
+    "conditional-stage" | "clarification-mode" | "development-method"
   >[];
   researchRef?: ArtifactRef<"research">;
   clarificationRef?: ArtifactRef<"clarification">;

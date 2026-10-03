@@ -99,6 +99,10 @@ Persist method evidence before Planner。TDD Plan requires explicit Human-review
 
 TDD uses vertical RED → minimal GREEN slices。No horizontal all-tests-first mandate, no automatic deterministic-validation bypass。
 
+#16 は `StartWorkflowInput.developmentIntent` / start-command `--tdd` / task内の独立した `Development Method: TDD` 宣言をcaptureする。`--behavior-free` はHumanが明示したbehavior-free scope、未指定は `AUTO`。TDD宣言を優先し、曖昧なfree-form proseをHuman decisionと推定しない。Method evidenceは `family: method` / absent Plan authority / exact accumulated refs+digests+policy / classifier reservation・usageを保存し、`DEVELOPMENT_METHOD_RESOLVED.methodRef` → CAS State → Plannerの順。Low confidence / ESCALATEはdurable evidenceを残してoperator attentionで止まる。Planner outputのmethodが逆転、TDD seamsが空/missing/noneならPlan publication / Gateは不可。
+
+Human approvalはimmutable Plan ref/version/hash全体（method/seams/Validation / optional Supporting Skillsを含む）へbindする。WorkerはそのPlanからmethod/seamsを抽出し、`Supporting Skills`で必要性が明示された `codebase-design`のみ追加する。Required skillsの欠落・余分なresolved skills・legacy/method/skill/launch driftはdispatch/recoveryで拒否。Plan feedback / clarification / replanはmethod refを明示invalidateし、新しいPlanとHuman Gateを必要とする。[実装・acceptance・real Pi evidence](../implementation/development-method.md)。#14のstrategy sections / simplicity readiness、#15のmaterial deviationを先行実装したものではない。
+
 ## 6. Planner input / Plan contract
 
 Inputs: task、Scout、Diagnosis when required、Research when RUN、clarification/authorized document evidence、resolved Architecture/method decisions、previous Plan/feedback/simplicity/deviation/advisory refs when relevant、target version/cycle/refinement budget。

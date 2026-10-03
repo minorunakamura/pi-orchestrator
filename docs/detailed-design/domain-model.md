@@ -123,8 +123,10 @@ type StagePolicy = "required" | "conditional" | "skip";
 type ConditionalStage = "research" | "clarification" | "architecture";
 type ClarificationMode = "SKIP" | "GRILL_ME" | "GRILL_WITH_DOCS" | "ESCALATE";
 type DevelopmentMethod = "STANDARD" | "TDD";
+type DevelopmentIntent = "AUTO" | "TDD" | "BEHAVIOR_FREE";
 
 interface PlanningState {
+  developmentIntent?: DevelopmentIntent; // captured at creation; missing legacy intent is not inferred
   context: {
     scoutRef?: ArtifactRef<"scout">;
     diagnosisRef?: ArtifactRef<"diagnosis">;
@@ -154,6 +156,8 @@ interface PlanReviewBinding {
   simplicityReviewRef: ArtifactRef<"plan-simplicity-review">;
 }
 ```
+
+#16 の Development Intent はcapture済みのHuman request / behavior-free scope declarationであり、methodのapprovalやexecution authorityではない。Absent legacy intentは自動的にAUTOに変換しない。Method decisionとapproved Test Seamsはimmutable evidence / exact Plan bindingが所有する（[実装と制限](../implementation/development-method.md)）。
 
 Stage decisions are resolved sequentially against accumulated refs, not all once at start。Required/skip outcomes are deterministic, conditional is classifier-bound。Persisted old researchRequired/clarificationRequired/architectureRequired booleans cannot substitute for this evidence-driven contract。
 

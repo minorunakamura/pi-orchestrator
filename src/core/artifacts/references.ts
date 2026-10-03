@@ -13,6 +13,7 @@ export const artifactKinds = [
   "diagnosis",
   "conditional-stage",
   "clarification-mode",
+  "development-method",
   "research",
   "clarification",
   "domain-document-write",

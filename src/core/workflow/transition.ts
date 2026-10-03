@@ -91,6 +91,7 @@ function invalidateArchitecture(state: WorkflowState): void {
     delete state.planning.stageDecisionRefs.architecture;
     delete state.planning.architectureRequired;
   }
+  delete state.planning.developmentMethodRef;
 }
 
 function clearCurrentRoundEvidence(state: WorkflowState): void {
@@ -190,6 +191,23 @@ function applyTransition(
       return next;
     }
 
+    case "DEVELOPMENT_METHOD_RESOLVED":
+      if (
+        state.phase !== "planning" ||
+        !state.planning.stageDecisionRefs?.architecture ||
+        !state.planning.developmentIntent ||
+        (state.planning.developmentMethodRef &&
+          !sameArtifactRef(
+            state.planning.developmentMethodRef,
+            event.methodRef,
+          ))
+      )
+        fail(
+          "Development Method requires resolved Architecture and captured intent; cannot silently replace it",
+        );
+      next.planning.developmentMethodRef = event.methodRef;
+      return next;
+
     case "CLARIFICATION_MODE_RESOLVED":
       if (
         state.phase !== "gathering-context" ||
@@ -262,6 +280,7 @@ function applyTransition(
       if (
         state.planning.stageDecisionRefs &&
         (!state.planning.stageDecisionRefs.architecture ||
+          !state.planning.developmentMethodRef ||
           (state.planning.clarificationRequired &&
             !state.planning.context.clarificationRef))
       )

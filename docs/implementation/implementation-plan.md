@@ -43,6 +43,8 @@ Subsequent #8 update: production root/Main は resolved grilling / mode-aware do
 
 Subsequent #11 update: `jev.runtimePolicy.grant` は未来の workflow ID を要求しない。最初の classifier request 前に exact generated-workflow consent Artifact → CAS State → reservation → CAS State を保存し、current grant と captured consent の両 ceiling、再作成後の counters/history、cached decision の active consent を検証する。Legacy consent/history、classifier/grant drift、保存失敗は fail closed。Focused tests と real Pi 0.99.1 / typesafe/jev-latest の explicit 1-request generated-ID smoke は [Classifier authorization implementation / acceptance / validation](./classifier-authorization.md)。Full production lifecycle / actual Human Gates は #12 のまま。
 
+Subsequent #16 update: captured Development Intent → Architecture後のdurable STANDARD/TDD routing → Planner / deterministic method・Test Seams validation → mandatory exact Plan approval → explicit isolated Worker skillsをnormal lifecycleへ接続した。Upstream `tdd` / optional `codebase-design`はreleased public launch/preflightで選択し、method/seams/skill-byte driftのresumeを拒否する。Actual Human Plan Gate / builtin Workerの2 vertical slices / deterministic Validation / zero-redispatch historical auditは [Development Method implementation / acceptance / validation](./development-method.md)。Strategy sections / simplicity readinessは #14、material deviation本体は #15、full production verificationは #12のまま。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order

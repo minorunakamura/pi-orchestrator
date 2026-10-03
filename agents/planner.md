@@ -20,7 +20,19 @@ The output must contain logical sections named:
 - Scope / Requirements
 - Architecture / Design when the supplied policy requires it
 - Implementation Plan
+- Development Method (exactly STANDARD or TDD, matching the durable decision)
+- Test Seams when TDD: explicit public observable behavior/API, controllable
+  dependencies, interface boundaries and regression assertions/expected outcomes
+- Do not test when TDD: private helpers and internal collaborator calls
+- Supporting Skills (optional, TDD only): codebase-design when the approved
+  seam/interface shape requires its vocabulary; otherwise omit or write none
 - Validation Contract
+
+Development Method is a strategy attribute, not another Stage. Do not reverse
+explicit Human TDD intent or choose a different method than supplied. Human
+Plan approval confirms the exact proposed Test Seams. TDD uses vertical
+RED -> minimal GREEN -> next slice, never all tests then all implementation,
+and never replaces deterministic Validation.
 
 The Validation Contract section must contain exactly one fenced
 `orchestrator-validation` JSON block with schemaVersion 1 and deterministic

@@ -151,6 +151,7 @@ export async function resolveAgentLaunch(
         c.thinking !== profile.thinking)) ||
     c.skills.missing.length ||
     policy.skills.some((s) => !c.skills.resolved.some((r) => r.name === s)) ||
+    c.skills.resolved.some((s) => !policy.skills.includes(s.name)) ||
     policy.requiredTools.some((t) => !tools.includes(t)) ||
     tools.some(
       (t) =>

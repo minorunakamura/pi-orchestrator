@@ -35,6 +35,7 @@ function plan(options: { architecture?: boolean } = {}): string {
       : "## Architecture / Design\nKeep the runtime boundary explicit.",
     "## Implementation Plan",
     "1. Add the smallest safe implementation.",
+    "## Development Method\nSTANDARD",
     contract,
   ]
     .filter(Boolean)
@@ -42,6 +43,37 @@ function plan(options: { architecture?: boolean } = {}): string {
 }
 
 describe("parsePlan", () => {
+  test("TDD requires explicit seams, exact method and allowlisted supporting vocabulary without replacing Validation", () => {
+    const tdd = plan().replace(
+      "## Development Method\nSTANDARD",
+      "## Development Method\n- TDD\n## Test Seams\n- checkout(cart): valid cart returns observable receipt; inject payment through public port.\n## Do not test\n- private helpers/internal collaborator calls\n## Supporting Skills\ncodebase-design",
+    );
+    const parsed = parsePlan(tdd, { developmentMethod: "TDD" });
+    expect(parsed.developmentMethod).toBe("TDD");
+    expect(parsed.testSeams).toContain("checkout(cart)");
+    expect(parsed.supportingSkills).toEqual(["codebase-design"]);
+    expect(parsed.validationContract).toEqual(
+      parsePlan(plan()).validationContract,
+    );
+    expect(() => parsePlan(tdd, { developmentMethod: "STANDARD" })).toThrow(
+      /contradicts/u,
+    );
+    expect(() =>
+      parsePlan(tdd.replace("codebase-design", "unknown-skill")),
+    ).toThrow(/Supporting Skills/u);
+    expect(() => parsePlan(plan().replace("STANDARD", "TDD"))).toThrow(
+      /Test Seams/u,
+    );
+    expect(() =>
+      parsePlan(plan().replace("STANDARD", "TDD\n## Test Seams\nnone")),
+    ).toThrow(/Test Seams/u);
+    expect(() =>
+      parsePlan(plan().replace("STANDARD", "TDD\n## Test Seams\n")),
+    ).toThrow(/empty/u);
+    expect(() =>
+      parsePlan(plan().replace("STANDARD", "TDD or STANDARD")),
+    ).toThrow(/Development Method/u);
+  });
   test("accepts required sections and returns the machine-readable contract", () => {
     const parsed = parsePlan(plan());
 
