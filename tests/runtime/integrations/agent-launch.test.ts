@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, writeFile, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { registerSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import {
@@ -404,6 +404,85 @@ test("successful Codemode inspection is not permission to dispatch an unverified
   expect(f.events.emitted).toHaveLength(0);
   expect(await readdir(f.store.rootDirectory)).toEqual(["context"]);
 });
+
+async function adoptedCodemodeFixture(
+  extensionLine = `subagentOnlyExtensions: ${resolve("src/runtime/integrations/readonly-codemode.ts")}`,
+  ambient = false,
+) {
+  const f = await fixture();
+  await writeFile(
+    join(f.root, "agent/agents/plan-simplicity-reviewer.md"),
+    `---\nname: plan-simplicity-reviewer\ndescription: Adopted Codemode probe\nmodel: test/model\nthinking: off\ntools: read, codemode, edit, write, bash\n${ambient ? "" : "extensions:\n"}${extensionLine}\ninheritSkills: false\ninheritProjectContext: true\n---\nRead-only findings.\n`,
+  );
+  f.request.agent = "plan-simplicity-reviewer";
+  f.request.launchPolicy = agentLaunchPolicy("plan-simplicity-reviewer");
+  return f;
+}
+
+test("adopted Codemode goes through common durable launch and finite child/tool RPC bounds", async () => {
+  const f = await adoptedCodemodeFixture();
+  const launch = await f.adapter.preflight(f.request);
+  expect(launch.tools).toEqual(["codemode", "read"]);
+  const onPrepared = vi.fn(async () => {});
+  await f.adapter.run({ ...f.request, launch, onPrepared });
+  expect(onPrepared).toHaveBeenCalledWith(launch);
+  expect(childRequest(f.events.emitted[0].payload)).toMatchObject({
+    agent: "plan-simplicity-reviewer",
+    toolTimeoutMs: 30000,
+    reads: false,
+    progress: false,
+  });
+});
+
+test.each(["missing", "ambient", "extra", "wrong"])(
+  "adopted Codemode %s replacement is rejected before persistence/dispatch",
+  async (scenario) => {
+    const path = resolve("src/runtime/integrations/readonly-codemode.ts");
+    const f = await adoptedCodemodeFixture(
+      scenario === "missing"
+        ? ""
+        : scenario === "wrong"
+          ? `subagentOnlyExtensions: ${resolve("tests/platform/probe-provider.ts")}`
+          : `subagentOnlyExtensions: ${path}${scenario === "extra" ? `, ${resolve("tests/platform/probe-provider.ts")}` : ""}`,
+      scenario === "ambient",
+    );
+    await expect(
+      f.adapter.run({ ...f.request, onPrepared: async () => {} }),
+    ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
+    expect(f.events.emitted).toHaveLength(0);
+  },
+);
+
+test.each(["tool-set", "definition"])(
+  "adopted Codemode %s drift rejects historical launch before dispatch",
+  async (dimension) => {
+    const f = await adoptedCodemodeFixture();
+    const previous = await f.adapter.preflight(f.request);
+    if (dimension === "tool-set") {
+      f.request.launchPolicy = {
+        ...f.request.launchPolicy!,
+        allowedTools: ["read", "codemode", "grep"],
+      };
+      await writeFile(
+        join(f.root, "agent/agents/plan-simplicity-reviewer.md"),
+        `---\nname: plan-simplicity-reviewer\ndescription: Changed\nmodel: test/model\nthinking: off\ntools: read, codemode, grep\nextensions:\nsubagentOnlyExtensions: ${resolve("src/runtime/integrations/readonly-codemode.ts")}\ninheritSkills: false\ninheritProjectContext: true\n---\nChanged source.\n`,
+      );
+    } else {
+      await writeFile(
+        join(f.root, "agent/agents/plan-simplicity-reviewer.md"),
+        `---\nname: plan-simplicity-reviewer\ndescription: Changed\nmodel: test/model\nthinking: off\ntools: read, codemode\nextensions:\nsubagentOnlyExtensions: ${resolve("src/runtime/integrations/readonly-codemode.ts")}\ninheritSkills: false\ninheritProjectContext: true\n---\nDifferent evidence instructions.\n`,
+      );
+    }
+    await expect(
+      f.adapter.run({
+        ...f.request,
+        launch: previous,
+        onPrepared: async () => {},
+      }),
+    ).rejects.toThrow("changed after durable preflight");
+    expect(f.events.emitted).toHaveLength(0);
+  },
+);
 
 test.each(["tool-set", "definition"])(
   "Codemode %s drift changes durable identity without dispatch",

@@ -83,10 +83,13 @@ test("package declares existing Pi extension and four product Agent resources", 
     expect(definitions[index].match(/^name: (.+)$/mu)?.[1]).toBe(
       file.slice(0, -3),
     );
-    // #20 owns verified read-only child Codemode; the baseline does not enable it.
-    expect(definitions[index].match(/^tools: (.+)$/mu)?.[1]).not.toContain(
-      "codemode",
-    );
+    const tools = definitions[index].match(/^tools: (.+)$/mu)?.[1];
+    if (file === "plan-simplicity-reviewer.md") {
+      expect(tools).toContain("codemode");
+      expect(definitions[index]).toContain(
+        "extensions:\nsubagentOnlyExtensions: ../src/runtime/integrations/readonly-codemode.ts",
+      );
+    } else expect(tools).not.toContain("codemode");
   }
 });
 
