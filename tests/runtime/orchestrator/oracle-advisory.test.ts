@@ -481,9 +481,23 @@ test("future Diagnosis/refinement/deviation producers have bounded decision-poin
       "planning-disagreement",
     ),
   ).not.toThrow();
+  const latestDeviationRef = await f.h.artifactStore.writeText(
+    "plan-deviation",
+    "deviation.md",
+    "Deviation evidence (pure decision-point guard fixture)",
+  );
   expect(() =>
     assertOracleReason(
       { ...state, coding: { ...state.coding, workerAttemptRef } },
+      "material-plan-deviation",
+    ),
+  ).toThrow();
+  expect(() =>
+    assertOracleReason(
+      {
+        ...state,
+        coding: { ...state.coding, workerAttemptRef, latestDeviationRef },
+      },
       "material-plan-deviation",
     ),
   ).not.toThrow();

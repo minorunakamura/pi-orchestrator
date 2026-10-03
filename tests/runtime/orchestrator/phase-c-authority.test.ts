@@ -122,7 +122,7 @@ test.each(["schema", "binding"])(
         : JSON.stringify({
             ...JSON.parse(
               await f.artifactStore.readText!(
-                f.implementation.implementationRef,
+                f.implementation.implementationRef!,
               ),
             ),
             implementationRevision: 99,

@@ -189,3 +189,5 @@ Approved strategy allows local internal choices。Unauthorized new dependency/co
 Optional builtin Oracle may analyze deviation or unresolved Planner/simplicity disagreement under finite read-only policy。It grants no implementation/Fix/Plan authority; core stop/replan works without Oracle。
 
 New Plan → validation → simplicity (one-shot refinement maximum) → mandatory Human Plan Gate before Worker continues。Retain old Plan/approval/workspace history; no blind relaunch/rollback or reuse of stale Test Seams。
+
+#15 の実装は exact-bound `coding.latestDeviationRef` を Planner inputs に含め、stopped Worker / full output / approved constraint / workspace history を再検証する。Deviation は scope/method/implementation authority ではなく、新しい Human-reviewable strategy のための evidence。保存失敗の exact recovery と fresh Gate までの normal continuation は [implementation record](../implementation/plan-deviation.md) を参照。

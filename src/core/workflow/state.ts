@@ -148,6 +148,7 @@ export function isCodeReviewBinding(
 }
 
 export interface CodingState {
+  latestDeviationRef?: ArtifactRef<"plan-deviation">;
   workerAttemptRef?: ArtifactRef<"implementation">;
   codeReview?: CodeReviewBinding;
   previousRoundDecisionRef?: ArtifactRef<"round-decision">;
@@ -292,6 +293,10 @@ export type WorkflowEvent =
     }
   | { type: "PLAN_FEEDBACK"; feedbackRef: ArtifactRef<"plan-review"> }
   | { type: "REPLAN_REQUIRED"; decisionRef: ArtifactRef<"round-decision"> }
+  | {
+      type: "PLAN_DEVIATION_REPORTED";
+      deviationRef: ArtifactRef<"plan-deviation">;
+    }
   | {
       type: "EXECUTION_ROUTED";
       decisionRef: ArtifactRef<"execution-routing">;
@@ -517,6 +522,7 @@ function isCodingState(value: unknown): value is CodingState {
       "latestCodeReviewRef",
       "codeReview",
       "workerAttemptRef",
+      "latestDeviationRef",
       "previousRoundDecisionRef",
     ]) ||
     !optional(value, "codeReview", isCodeReviewBinding) ||
@@ -530,6 +536,7 @@ function isCodingState(value: unknown): value is CodingState {
     ["executionRoutingRef", "execution-routing"],
     ["implementationRef", "implementation"],
     ["workerAttemptRef", "implementation"],
+    ["latestDeviationRef", "plan-deviation"],
     ["validationRef", "validation"],
     ["correctnessReviewRef", "correctness-review"],
     ["ponytailReviewRef", "ponytail-review"],
@@ -724,6 +731,11 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
       return (
         isEvent(value, ["type", "feedbackRef"]) &&
         isArtifactOfKind(value.feedbackRef, "plan-review")
+      );
+    case "PLAN_DEVIATION_REPORTED":
+      return (
+        isEvent(value, ["type", "deviationRef"]) &&
+        isArtifactOfKind(value.deviationRef, "plan-deviation")
       );
     case "REPLAN_REQUIRED":
       return (

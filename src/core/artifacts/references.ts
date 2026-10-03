@@ -25,6 +25,7 @@ export const artifactKinds = [
   "agent-launch",
   "oracle-advisory",
   "implementation",
+  "plan-deviation",
   "validation",
   "correctness-review",
   "ponytail-review",

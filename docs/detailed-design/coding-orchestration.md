@@ -123,6 +123,8 @@ Worker input also carries the approved Development Method and Test Seams when TD
 
 New unauthorized component/dependency, public API change, architecture boundary change, scope broadening or Development Method/Test Seam/Validation change is material. Worker stops before knowingly implementing it; persist deviation Artifact bound to exact Plan/attempt/input and observed workspace changes, then State before any next effect. `PLAN_DEVIATION_REPORTED` invalidates approval/current routing/review/gate authority and returns to Planning.
 
+#15 implementation uses a bounded terminal `PLAN_DEVIATION` report through existing single-agent full output. Exact Plan/attempt/revision and before/after workspace evidence precede authority invalidation; `coding.latestDeviationRef` retains history and `deviated` never publishes implementation success. Existing Correctness evidence plus finding/round policy detects unreported `plan-boundary-violation` without a dedicated reviewer. See [implementation, acceptance coverage and focused real Pi smoke](../implementation/plan-deviation.md).
+
 Optional bounded read-only builtin Oracle advice may analyze deviation, but core stop/replan must work without it. New Planner -> deterministic Plan validation -> fresh Plan Simplicity Review -> optional one-shot refinement -> Human Plan Gate is required before continuation. Existing local mutation remains historical evidence; no blind relaunch/rollback or stale authority reuse.
 
 ## 6. Implementation Artifact

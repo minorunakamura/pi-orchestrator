@@ -142,7 +142,7 @@ function findingRequest(
         },
       ),
       conflictsWithApprovedPlan: choice(
-        "Does the finding conflict with the approved plan?",
+        "Does this finding concern a conflict with the exact approved Plan strategy/constraints? For category plan-boundary-violation evaluate the observed implementation violation, NOT whether proposing to repair it conflicts. Other categories evaluate the proposed finding/change.",
         {
           true: "The finding conflicts with the approved plan.",
           false: "The finding does not conflict with the approved plan.",

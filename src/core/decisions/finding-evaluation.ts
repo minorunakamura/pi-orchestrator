@@ -58,6 +58,12 @@ export function evaluateFinding(
   if (raw.requiresHumanDecision.value) {
     return result(finding, raw, "ESCALATE", "human-decision");
   }
+  if (
+    finding.category === "plan-boundary-violation" &&
+    raw.evidenceSupported.value &&
+    (raw.conflictsWithApprovedPlan.value || raw.conflictsWithArchitecture.value)
+  )
+    return result(finding, raw, "ESCALATE", "plan-conflict");
   if (raw.conflictsWithApprovedPlan.value) {
     return result(finding, raw, "REJECT", "approved-plan-conflict");
   }

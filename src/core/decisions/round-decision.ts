@@ -107,13 +107,27 @@ function acceptedBlockingStatus(
 
 function findingEscalationReason(
   findings: readonly RoundDecisionFinding[],
-): "human-decision" | "uncertain" | undefined {
+): "human-decision" | "uncertain" | "plan-conflict" | undefined {
   if (findings.some((finding) => finding.reasonCode === "human-decision")) {
     return "human-decision";
   }
-  if (findings.some((finding) => finding.decision === "ESCALATE")) {
+  if (
+    findings.some(
+      (finding) =>
+        finding.decision === "ESCALATE" &&
+        finding.reasonCode !== "plan-conflict",
+    )
+  ) {
     return "uncertain";
   }
+  if (
+    findings.some(
+      (finding) =>
+        finding.decision === "ESCALATE" &&
+        finding.reasonCode === "plan-conflict",
+    )
+  )
+    return "plan-conflict";
   return undefined;
 }
 
@@ -254,7 +268,8 @@ export function decideRound(
   }
 
   const findingReason = findingEscalationReason(input.findings);
-  if (findingReason) return escalate(raw, findingReason);
+  if (findingReason && findingReason !== "plan-conflict")
+    return escalate(raw, findingReason);
   if (input.validation.status === "infrastructure-error")
     return escalate(raw, "uncertain");
   if (
@@ -264,6 +279,7 @@ export function decideRound(
   ) {
     return escalate(raw, "uncertain");
   }
+  if (findingReason === "plan-conflict") return escalate(raw, "plan-conflict");
   if (raw.decision === "ESCALATE") return escalate(raw, raw.escalationReason);
 
   if (raw.decision === "RETRY") {

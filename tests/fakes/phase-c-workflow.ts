@@ -1,3 +1,4 @@
+import { PLAN_DEVIATION_MARKER } from "../../src/core/coding/plan-deviation.ts";
 import { safeWorkflowId } from "../../src/types.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -76,7 +77,7 @@ export interface WorkflowScript {
     { human?: boolean; planConflict?: boolean; confidence?: number }
   >;
   validations?: (ValidationCheckStatus | "throw")[];
-  workers?: ("success" | "timeout" | "ambiguous" | "failed")[];
+  workers?: ("success" | "deviation" | "timeout" | "ambiguous" | "failed")[];
   codeReviews?: ("approved" | "feedback")[];
   planReviews?: ("approved" | "feedback")[];
   silentReviewer?: boolean;
@@ -242,6 +243,32 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       );
       const outcome = script.workers?.[nth - 1] ?? "success";
       if (outcome === "timeout") return;
+      if (outcome === "deviation") {
+        deliver(
+          request,
+          "completed",
+          `${PLAN_DEVIATION_MARKER}\n${JSON.stringify({
+            schemaVersion: 1,
+            workflowId: intent.workflowId,
+            attemptId: intent.attemptId,
+            approvedPlanRef: intent.approvedPlanRef,
+            planVersion: intent.planVersion,
+            inputRevision: intent.inputRevision,
+            category: "public-api",
+            reason:
+              "The requested strategy cannot safely continue with the existing public API.",
+            constraint: "Preserve the public API",
+            proposedChange:
+              "Change public checkout signature (not implemented).",
+            localAlternative:
+              "A private helper cannot supply the missing public input.",
+            evidence: [
+              "implementation.txt:1 retains already authorized local changes; proposed API remains unchanged",
+            ],
+          })}`,
+        );
+        return;
+      }
       deliver(
         request,
         outcome === "success"

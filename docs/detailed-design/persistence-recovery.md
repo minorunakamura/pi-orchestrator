@@ -266,6 +266,8 @@ Oracle attempts bind trigger/budget/input/launch/output and remain advisory-only
 
 Material deviation retains stopped Worker/workspace evidence, invalidates active approval/routing/review/gate authority and continues Planning -> simplicity -> Human Gate. Never resurrect old approval or infer a rollback.
 
+#15 stores `implementation/attempt-<id>-deviated.json` and `implementation/deviation-<id>.json` before the invalidation Event/State. Output-before-State faults recover only exact historical public terminal receipt/full output, with stopped-record/report/Plan/input/workspace identity checks and zero redispatch. A subsequent Worker requires a distinct newly Human-approved Plan; changed workspace since stop blocks rather than silently rebaselining. Blocked Worker status queries also require the persisted receipt. See [implementation and fault tests](../implementation/plan-deviation.md).
+
 ### blocked
 
 Check whether the original block reason is resolved.
