@@ -45,6 +45,7 @@ export function agentLaunchPolicy(
   )
     throw Error("No orchestrator launch policy for Agent");
   const research = agent === "pi-ketch.researcher";
+  const codemode = agent === "plan-simplicity-reviewer";
   return {
     agent,
     authorityRole: implementation
@@ -62,24 +63,34 @@ export function agentLaunchPolicy(
       ? researchTools
       : implementation
         ? ["read", "bash", "edit", "write"]
-        : ["read"],
+        : codemode
+          ? ["read", "codemode"]
+          : ["read"],
     allowedTools: research
       ? researchTools
       : [
           ...repositoryTools,
+          ...(codemode ? ["codemode"] : []),
           ...(implementation
             ? ["bash", "edit", "write", "contact_supervisor"]
             : []),
         ],
     forbiddenTools: implementation
       ? ["subagent", "subagents_enable", "codemode"]
-      : ["bash", "edit", "write", "subagent", "subagents_enable", "codemode"],
+      : [
+          "bash",
+          "edit",
+          "write",
+          "subagent",
+          "subagents_enable",
+          ...(!codemode ? ["codemode"] : []),
+        ],
     inheritProjectContext: !research,
     inheritSkills: false,
     ...(implementation || advisory || agent === "reviewer"
       ? { builtin: true as const }
       : {}),
-    denyExtensions: !research,
+    denyExtensions: !research && !codemode,
   };
 }
 
@@ -269,7 +280,7 @@ export function isAgentLaunchEvidence(
           "contact_supervisor",
         ].includes(tool),
       )) &&
-    // Capability inspection only: #20 must verify runtime isolation before dispatch.
+    // Capability contract only: the adapter must verify child runtime isolation.
     (!allowedTools.includes("codemode") ||
       ([
         "workflow-scout",

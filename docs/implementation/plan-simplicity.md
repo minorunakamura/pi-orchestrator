@@ -44,7 +44,9 @@ Review は exact workflow/cycle/Plan ref・version・hash、accumulated input re
 
 ## Evidence-only findings / Human presentation
 
-`agents/plan-simplicity-reviewer.md` は `read/grep/find/ls` のみ、fresh context、explicit empty skills、`inheritSkills:false`、`denyExtensions:true`。編集、command、child、Codemode、State/Artifact write、approval / implementation / Fix authority はない。Post-code Ponytail Reviewer は actual implementation を評価する別 role のまま。
+#14 検証時の `agents/plan-simplicity-reviewer.md` は `read/grep/find/ls` のみ、fresh context、explicit empty skills、`inheritSkills:false`、`denyExtensions:true`。編集、command、child、Codemode、State/Artifact write、approval / implementation / Fix authority はない。Post-code Ponytail Reviewer は actual implementation を評価する別 role のまま。
+
+Subsequent #20 adopts this role's read-only Codemode through exact child-only replacement / `models:false` / registered-callable checks and bounded deadlines, without changing the review/output/authority contract。Historical #14 smoke remains non-Codemode evidence; [#20 validation](./readonly-codemode.md) proves actual enabled-child execution.
 
 Findings は unique ID、category、summary、exact Plan section、repository citations、narrower alternative を要求する。Categories は unnecessary-abstraction / speculative-flexibility / avoidable-dependency / ignored-pattern / broad-change-surface / duplicated-responsibility。Citations は exact supplied Scout/Diagnosis Artifact refs と repository locations、verbatim excerpts を bindし、current durable body に excerpt/location がない finding は拒否する。Taste-only findings、fabricated/cross-ref evidence、absent sections、duplicate IDs、不正 schema を拒否する。
 

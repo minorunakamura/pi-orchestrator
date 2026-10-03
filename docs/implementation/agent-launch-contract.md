@@ -6,6 +6,8 @@ GitHub #21 / #13 の本文・acceptance criteria・comments（いずれも comme
 
 実装対象は共通 child-launch boundary。normal driver (#4)、TDD method/seam approval (#16)、Oracle escalation/budget (#17)、Codemode enablement (#20)、Main ownership guard (#5)、full production lifecycle (#12) は先行実装しない。Human Plan Gate / Human Code Gate、approved Worker routing authority、immutable Artifacts / State CAS、pi-orchestrator の lifecycle ownership は変更しない。
 
+Subsequent #20: verified Codemode dispatch is now enabled **only for Plan Simplicity Reviewer**。Exact child replacement / models isolation / bounded execution / positive native-child smoke are recorded in [#20 implementation](./readonly-codemode.md)。The inspection-only and default-policy descriptions below record #21's original foundation; its Scout inspection remains unsupported for dispatch. #21 is not reopened.
+
 ## Public dependency / execution owner
 
 `pi-subagents` **0.74.0** を dev-only から runtime dependency に変更し、公開 `pi-subagents/preflight` / `pi-subagents/capability-ceiling` subpaths だけを import する。Pi は host peer のまま。第三者 package/private API は変更・使用しない。

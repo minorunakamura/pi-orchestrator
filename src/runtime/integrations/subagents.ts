@@ -217,11 +217,12 @@ export class SubagentsIntegration implements SubagentExecutor {
     input = { ...input, dispatch };
     const task = await taskWithArtifacts(input, this.artifactReader);
     const launch = await this.resolveLaunch(input);
-    // Preflight resolves intent, not the child models namespace/runtime isolation.
-    // #20 must supply enforced, verified isolation; no caller Boolean grants it.
+    // Only the adopted role's exact child replacement is verified by the common
+    // resolver; other Codemode inspection policies remain unsupported for dispatch.
+    const codemode = launch.policy.allowedTools.includes("codemode");
     if (
-      launch.tools.includes("codemode") ||
-      launch.policy.allowedTools.includes("codemode")
+      (launch.tools.includes("codemode") || codemode) &&
+      launch.agent !== "plan-simplicity-reviewer"
     )
       throw new SubagentNotDispatchedError(
         "Codemode runtime isolation is unverified (#20); inspection does not permit dispatch",
@@ -310,6 +311,7 @@ export class SubagentsIntegration implements SubagentExecutor {
       reads: false,
       progress: false,
       timeoutMs,
+      ...(codemode ? { toolTimeoutMs: 30_000 } : {}),
     };
     return this.spawnAndWait(
       dispatch,

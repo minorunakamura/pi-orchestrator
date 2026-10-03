@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { KnownApi } from "@earendil-works/pi-ai";
 import {
@@ -167,6 +168,27 @@ export async function resolveAgentLaunch(
     throw Error(
       "Resolved Agent launch violates policy or has unresolved host capability",
     );
+  let codemodeDigest: string | undefined;
+  if (
+    policy.agent === "plan-simplicity-reviewer" &&
+    tools.includes("codemode")
+  ) {
+    const extension = await realpath(
+      fileURLToPath(new URL("./readonly-codemode.ts", import.meta.url)),
+    );
+    if (
+      !c.tools.disableAmbientExtensions ||
+      c.tools.configuredExtensions.length !== 1 ||
+      (await realpath(c.tools.configuredExtensions[0])) !== extension ||
+      c.tools.toolExtensionPaths.length ||
+      c.tools.requiredExtensionIds.length ||
+      c.tools.mcp.length ||
+      c.tools.fanoutAuthorized ||
+      c.tools.internalTools.length
+    )
+      throw Error("Codemode requires the exact isolated child replacement");
+    codemodeDigest = calculateSha256(await readFile(extension));
+  }
   const skills = await Promise.all(
     c.skills.resolved.map(async (s) => {
       const bytes = await readFile(s.path);
@@ -193,7 +215,11 @@ export async function resolveAgentLaunch(
     skills: skills.toSorted((a, b) => a.name.localeCompare(b.name)),
     tools,
     extensionsDigest: calculateSha256(
-      JSON.stringify({ tools: c.tools, bridge: c.intercomBridge }),
+      JSON.stringify({
+        tools: c.tools,
+        bridge: c.intercomBridge,
+        ...(codemodeDigest ? { codemodeDigest } : {}),
+      }),
     ),
     inheritProjectContext: c.inheritProjectContext,
     inheritGlobalContext: c.inheritGlobalContext,

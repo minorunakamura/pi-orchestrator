@@ -6,7 +6,14 @@ test("Plan simplicity is read-only evidence-backed pre-code review, distinct fro
     "agents/plan-simplicity-reviewer.md",
     "utf8",
   );
-  expect(definition).toMatch(/tools: read, grep, find, ls\n/u);
+  expect(definition).toMatch(/tools: read, grep, find, ls, codemode\n/u);
+  expect(definition).toContain(
+    "subagentOnlyExtensions: ../src/runtime/integrations/readonly-codemode.ts",
+  );
+  expect(definition).toContain("toolTimeoutMs: 30000");
+  expect(definition).toContain(
+    "Retain path, line ranges and verbatim excerpts",
+  );
   expect(definition).toMatch(/inheritSkills: false/u);
   expect(definition).toMatch(/Taste alone is not a finding/u);
   expect(definition).toContain("verbatim excerpts");

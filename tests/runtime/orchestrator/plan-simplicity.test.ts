@@ -110,14 +110,9 @@ test("candidate is durable before review; review-ready requires simplicity and n
       expect(state.planning.approvedPlanRef).toBeUndefined();
       expect(request.inputRefs).toContainEqual(state.planning.currentPlanRef);
       expect(request.launchPolicy?.forbiddenTools).toEqual(
-        expect.arrayContaining([
-          "bash",
-          "edit",
-          "write",
-          "subagent",
-          "codemode",
-        ]),
+        expect.arrayContaining(["bash", "edit", "write", "subagent"]),
       );
+      expect(request.launchPolicy?.requiredTools).toContain("codemode");
       expect(
         transition(state, {
           type: "PLAN_REVIEW_READY",

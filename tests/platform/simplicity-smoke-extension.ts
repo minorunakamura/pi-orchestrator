@@ -214,6 +214,9 @@ ${JSON.stringify({ schemaVersion: 1, checks: [{ id: "syntax", type: "command", c
             const attempt = resume.state.planning.agentAttempts![stage];
             assert(attempt.launch && attempt.receipt);
             assert.deepEqual(attempt.launch.tools, [
+              ...(attempt.launch.agent === "plan-simplicity-reviewer"
+                ? ["codemode"]
+                : []),
               "find",
               "grep",
               "ls",

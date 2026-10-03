@@ -153,7 +153,7 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11)、Development Method / TDD (#16) は実装・検証済みです。Simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11)、Development Method / TDD (#16) は実装・検証済みです。Read-only Codemode は Plan Simplicity Reviewer のみ実装・検証済み（[#20 implementation / isolation / real smoke](docs/implementation/readonly-codemode.md)）。Simplicity/Oracle escalation/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 
