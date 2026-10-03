@@ -29,8 +29,8 @@ Paths below are naming patterns, created on demand; N/attempt identity must be u
 | research | context/research-*.md | pi-ketch.researcher → later routing/Planner; sources + inputs |
 | conditional-stage | decisions/conditional-stage-*.json | Jev or deterministic required/skip policy → Orchestrator; stage/policy/accumulated refs |
 | clarification-mode | decisions/clarification-mode-*.json | bounded routing + policy → root/Main clarification; mode + input identity, no write authority |
-| clarification | context/clarification-*.md | root/Main + Human → Planner; exact request/source State/questions/answers/docs refs |
-| domain-document-write | context/domain-document-write-*.json | Orchestrator intent/observation → clarification/ownership/recovery; exact allowed paths + before/after hashes + clarification binding |
+| clarification | context/human-{request,round,reply}-*.md / clarification-complete-*.md | root/Main + Human → Planner; content-addressed JSON request/source State/questions/confirmed answers/docs refs; #8 |
+| domain-document-write | context/domain-document-{intent,result}-*.md | Orchestrator intent/observation → clarification/ownership/recovery; JSON exact allowed paths + full before/after contents/hashes + clarification/answer binding; #8 |
 | development-method | decisions/development-method-*.json | captured request/deterministic policy/Jev → Planner/Worker; STANDARD/TDD + reason/input identity |
 | plan | plans/plan-vN.md | Planner → validation/simplicity/Human/Worker/Jev; exact strategy/boundary |
 | plan-simplicity-review | plan-reviews/simplicity-vN-*.json | read-only reviewer → refinement/Human; exact Plan version/hash + repository evidence |

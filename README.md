@@ -97,9 +97,15 @@ Oracle は difficult Diagnosis/Architecture/strategy disagreement/deviation/post
 
 required → RUN、skip → SKIP は deterministic。Jev は conditional → RUN/SKIP/ESCALATE のみ route し、low confidence を silent skip にしません。Research/Clarification/Architecture は accumulated durable Scout/Diagnosis/Research/Human evidence を sequential に使います。
 
-#6 では、この逐次 routing と immutable stage/mode decision、freshness 検証、normal-driver continuation を実装しました。旧 `PlaybookContext` の hint は authority にしません。#7 では bugfix/hotfix の required Diagnosis を既存 read-only `workflow-scout` で実行し、durable evidence から routing を自動継続します。hotfix の scope/redesign 超過・不明は Human reclassification/replanning 待ちで停止し、Architecture SKIP は維持します。[Diagnosis の実装・検証・制限](./docs/implementation/diagnosis.md) を参照してください。Root clarification/document writes は #8、生成 ID 後の consent capture は #11 のままです。[実装・acceptance coverage・production 制限](./docs/implementation/conditional-stage-routing.md) を参照してください。
+#6 では、この逐次 routing と immutable stage/mode decision、freshness 検証、normal-driver continuation を実装しました。旧 `PlaybookContext` の hint は authority にしません。#7 では bugfix/hotfix の required Diagnosis を既存 read-only `workflow-scout` で実行し、durable evidence から routing を自動継続します。hotfix の scope/redesign 超過・不明は Human reclassification/replanning 待ちで停止し、Architecture SKIP は維持します。[Diagnosis の実装・検証・制限](./docs/implementation/diagnosis.md) を参照してください。#8 では production root clarification / exact domain-document writes と actual Human TUI の両 mode を接続・検証しました（[実装・検証・制限](./docs/implementation/clarification.md)）。生成 ID 後の consent capture は #11 のままです。[実装・acceptance coverage・production 制限](./docs/implementation/conditional-stage-routing.md) を参照してください。
 
-GRILL_ME は root/Main + grilling + ask_user_question。GRILL_WITH_DOCS はさらに domain-modeling。Jev は mode を選べても Human-facing question/answer は生成しません。
+GRILL_ME は root/Main + grilling + ask_user_question。GRILL_WITH_DOCS はさらに domain-modeling。Jev は mode を選べても Human-facing question/answer は生成しません。Production は underlying skills の実 bytes/hash と root identity を bind し、durable question rounds と **final shared-understanding confirmation** を経て normal driver を継続します。Transient `clarificationPrompt` は不要です。
+
+```sh
+pi install git:github.com/minorunakamura/pi-ask-user-question@0a6ad2c5fd7f79ceccb51bc791c10554789bdbd2
+```
+
+正規 GitHub-only source は operator 承認の上記 commit に固定し、同名 npm / moving main は使いません。Pi に `grilling` / `domain-modeling` skills と question package を load してください。Root TUI と registered tools が必要で、RPC/print/json / missing skill/package / `--no-tools` は unsupported として block します。
 
 Allowed document candidates: CONTEXT.md、CONTEXT-MAP.md、nested CONTEXT.md、docs/adr/*.md / nested docs/adr/*.md。Orchestrator が active clarification に bind した **exact path scope / intent / before identity を write 前に**保存し、after identity/diff/answer evidence を保存します。source/config/implementation mutation は Main に許可されず、docs exception も implementation authority ではありません。
 
@@ -143,7 +149,7 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、native classifier transport (#19)、共通 launch policy (#21) は実装済みです。Root clarification/generated-workflow consent/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21) は実装済みです。Generated-workflow consent/TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 

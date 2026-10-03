@@ -1,3 +1,4 @@
+import { verifyClarificationDocuments } from "./clarification.ts";
 import { diagnosisEvidence } from "./diagnosis.ts";
 import type { SubagentExecutor } from "../ports/subagent-executor.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
@@ -146,6 +147,10 @@ export class PlanningRouting {
     if (mode.mode !== "SKIP" && !context.clarificationRef)
       attention("Clarification requires a durable confirmed Human answer");
     if (context.clarificationRef) refs.push(context.clarificationRef);
+    if (state.planning.domainDocumentWriteRef) {
+      await verifyClarificationDocuments(state, this.deps);
+      refs.push(state.planning.domainDocumentWriteRef);
+    }
     return { refs };
   }
 
@@ -284,6 +289,8 @@ export class PlanningRouting {
               "Planning classifier is unavailable",
             );
           const categories: JevEvidenceCategory[] = ["task", "scout"];
+          if (refs.some((item) => item.kind === "domain-document-write"))
+            categories.push("design");
           for (const kind of [
             "diagnosis",
             "research",

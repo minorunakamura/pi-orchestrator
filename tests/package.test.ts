@@ -34,6 +34,7 @@ test("entry exports integrations and registers commands without activating runti
     const host = makeExtensionApiFixture({
       events: { emit: vi.fn(), on: vi.fn(() => () => {}) },
       on: vi.fn(() => () => {}),
+      registerTool: vi.fn(),
       registerCommand: vi.fn((name: string, options: unknown) => {
         commands.set(name, options);
       }),
@@ -120,8 +121,16 @@ test.each(["explicit", "installed"])(
         "wf-resume",
         "wf-status",
       ]);
-      expect(extension.tools.size).toBe(0);
-      expect([...extension.handlers.keys()]).toEqual(["session_shutdown"]);
+      expect([...extension.tools.keys()]).toEqual([
+        "wf_clarification_round",
+        "wf_clarification_complete",
+      ]);
+      expect([...extension.handlers.keys()]).toEqual([
+        "session_shutdown",
+        "session_start",
+        "before_agent_start",
+        "tool_call",
+      ]);
     } finally {
       await rm(isolated, { recursive: true, force: true });
     }

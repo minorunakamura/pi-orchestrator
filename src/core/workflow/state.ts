@@ -83,6 +83,9 @@ export interface PlanReviewBinding {
 }
 
 export interface PlanningState {
+  clarificationRequestRef?: ArtifactRef<"clarification">;
+  clarificationProgressRef?: ArtifactRef<"clarification">;
+  domainDocumentWriteRef?: ArtifactRef<"domain-document-write">;
   /** Absence marks legacy state whose in-flight planning work cannot be inferred. */
   agentAttempts?: Record<string, PlanningAgentAttempt>;
   context: {
@@ -338,6 +341,9 @@ function isPlanningState(value: unknown): value is PlanningState {
     !isRecord(value) ||
     !hasOnlyKeys(value, [
       "context",
+      "clarificationRequestRef",
+      "clarificationProgressRef",
+      "domainDocumentWriteRef",
       "agentAttempts",
       "stageDecisionRefs",
       "clarificationModeRef",
@@ -370,6 +376,15 @@ function isPlanningState(value: unknown): value is PlanningState {
     ) ||
     !optional(value, "clarificationModeRef", (ref) =>
       isArtifactOfKind(ref, "clarification-mode"),
+    ) ||
+    !optional(value, "clarificationRequestRef", (ref) =>
+      isArtifactOfKind(ref, "clarification"),
+    ) ||
+    !optional(value, "clarificationProgressRef", (ref) =>
+      isArtifactOfKind(ref, "clarification"),
+    ) ||
+    !optional(value, "domainDocumentWriteRef", (ref) =>
+      isArtifactOfKind(ref, "domain-document-write"),
     ) ||
     !optional(value, "agentAttempts", isPlanningAgentAttempts) ||
     !optional(value, "planReview", isPlanReviewBinding) ||

@@ -15,6 +15,7 @@ export const artifactKinds = [
   "clarification-mode",
   "research",
   "clarification",
+  "domain-document-write",
   "plan",
   "plan-review",
   "execution-routing",

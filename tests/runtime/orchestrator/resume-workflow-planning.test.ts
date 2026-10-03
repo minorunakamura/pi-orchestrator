@@ -65,26 +65,24 @@ describe("ORCH-018 planning/context reconciliation", () => {
     ).toHaveLength(planners);
   });
 
-  test("clarification resume requires explicit Human prompt and never infers an answer", async () => {
-    const workflow = await setup();
+  test("clarification resume requires a Human bridge, not a transient prompt", async () => {
+    const workflow = await setup({ clarification: true });
     const state = await workflow.load();
     const interrupted = { ...state, phase: "clarifying" as const };
     await workflow.stateStore.saveState(interrupted, state.stateRevision);
 
-    const blocked = await workflow.resume();
+    const blocked = await workflow.resume({ clarificationPort: undefined });
     expect(blocked.status).toBe("blocked");
     expect(blocked.state.block?.reason).toBe("operator-attention-required");
 
-    // A second workflow demonstrates the explicit prompt path without relying on transient hints.
+    // Durable evidence generates the request; no transient clarificationPrompt is needed.
     const next = await setup({ clarification: true });
     const nextState = await next.load();
     await next.stateStore.saveState(
       { ...nextState, phase: "clarifying" as const },
       nextState.stateRevision,
     );
-    const resumed = await next.resume({
-      clarificationPrompt: "Choose the scope",
-    });
+    const resumed = await next.resume();
     expect(resumed.status).toBe("pending");
     expect(resumed.state.phase).toBe("awaiting-plan-review");
     expect(resumed.state.planning.context.clarificationRef).toBeDefined();

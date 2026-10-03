@@ -12,6 +12,7 @@ export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   "clarification-mode": "decisions",
   research: "context",
   clarification: "context",
+  "domain-document-write": "context",
   plan: "plans",
   "plan-review": "plan-reviews",
   "execution-routing": "decisions",

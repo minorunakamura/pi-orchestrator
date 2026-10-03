@@ -1,4 +1,5 @@
 import { PlanningRoutingStoppedError } from "./planning-routing.ts";
+import { recoverClarification } from "./clarification.ts";
 import { randomUUID } from "node:crypto";
 import { PlanningAgentPendingError } from "./planning-agent-run.ts";
 import { readFile } from "node:fs/promises";
@@ -689,15 +690,20 @@ export class WorkflowReconciler {
   private async reconcileClarification(
     state: WorkflowState,
   ): Promise<ReconciliationResult> {
-    if (!this.deps.clarificationPort || !this.deps.clarificationPrompt) {
+    if (!this.deps.clarificationPort) {
       return this.block(
         state,
         "operator-attention-required",
         undefined,
-        "Clarification requires an explicit Human prompt; it must not be inferred from transient state",
+        "Clarification requires the production root Human bridge; no answer may be inferred",
       );
     }
-    return { status: "advanced", state, phase: state.phase };
+    const next = await recoverClarification(state, this.deps);
+    return {
+      status: next.phase === "blocked" ? "blocked" : "advanced",
+      state: next,
+      phase: next.phase,
+    };
   }
 
   private async reconcilePlanning(

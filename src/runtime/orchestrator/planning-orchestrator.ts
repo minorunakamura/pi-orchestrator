@@ -1,4 +1,10 @@
+import { RuntimePortError } from "../ports/errors.ts";
 import { gatherDiagnosis } from "./diagnosis.ts";
+import {
+  prepareClarification,
+  recoverClarification,
+  publishSynchronousClarification,
+} from "./clarification.ts";
 import { freshOracleAdvice } from "./oracle-advisory.ts";
 import {
   PlanningRouting,
@@ -36,7 +42,6 @@ import {
   type AgentRunRequest,
   type AgentRunResult,
   type ClarificationPort,
-  type ClarificationResult,
   type PlanReviewHandle,
   type PlanReviewStatus,
   type PlannotatorGate,
@@ -83,7 +88,7 @@ export interface ContextGatheringResult {
 
 export interface ClarificationInput {
   state: WorkflowState;
-  prompt: string;
+  prompt?: string;
   contextRefs?: readonly ArtifactRef[];
 }
 
@@ -98,6 +103,7 @@ export type ClarificationOutcome =
       state: WorkflowState;
       reason?: string;
     }
+  | { status: "pending"; state: WorkflowState }
   | { status: "blocked"; state: WorkflowState };
 
 export interface CreatePlanInput {
@@ -199,13 +205,13 @@ function planningContextRefs(state: WorkflowState): readonly ArtifactRef[] {
     state.planning.context.scoutRef,
     state.planning.context.diagnosisRef,
     state.planning.context.researchRef,
+    state.planning.context.clarificationRef,
+    state.planning.currentPlanRef,
     state.coding.roundDecisionRef,
+    ...Object.values(state.planning.stageDecisionRefs ?? {}),
+    state.planning.clarificationModeRef,
   ];
   return refs.filter((ref): ref is ArtifactRef => ref !== undefined);
-}
-
-function clarificationArtifact(answer: string, prompt: string): string {
-  return `# Clarification\n\n## Question\n${prompt.trim()}\n\n## Answer\n${answer.trim()}\n`;
 }
 
 function resultBlockedReason(
@@ -394,91 +400,95 @@ export class PlanningOrchestrator {
   async requestClarification(
     input: ClarificationInput,
   ): Promise<ClarificationOutcome> {
-    const sourceState = structuredClone(input.state);
-    if (sourceState.phase !== "clarifying") {
-      throw new Error("Clarification requires clarifying phase");
-    }
-    if (input.prompt.trim().length === 0) {
-      throw new Error("Clarification prompt must not be empty");
-    }
+    let state = structuredClone(input.state);
+    if (state.phase !== "clarifying")
+      throw Error("Clarification requires clarifying phase");
     const port = this.dependencies.clarificationPort;
-    if (!port) throw new Error("ClarificationPort is required");
-
-    // #8 owns the root skill/UI bridge and narrow document grants. Mode is evidence only.
+    if (!port) throw Error("ClarificationPort is required");
     const routing = await new PlanningRouting(this.dependencies).clarification(
-      sourceState,
+      state,
       true,
     );
-    if (routing.mode === "SKIP" && !sourceState.coding.roundDecisionRef)
-      throw new Error("SKIP does not authorize a clarification interaction");
-    const clarificationRequest = {
-      mode: routing.mode === "SKIP" ? ("GRILL_ME" as const) : routing.mode,
-      ...(routing.mode !== "SKIP"
-        ? { modeRef: sourceState.planning.clarificationModeRef! }
-        : {}),
-      prompt: input.prompt,
-      contextRefs: structuredClone(
-        input.contextRefs ?? planningContextRefs(sourceState),
-      ),
-    };
-    const sourceIdentity = JSON.stringify({
-      state: sourceState,
-      request: clarificationRequest,
-    });
-    let result: ClarificationResult;
+    if (
+      routing.mode === "ESCALATE" ||
+      (routing.mode === "SKIP" && !state.coding.roundDecisionRef)
+    )
+      throw Error("Routing does not authorize a clarification interaction");
+    state = await recoverClarification(state, this.dependencies);
+    if (state.phase === "blocked") return { status: "blocked", state };
+    if (state.phase === "planning")
+      return {
+        status: "provided",
+        state,
+        clarificationRef: state.planning.context.clarificationRef!,
+      };
+    let prepared;
     try {
-      result = await port.request(structuredClone(clarificationRequest));
-    } catch {
-      const state = await advanceWorkflow(
-        sourceState,
+      prepared = await prepareClarification(state, this.dependencies, {
+        mode:
+          routing.mode === "GRILL_WITH_DOCS" ? "GRILL_WITH_DOCS" : "GRILL_ME",
+        ...(routing.mode !== "SKIP"
+          ? { modeRef: state.planning.clarificationModeRef! }
+          : {}),
+        prompt: input.prompt,
+        contextRefs: input.contextRefs ?? planningContextRefs(state),
+      });
+    } catch (error) {
+      if (!(error instanceof RuntimePortError)) throw error;
+      state = await advanceWorkflow(
+        state,
         { type: "BLOCK", reason: "human-gate-unavailable" },
         this.dependencies.stateStore,
       );
       return { status: "blocked", state };
     }
-
-    if (result.status === "declined") {
-      return {
-        status: "declined",
-        state: sourceState,
-        ...(result.reason ? { reason: result.reason } : {}),
-      };
-    }
-    if (result.answer.trim().length === 0) {
-      throw new Error("Clarification answer must not be empty");
-    }
-
-    const content = clarificationArtifact(
-      result.answer,
-      clarificationRequest.prompt,
-    );
-    const digest = calculateSha256(JSON.stringify({ sourceIdentity, content }));
-    const fileName = `clarification-r${sourceState.stateRevision}-${digest}.md`;
-    const clarificationRef = createArtifactRef(
-      "clarification",
-      `context/${fileName}`,
-      content,
-    );
-    const store = this.dependencies.artifactStore;
+    state = prepared.state;
+    let result;
     try {
-      const written = await store.writeText("clarification", fileName, content);
-      if (!sameArtifactRef(written, clarificationRef)) {
-        throw new Error(
-          "Clarification writer returned a mismatched ArtifactRef",
-        );
-      }
-    } catch (error) {
-      // Only identical evidence for the same source State/request may survive a failed State save.
-      if (!(error instanceof ArtifactImmutableError) || !store.readText)
-        throw error;
-      if ((await store.readText(clarificationRef)) !== content) throw error;
+      const evidence = [...prepared.request.evidence];
+      if (state.planning.clarificationProgressRef)
+        evidence.push({
+          ref: state.planning.clarificationProgressRef,
+          content: await this.dependencies.artifactStore.readText!(
+            state.planning.clarificationProgressRef,
+          ),
+        });
+      result = await port.request({ ...prepared.request, evidence });
+    } catch {
+      state = await advanceWorkflow(
+        state,
+        {
+          type: "BLOCK",
+          reason: "human-gate-unavailable",
+          evidenceRef: state.planning.clarificationRequestRef,
+        },
+        this.dependencies.stateStore,
+      );
+      return { status: "blocked", state };
     }
-    const state = await advanceWorkflow(
-      sourceState,
-      { type: "CLARIFICATION_COMPLETE", clarificationRef },
-      this.dependencies.stateStore,
+    if (result.status === "pending") return { status: "pending", state };
+    if (result.status === "declined") {
+      state = await advanceWorkflow(
+        state,
+        {
+          type: "BLOCK",
+          reason: "operator-attention-required",
+          evidenceRef: state.planning.clarificationRequestRef,
+        },
+        this.dependencies.stateStore,
+      );
+      return { status: "declined", state, reason: result.reason };
+    }
+    state = await publishSynchronousClarification(
+      state,
+      this.dependencies,
+      result.answer,
     );
-    return { status: "provided", state, clarificationRef };
+    return {
+      status: "provided",
+      state,
+      clarificationRef: state.planning.context.clarificationRef!,
+    };
   }
 
   async createPlan(input: CreatePlanInput): Promise<PlanCreationResult> {
@@ -514,6 +524,9 @@ export class PlanningOrchestrator {
         : {}),
       ...(input.state.planning.context.clarificationRef
         ? { clarificationRef: input.state.planning.context.clarificationRef }
+        : {}),
+      ...(input.state.planning.domainDocumentWriteRef
+        ? { domainDocumentRef: input.state.planning.domainDocumentWriteRef }
         : {}),
       ...((input.previousPlanRef ?? input.state.planning.currentPlanRef)
         ? {

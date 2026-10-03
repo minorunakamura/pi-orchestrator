@@ -120,11 +120,14 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
       { ...state, phase: "clarifying" },
       state.stateRevision,
     );
-    const waiting = await h.drive();
+    const waiting = await h.drive({
+      clarificationPort: { request: async () => ({ status: "pending" }) },
+    });
     expect(waiting.status).toBe("pending");
     expect(waiting.state.phase).toBe("clarifying");
+    expect(waiting.state.planning.clarificationRequestRef).toBeDefined();
     expect(h.clarifications).toHaveLength(0);
-    const answered = await h.drive({ clarificationPrompt: "Choose the scope" });
+    const answered = await h.drive();
     expect(answered.state.phase).toBe("awaiting-plan-review");
     expect(answered.state.planning.context.clarificationRef).toBeDefined();
     expect(h.clarifications).toHaveLength(1);

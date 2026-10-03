@@ -1,3 +1,5 @@
+import { CLARIFICATION_COMPLETE_EVENT } from "../runtime/integrations/clarification.ts";
+import type { ClarificationPort } from "../runtime/ports/clarification-port.ts";
 import {
   requestOracleAdvice,
   type OracleQuestion,
@@ -91,6 +93,7 @@ export interface WorkflowCommandRuntimeOptions {
   jevDecisionClient?: JevDecisionClient;
   modelRegistry?: PiClassifierRuntime;
   validationExecutor?: ValidationExecutor;
+  clarificationPort?: ClarificationPort;
   onContinuationError?: (error: unknown) => void;
 }
 
@@ -290,6 +293,7 @@ export function createWorkflowCommandRuntime(
       cwd,
       repositoryCwd: cwd,
       configuration,
+      clarificationPort: options.clarificationPort,
       jevDecisionClient:
         options.jevDecisionClient ??
         new JevIntegration({
@@ -332,14 +336,22 @@ export function createWorkflowCommandRuntime(
       return value;
     };
     // Notifications only wake the driver. Exact persisted binding + public status remains authority.
-    const wake = (payload: unknown, kind: "plan" | "oracle") => {
+    const wake = (
+      payload: unknown,
+      kind: "plan" | "oracle" | "clarification",
+    ) => {
       if (!payload || typeof payload !== "object") return;
       const identity =
         kind === "plan" && "reviewId" in payload
           ? payload.reviewId
           : kind === "oracle" && "runId" in payload
             ? payload.runId
-            : undefined;
+            : kind === "clarification" &&
+                "requestHash" in payload &&
+                "workflowId" in payload &&
+                payload.workflowId === workflowId
+              ? payload.requestHash
+              : undefined;
       if (typeof identity !== "string") return;
       queue = queue.then(async (previous) => {
         if (!active) return previous;
@@ -348,6 +360,13 @@ export function createWorkflowCommandRuntime(
           if (
             state.phase !== "awaiting-plan-review" ||
             state.planning.planReview?.reviewId !== identity
+          )
+            return previous;
+        } else if (kind === "clarification") {
+          if (
+            state.phase !== "planning" ||
+            state.planning.clarificationRequestRef?.sha256 !== identity ||
+            !state.planning.context.clarificationRef
           )
             return previous;
         } else if (
@@ -378,9 +397,14 @@ export function createWorkflowCommandRuntime(
       SUBAGENT_ASYNC_COMPLETE_EVENT,
       (payload) => wake(payload, "oracle"),
     );
+    const unsubscribeClarification = events.on(
+      CLARIFICATION_COMPLETE_EVENT,
+      (payload) => wake(payload, "clarification"),
+    );
     const unsubscribe = () => {
       unsubscribePlan();
       unsubscribeOracle();
+      unsubscribeClarification();
     };
     listeners.set(key, stop);
     queue = Promise.resolve()

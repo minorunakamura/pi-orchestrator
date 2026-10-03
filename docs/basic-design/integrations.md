@@ -10,7 +10,7 @@ Use released public APIs only。Do not edit/fork/patch third-party packages or d
 
 Reviewed released references: Pi/pi-ai 0.99.1、pi-subagents 0.74.0、pi-typesafe 0.8.1、Plannotator 0.27.23、mattpocock/skills v1.2.3。Later installed/main docs are not baseline proof。Exact source/contract findings and unresolved publication gaps are recorded in [Dependency Contract Review](../implementation/dependency-contract-review.md); source review is not runtime validation。
 
-The intended optional packages are **git:github.com/minorunakamura/pi-ketch** and **git:github.com/minorunakamura/pi-ask-user-question**, not same-name npm packages from other repositories。pi-ketch は operator が指定した GitHub-only distribution を使用し、#6 で commit `e49fd9ea48b675eef2ede729c9f13f7e12d44c20` の公開 package Agent / child tools / actual Research execution を検証した（[記録](../implementation/conditional-stage-routing.md#real-pi--research-integration)）。npm publication や新規 tag は必須ではない。Pi の公開 Git package contract により固定 revision を選択し、moving main の未検証変更を同等と扱わない。Question package の supported immutable source / root UI verification は #8 に残る。
+The intended optional packages are **git:github.com/minorunakamura/pi-ketch** and **git:github.com/minorunakamura/pi-ask-user-question**, not same-name npm packages from other repositories。pi-ketch は operator が指定した GitHub-only distribution を使用し、#6 で commit `e49fd9ea48b675eef2ede729c9f13f7e12d44c20` の公開 package Agent / child tools / actual Research execution を検証した（[記録](../implementation/conditional-stage-routing.md#real-pi--research-integration)）。npm publication や新規 tag は必須ではない。Pi の公開 Git package contract により固定 revision を選択し、moving main の未検証変更を同等と扱わない。Question package は #8 で operator 承認の GitHub-only commit `0a6ad2c5fd7f79ceccb51bc791c10554789bdbd2` に固定し、両 clarification modes の actual root/Human TUI と document write / normal continuation を検証した（[記録](../implementation/clarification.md)）。Same-name npm / moving main には依存しない。
 
 ## 2. Pi host / classifier
 
@@ -88,7 +88,7 @@ pi-subagents 0.74.0 children follow parent project trust。#18 additionally sele
 
 Builtin Worker also defaults reads to context.md/plan.md and progress tracking; #21 must disable or scope-bind those behaviors through supported Agent/settings/output contracts so unrelated root files or default artifacts do not override exact approved inputs/change surface。Preflight's excluded runtime output-task annotations are not proof of that binding。
 
-Clarification is root/Main, not a delegated child question loop。grill wrapper availability is not required when the underlying public skills/tool path is supported。
+Clarification is root/Main, not a delegated child question loop。grill wrapper availability is not required when the underlying public skills/tool path is supported。#8 の production adapter は public command skill resources の実 bytes/hash を bind し、model-only `wf_clarification_round` / `wf_clarification_complete` から durably intended public questionnaire を開く。Final Human confirmation / exact docs evidence の State 保存後に normal driver を wake し、Human Plan/Code authority は付与しない。
 
 ## 6. Bounded read-only Codemode (#20)
 

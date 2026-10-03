@@ -28,6 +28,7 @@ export interface PlannerInput {
   >[];
   researchRef?: ArtifactRef<"research">;
   clarificationRef?: ArtifactRef<"clarification">;
+  domainDocumentRef?: ArtifactRef<"domain-document-write">;
   previousPlanRef?: ArtifactRef<"plan">;
   feedbackRef?: ArtifactRef<"plan-review">;
   advisoryRef?: ArtifactRef<"oracle-advisory">;
@@ -54,6 +55,7 @@ export function plannerInputRefs(input: PlannerInput): readonly ArtifactRef[] {
     ...(input.decisionRefs ?? []),
     ...(input.researchRef ? [input.researchRef] : []),
     ...(input.clarificationRef ? [input.clarificationRef] : []),
+    ...(input.domainDocumentRef ? [input.domainDocumentRef] : []),
     ...(input.previousPlanRef ? [input.previousPlanRef] : []),
     ...(input.feedbackRef ? [input.feedbackRef] : []),
     ...(input.advisoryRef ? [input.advisoryRef] : []),
