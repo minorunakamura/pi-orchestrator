@@ -53,7 +53,7 @@ export const contract = {
     },
   ],
 };
-export const plan = `# Plan\n## Scope / Requirements\nPreserve the public API.\n## Architecture / Design\nKeep decisions in core.\n## Implementation Plan\nAdd a regression test.\n## Validation Contract\n\`\`\`orchestrator-validation\n${JSON.stringify(contract)}\n\`\`\``;
+export const plan = `# Plan\n## Scope / Requirements\nPreserve the public API.\n## Architecture / Design\nKeep decisions in core.\n## Implementation Plan\nAdd a regression test.\n## Development Method\nSTANDARD\n## Validation Contract\n\`\`\`orchestrator-validation\n${JSON.stringify(contract)}\n\`\`\``;
 export const configuration: OrchestratorConfiguration = {
   decision: { autoDecisionThreshold: 0.8, escalationThreshold: 0.5 },
   executionProfiles: {

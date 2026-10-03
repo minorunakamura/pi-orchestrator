@@ -10,6 +10,7 @@ export const artifactDirectories: Readonly<Record<ArtifactKind, string>> = {
   diagnosis: "context",
   "conditional-stage": "decisions",
   "clarification-mode": "decisions",
+  "development-method": "decisions",
   research: "context",
   clarification: "context",
   "domain-document-write": "context",

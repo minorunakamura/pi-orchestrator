@@ -8,6 +8,8 @@ import {
 } from "../../types.ts";
 import {
   conditionalStages,
+  developmentIntents,
+  type DevelopmentIntent,
   type ConditionalStage,
 } from "../decisions/planning-routing.ts";
 import type { ArtifactRef } from "../artifacts/references.ts";
@@ -83,6 +85,9 @@ export interface PlanReviewBinding {
 }
 
 export interface PlanningState {
+  /** Captured Human intent; missing legacy intent is never inferred on resume. */
+  developmentIntent?: DevelopmentIntent;
+  developmentMethodRef?: ArtifactRef<"development-method">;
   clarificationRequestRef?: ArtifactRef<"clarification">;
   clarificationProgressRef?: ArtifactRef<"clarification">;
   domainDocumentWriteRef?: ArtifactRef<"domain-document-write">;
@@ -222,6 +227,10 @@ export interface WorkflowState {
 }
 
 export type WorkflowEvent =
+  | {
+      type: "DEVELOPMENT_METHOD_RESOLVED";
+      methodRef: ArtifactRef<"development-method">;
+    }
   | { type: "DIAGNOSIS_PERSISTED"; diagnosisRef: ArtifactRef<"diagnosis"> }
   | {
       type: "STAGE_RESOLVED";
@@ -346,6 +355,8 @@ function isPlanningState(value: unknown): value is PlanningState {
     !isRecord(value) ||
     !hasOnlyKeys(value, [
       "context",
+      "developmentIntent",
+      "developmentMethodRef",
       "clarificationRequestRef",
       "clarificationProgressRef",
       "domainDocumentWriteRef",
@@ -378,6 +389,12 @@ function isPlanningState(value: unknown): value is PlanningState {
         Object.values(refs).every((ref) =>
           isArtifactOfKind(ref, "conditional-stage"),
         ),
+    ) ||
+    !optional(value, "developmentIntent", (intent) =>
+      isOneOf(developmentIntents, intent),
+    ) ||
+    !optional(value, "developmentMethodRef", (ref) =>
+      isArtifactOfKind(ref, "development-method"),
     ) ||
     !optional(value, "clarificationModeRef", (ref) =>
       isArtifactOfKind(ref, "clarification-mode"),
@@ -584,6 +601,11 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
         isOneOf(conditionalStages, value.stage) &&
         isArtifactOfKind(value.decisionRef, "conditional-stage") &&
         typeof value.required === "boolean"
+      );
+    case "DEVELOPMENT_METHOD_RESOLVED":
+      return (
+        isEvent(value, ["type", "methodRef"]) &&
+        isArtifactOfKind(value.methodRef, "development-method")
       );
     case "CLARIFICATION_MODE_RESOLVED":
       return (

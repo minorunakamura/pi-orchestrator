@@ -11,13 +11,17 @@ import type {
   ConditionalStage,
   StageOutcome,
   ClarificationMode,
+  DevelopmentIntent,
 } from "../../../src/core/decisions/planning-routing.ts";
 import {
   conditionalStages,
   parsePlanningDecisionArtifact,
 } from "../../../src/core/decisions/planning-routing.ts";
 import { createWorkflow } from "../../../src/runtime/orchestrator/start-workflow.ts";
-import { driveWorkflow } from "../../../src/runtime/orchestrator/drive-workflow.ts";
+import {
+  driveWorkflow,
+  type WorkflowDriverDependencies,
+} from "../../../src/runtime/orchestrator/drive-workflow.ts";
 import { resumeWorkflow } from "../../../src/runtime/orchestrator/resume-workflow.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import {
@@ -48,6 +52,11 @@ afterEach(async () => {
   );
 });
 interface Script {
+  intent?: DevelopmentIntent;
+  task?: string;
+  method?: "STANDARD" | "TDD" | "ESCALATE";
+  methodConfidence?: number;
+  plannerOutput?: string;
   playbook?: PlaybookKind;
   stages?: Partial<Record<ConditionalStage, StageOutcome>>;
   mode?: ClarificationMode;
@@ -79,18 +88,28 @@ async function setup(script: Script = {}) {
       if (!isRecord(input.state) || !isRecord(input.state.evidence))
         throw Error("Missing planning evidence");
       const stage = input.state.stage ?? input.state.evidence.stage;
-      if (!isOneOf(conditionalStages, stage))
+      if (!isOneOf([...conditionalStages, "development-method"], stage))
         throw Error("Invalid planning stage");
-      trace.push(family === "stage" ? `decide:${stage}` : "decide:mode");
+      trace.push(
+        family === "stage"
+          ? `decide:${stage}`
+          : family === "method"
+            ? "decide:method"
+            : "decide:mode",
+      );
       inputs.push(structuredClone(input));
       const value =
-        family === "stage"
+        family === "stage" && stage !== "development-method"
           ? (script.stages?.[stage] ?? "SKIP")
-          : (script.mode ?? "GRILL_ME");
+          : family === "method"
+            ? (script.method ?? "STANDARD")
+            : (script.mode ?? "GRILL_ME");
       const confidence =
         (family === "clarification"
           ? script.modeConfidence
-          : script.confidence) ?? 0.99;
+          : family === "method"
+            ? script.methodConfidence
+            : script.confidence) ?? 0.99;
       const choices = Object.keys(input.questions.decision.criteria);
       return classification({
         decision: {
@@ -125,7 +144,17 @@ async function setup(script: Script = {}) {
       ...(script.stages?.research === "RUN"
         ? [succeeded("Research: released API source and uncertainty")]
         : []),
-      succeeded(plan),
+      succeeded(
+        script.plannerOutput ??
+          (script.intent === "TDD" ||
+          (script.intent !== "BEHAVIOR_FREE" && script.method === "TDD") ||
+          script.task?.includes("Development Method: TDD")
+            ? plan.replace(
+                "## Development Method\nSTANDARD",
+                "## Development Method\nTDD\n## Test Seams\n- public route(input): observable method, missing-seam rejection and regression assertions; dependencies injected through public ports.\n## Do not test\n- private helpers/internal collaborator calls",
+              )
+            : plan),
+      ),
     ],
   });
   const run = executor.run.bind(executor);
@@ -144,13 +173,15 @@ async function setup(script: Script = {}) {
     if (input.agent === "planner") {
       expect(state.planning.stageDecisionRefs?.architecture).toBeDefined();
       expect(state.planning.clarificationModeRef).toBeDefined();
+      expect(state.planning.developmentMethodRef).toBeDefined();
       expect(state.planning.approvedPlanRef).toBeUndefined();
     }
     return run(input);
   });
   await createWorkflow(
     {
-      task: "Implement the bounded routing change",
+      task: script.task ?? "Implement the bounded routing change",
+      developmentIntent: script.intent,
       playbook: script.playbook ?? "feature",
       cwd: root,
       context: {
@@ -226,6 +257,7 @@ test("normal driver sequences durable Research, clarification and Architecture w
     "child:pi-ketch.researcher",
     "decide:clarification",
     "decide:architecture",
+    "decide:method",
     "child:planner",
     "human:plan",
   ]);
@@ -564,6 +596,7 @@ test("fresh decisions survive client recreation without any classifier capabilit
   const h = await setup();
   await h.gather();
   await new PlanningRouting(h.deps).stage(await h.load(), "architecture");
+  await new PlanningRouting(h.deps).method(await h.load());
   const count = h.inputs.length;
   const result = await driveWorkflow("routing", {
     ...h.deps,
@@ -849,5 +882,177 @@ test.each(["artifact", "state"] as const)(
         (input) => input.dispatch?.nodeId === "diagnosis",
       ),
     ).toHaveLength(1);
+  },
+);
+
+test.each([
+  { intent: "TDD" as const, method: "STANDARD" as const, expected: "TDD" },
+  {
+    intent: "BEHAVIOR_FREE" as const,
+    method: "TDD" as const,
+    expected: "STANDARD",
+  },
+  {
+    intent: "BEHAVIOR_FREE" as const,
+    task: "Task\nDevelopment Method: TDD",
+    expected: "TDD",
+  },
+])(
+  "captured Human intent $intent deterministically resolves $expected before Planner",
+  async (script) => {
+    const h = await setup(script);
+    const result = await h.drive();
+    expect(result.state.phase).toBe("awaiting-plan-review");
+    const ref = result.state.planning.developmentMethodRef!;
+    expect(await h.decision(ref)).toMatchObject({
+      family: "method",
+      outcome: script.expected,
+      classifier: null,
+      rawDecision: null,
+      approvedPlanRef: null,
+    });
+    expect(h.trace).not.toContain("decide:method");
+    expect(h.executor.calls.run.at(-1)!.inputRefs).toContainEqual(ref);
+    expect(result.state.planning.approvedPlanRef).toBeUndefined();
+  },
+);
+
+test.each(["STANDARD", "TDD"] as const)(
+  "ambiguous eligible method %s is bounded, reserved and durable before automatic Planner continuation",
+  async (method) => {
+    const h = await setup({ method });
+    const result = await h.drive();
+    expect(result.state.phase).toBe("awaiting-plan-review");
+    const decision = await h.decision(
+      result.state.planning.developmentMethodRef!,
+    );
+    expect(decision).toMatchObject({
+      family: "method",
+      outcome: method,
+      classifier: { provider: "typesafe", model: "jev-latest" },
+    });
+    expect(decision.inputRefs).toContainEqual(
+      result.state.planning.stageDecisionRefs!.architecture,
+    );
+    expect(decision.requestRef).toBeDefined();
+    const reservation = JSON.parse(
+      await h.deps.artifactStore.readText(decision.requestRef!),
+    );
+    expect(reservation.family).toBe("method");
+    const usage = JSON.parse(
+      await h.deps.artifactStore.readText(decision.usageRef!),
+    );
+    expect(usage.answers.decision.probabilities[method]).toBe(0.99);
+    expect(h.trace.indexOf("decide:method")).toBeLessThan(
+      h.trace.indexOf("child:planner"),
+    );
+    const calls = h.inputs.length;
+    expect(
+      (
+        await new PlanningRouting({
+          ...h.deps,
+          jevDecisionClient: undefined,
+        }).method(await h.load(), true)
+      ).method,
+    ).toBe(method);
+    expect(h.inputs).toHaveLength(calls);
+  },
+);
+
+test.each([
+  { method: "TDD" as const, methodConfidence: 0.2 },
+  { method: "ESCALATE" as const },
+])(
+  "unresolved method persists ESCALATE and never invents Human consent",
+  async (script) => {
+    const h = await setup(script);
+    const result = await h.drive();
+    expect(result.state.phase).toBe("blocked");
+    expect(result.state.block?.reason).toBe("operator-attention-required");
+    expect(
+      await h.decision(result.state.planning.developmentMethodRef!),
+    ).toMatchObject({ family: "method", outcome: "ESCALATE" });
+    expect(h.trace).not.toContain("child:planner");
+    expect(h.trace).not.toContain("human:plan");
+  },
+);
+
+test.each([
+  plan.replace("## Development Method\nSTANDARD", "## Development Method\nTDD"),
+  plan.replace(
+    "## Development Method\nSTANDARD",
+    "## Development Method\nTDD\n## Test Seams\nnone",
+  ),
+  plan,
+])(
+  "TDD Plan without explicit seams or with a reversed method never reaches Human Gate",
+  async (plannerOutput) => {
+    const h = await setup({ intent: "TDD", plannerOutput });
+    await expect(h.drive()).rejects.toThrow(/Test Seams|Development Method/u);
+    expect(h.trace).not.toContain("human:plan");
+    expect((await h.load()).planning.currentPlanRef).toBeUndefined();
+  },
+);
+
+test.each(["intent", "decision", "configuration"] as const)(
+  "resume rejects changed method %s without rerouting or Worker authority",
+  async (change) => {
+    const h = await setup({ method: "TDD" });
+    await h.drive();
+    const state = await h.load();
+    const count = h.inputs.length;
+    if (change === "intent") {
+      state.planning.developmentIntent = "BEHAVIOR_FREE";
+      await h.deps.stateStore.saveState(state, state.stateRevision);
+    } else if (change === "decision") {
+      await writeFile(
+        join(h.runDirectory, state.planning.developmentMethodRef!.path),
+        "corrupt method",
+      );
+    } else h.deps.configuration.decision.autoDecisionThreshold = 0.9;
+    const result = await resumeWorkflow("routing", {
+      ...h.deps,
+      runDirectory: h.runDirectory,
+    });
+    expect(["blocked", "failed"]).toContain(result.status);
+    expect(h.inputs).toHaveLength(count);
+    expect(h.executor.calls.run.some((input) => input.agent === "worker")).toBe(
+      false,
+    );
+  },
+);
+
+test.each(["artifact", "state"] as const)(
+  "method %s persistence failure prevents Planner and Human Gate",
+  async (fault) => {
+    const h = await setup({ intent: "TDD" });
+    const deps: WorkflowDriverDependencies = {
+      ...h.deps,
+      artifactStore: {
+        rootDirectory: h.deps.artifactStore.rootDirectory,
+        readText: h.deps.artifactStore.readText.bind(h.deps.artifactStore),
+        writeText: h.deps.artifactStore.writeText.bind(h.deps.artifactStore),
+        writeJson: async (kind, file, value, schema) => {
+          if (fault === "artifact" && kind === "development-method")
+            throw Error("method persistence fault");
+          return h.deps.artifactStore.writeJson(kind, file, value, schema);
+        },
+      },
+      stateStore: {
+        saveState: (
+          state: Awaited<ReturnType<typeof h.load>>,
+          revision?: number,
+        ) => {
+          if (fault === "state" && state.planning.developmentMethodRef)
+            throw Error("method persistence fault");
+          return h.deps.stateStore.saveState(state, revision);
+        },
+      },
+    };
+    await expect(driveWorkflow("routing", deps)).rejects.toThrow(
+      "method persistence fault",
+    );
+    expect(h.trace).not.toContain("child:planner");
+    expect(h.trace).not.toContain("human:plan");
   },
 );

@@ -117,6 +117,23 @@ export function normalizeWorkflowTask(args: string): string {
   return task;
 }
 
+export function parseWorkflowTask(
+  args: string,
+): Pick<StartWorkflowInput, "task" | "developmentIntent"> {
+  const normalized = normalizeWorkflowTask(args);
+  const flag = /^(--tdd|--behavior-free)(?:\s+|$)/u.exec(normalized)?.[1];
+  if (!flag) return { task: normalized };
+  const task = normalizeWorkflowTask(normalized.slice(flag.length));
+  if (/^--(?:tdd|behavior-free)(?:\s|$)/u.test(task))
+    throw new WorkflowCommandInputError(
+      "Choose only one Development Intent flag",
+    );
+  return {
+    task,
+    developmentIntent: flag === "--tdd" ? "TDD" : "BEHAVIOR_FREE",
+  };
+}
+
 export function parseWorkflowId(args: string): string {
   const values = args.trim().split(/\s+/u).filter(Boolean);
   const workflowId = values[0];
@@ -197,9 +214,9 @@ function registerStartCommand(
     description: `Start a ${playbook} workflow`,
     handler: async (args, context) =>
       runCommand(context, async () => {
-        const task = normalizeWorkflowTask(args);
+        const task = parseWorkflowTask(args);
         const result = await commandRuntime(context, options).start({
-          task,
+          ...task,
           playbook,
         });
         context.ui.notify(

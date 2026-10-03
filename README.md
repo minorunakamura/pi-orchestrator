@@ -72,6 +72,8 @@ Skills は JavaScript runtime dependencies ではありません。wrapper grill
 /wf-status <id>      # read-only
 ```
 
+Explicit method intent は `/wf-feature --tdd <task>`（全 start commands で利用可）、API の `developmentIntent: "TDD"`、またはtask内の独立した `Development Method: TDD` 宣言でcaptureします。Behavior-free work は `--behavior-free` / `developmentIntent: "BEHAVIOR_FREE"`、未指定は `AUTO` としてbounded routingを行います。TDD宣言が優先し、free-form proseからHuman intentを推測しません。
+
 v1 normal driver は pi-orchestrator の driveWorkflow() が所有します。single /wf-* invocation は genuine Human/external wait、blocked、failed、completed まで進み、accepted Human/child result は同じ driver で continuation します。繰り返し /wf-resume を使う phase-stepping は通常 progress ではなく、pi-subagents workflow scripts に control plane を移しません。
 
 #4 では **既存 runner 上の driver foundation** を実装しました。Commands は createWorkflow → driveWorkflow、/wf-resume は exact reconciliation → 同じ driver。Plan の公開 review-result notification は wake-up のみで、保存済み binding と取得した status を検証・保存してから継続します。既存 Validation/review/Fix loop は自動で進みますが、以下の target lifecycle 全体の実装済みを意味しません。[実装範囲・検証・後続 Issue](./docs/implementation/normal-workflow-driver.md) を参照してください。
@@ -123,6 +125,8 @@ Exact Plan hash/version が authority。required read-only Plan Simplicity Revie
 
 Explicit Human TDD request → deterministic TDD。Clearly inapplicable behavior-free work → STANDARD。それ以外の eligible ambiguity は bounded Jev; low confidence で Human decision を捏造しません。TDD approval は exact Test Seams に bindし、Worker が明示 tdd skill で vertical RED → minimal GREEN を実行します。TDD は deterministic Validation を置き換えません。
 
+#16 ではdurable method routing、必須 Development Method section / TDD Test Seams、exact Plan approval binding、explicit upstream `tdd`（必要時のみ `Supporting Skills: codebase-design`）のpublic launchを接続しました。Missing/extra skill、stale method/seams/launch、missing legacy intentはfail closed。Workerのslice reportはimmutable implementation evidenceに保存され、Validation Contractは引き続き独立のdeterministic authorityです。[Acceptance coverage・実Human/Worker smoke・制限](./docs/implementation/development-method.md)を参照してください。Parserの `Implementation Plan` → strategy sections / simplicity readinessの変更は #14、material deviation本体は #15のままです。
+
 Worker は local internal choice を行えますが、unauthorized component/dependency/API/boundary/scope/method/seam/Validation change は実装前に止まり、durable deviation evidence → new Plan/simplicity/Human Gate を必要とします。Oracle/classifier/reviewer advice は permission ではありません。
 
 ## Validation / Human Gates / workspace
@@ -149,7 +153,7 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11) は実装・検証済みです。TDD routing/simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11)、Development Method / TDD (#16) は実装・検証済みです。Simplicity/Oracle escalation/Codemode enablement/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 

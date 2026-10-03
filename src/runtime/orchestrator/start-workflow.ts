@@ -1,3 +1,7 @@
+import {
+  developmentIntents,
+  type DevelopmentIntent,
+} from "../../core/decisions/planning-routing.ts";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
@@ -23,6 +27,7 @@ import type { WorkflowStateWriter } from "./advance-workflow.ts";
 
 export interface StartWorkflowInput {
   task: string;
+  developmentIntent?: DevelopmentIntent;
   playbook: PlaybookKind;
   context?: PlaybookContext;
   cwd?: string;
@@ -65,6 +70,11 @@ function assertStartInput(input: StartWorkflowInput): void {
   if (input.task.trim().length === 0) {
     throw new Error("Workflow task must not be empty");
   }
+  if (
+    input.developmentIntent !== undefined &&
+    !developmentIntents.includes(input.developmentIntent)
+  )
+    throw Error("Invalid Development Intent");
   if (!playbookKinds.includes(input.playbook)) {
     throw new Error(`Unsupported playbook: ${input.playbook}`);
   }
@@ -101,6 +111,11 @@ export async function createWorkflow(
     phase: "gathering-context",
     taskRef,
     planning: {
+      developmentIntent: /^\s*(?:#+\s*)?Development Method:\s*TDD\s*$/imu.test(
+        input.task,
+      )
+        ? "TDD"
+        : (input.developmentIntent ?? "AUTO"),
       agentAttempts: {},
       context: {},
       stageDecisionRefs: {},

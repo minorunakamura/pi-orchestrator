@@ -24,6 +24,9 @@ Preserve authority boundaries.
 Use existing ports.
 ## Implementation Plan
 Add regression tests and fix the contracts.
+## Development Method
+STANDARD
+
 ## Validation Contract
 \`\`\`orchestrator-validation
 {"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}

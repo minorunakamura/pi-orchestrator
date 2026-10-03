@@ -42,6 +42,9 @@ Keep runtime orchestration behind existing ports.
 ## Implementation Plan
 1. Add focused tests.
 
+## Development Method
+STANDARD
+
 ## Validation Contract
 
 \`\`\`orchestrator-validation

@@ -33,6 +33,9 @@ Keep parsing and orchestration behind their existing boundaries.
 1. Add focused tests.
 2. Implement the smallest safe change.
 
+## Development Method
+STANDARD
+
 ## Validation Contract
 
 \`\`\`orchestrator-validation

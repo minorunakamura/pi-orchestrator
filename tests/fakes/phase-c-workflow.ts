@@ -64,6 +64,9 @@ export interface RoundReply {
   reasonConfidence?: number;
 }
 export interface WorkflowScript {
+  developmentIntent?: "AUTO" | "TDD" | "BEHAVIOR_FREE";
+  method?: "STANDARD" | "TDD";
+  supportingSkills?: boolean;
   clarification?: boolean;
   rounds?: RoundReply[];
   routes?: { model: ModelTier; reasoning: ReasoningTier }[];
@@ -145,6 +148,13 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   await mkdir(repositoryCwd);
   await promisify(execFile)("git", ["init", "--quiet", repositoryCwd]);
   const workflowId = "full-fake";
+  const fixturePlan =
+    script.developmentIntent === "TDD" || script.method === "TDD"
+      ? plan.replace(
+          "## Development Method\nSTANDARD",
+          `## Development Method\nTDD\n## Test Seams\n- public checkout(cart): accepts a valid cart; use the injected payment port and assert the observable receipt.\n## Do not test\n- private helpers or internal collaborator calls${script.supportingSkills ? "\n## Supporting Skills\ncodebase-design" : ""}`,
+        )
+      : plan;
   const runsDirectory = join(repositoryCwd, ".pi", "orchestrator", "runs");
   const runDirectory = join(runsDirectory, workflowId);
   const artifactStore = new ArtifactStore(runDirectory);
@@ -153,7 +163,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   configuration.jev =
     script.consent === false
       ? {}
-      : jevPolicy(repositoryCwd, (script.maxRequests ?? 100) + 3);
+      : jevPolicy(repositoryCwd, (script.maxRequests ?? 100) + 4);
   configuration.jev.maxTransportRetries = script.transportRetries ?? 0;
   configuration.validation.stopOnInfrastructureFailure =
     script.stopOnInfrastructureFailure ?? true;
@@ -266,8 +276,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     const output =
       request.agent === "planner"
         ? nth === 1
-          ? plan
-          : plan.replace(
+          ? fixturePlan
+          : fixturePlan.replace(
               "Preserve the public API.",
               `Preserve the public API with approved clarification ${nth}.`,
             )
@@ -390,6 +400,24 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
           choice: "SKIP",
           confidence: 0.99,
           probabilities: { RUN: 0.005, SKIP: 0.99, ESCALATE: 0.005 },
+        },
+      });
+    }
+    if (
+      request.questions.decision?.criteria &&
+      "TDD" in request.questions.decision.criteria
+    ) {
+      planningCalls++;
+      return classification({
+        decision: {
+          type: "choice",
+          choice: script.method ?? "STANDARD",
+          confidence: 0.99,
+          probabilities: {
+            STANDARD: script.method === "TDD" ? 0.005 : 0.99,
+            TDD: script.method === "TDD" ? 0.99 : 0.005,
+            ESCALATE: 0.005,
+          },
         },
       });
     }
@@ -534,7 +562,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   );
   planningDeps.configuration = {
     ...configuration,
-    jev: jevPolicy(repositoryCwd, (script.maxRequests ?? 100) + 3),
+    jev: jevPolicy(repositoryCwd, (script.maxRequests ?? 100) + 4),
   };
   planningDeps.configuration.jev.maxTransportRetries =
     configuration.jev.maxTransportRetries;
@@ -542,6 +570,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
     const started = await startWorkflow(
       {
         task: "Implement the approved feature",
+        developmentIntent: script.developmentIntent,
         playbook: "feature",
         cwd: repositoryCwd,
       },

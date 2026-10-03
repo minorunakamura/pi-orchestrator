@@ -18,6 +18,7 @@ import {
   runOracleAdvice,
   freshOracleAdvice,
 } from "../../../src/runtime/orchestrator/oracle-advisory.ts";
+import { PlanningRouting } from "../../../src/runtime/orchestrator/planning-routing.ts";
 import { PlanningAgentPendingError } from "../../../src/runtime/orchestrator/planning-agent-run.ts";
 import type { SubagentExecutor } from "../../../src/runtime/ports/subagent-executor.ts";
 import { createWorkflowCommandRuntime } from "../../../src/commands/index.ts";
@@ -35,6 +36,9 @@ const output =
 async function setup(outcome: "success" | "ambiguous" | "failed" = "success") {
   const h = await phaseCWorkflow();
   workflows.push(h);
+  // Consult against the complete current strategy frontier; resolving a new method
+  // afterward legitimately makes exact-State Oracle advice stale.
+  await new PlanningRouting(h).method(await h.load());
   const runId = subagentRunId("oracle-run");
   const succeeded = { status: "succeeded" as const, runId, output };
   const oracle = new FakeSubagentExecutor({

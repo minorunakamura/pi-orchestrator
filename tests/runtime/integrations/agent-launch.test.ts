@@ -252,6 +252,45 @@ test("Worker explicitly requests TDD, while Oracle must be builtin and advisory/
   expect(agentLaunchPolicy("oracle").forbiddenTools).toContain("bash");
 });
 
+test("released Worker skill selection isolates STANDARD and explicitly resolves optional codebase-design", async () => {
+  const f = await fixture();
+  await Promise.all(
+    ["tdd", "codebase-design"].map(async (name) => {
+      await mkdir(join(f.root, "agent/skills", name), { recursive: true });
+      await writeFile(
+        join(f.root, "agent/skills", name, "SKILL.md"),
+        `---\nname: ${name}\ndescription: Skill selection contract probe\n---\n${name}\n`,
+      );
+    }),
+  );
+  const profile = { provider: "test", model: "model", thinking: "off" };
+  const standard = {
+    ...f.request,
+    agent: "worker",
+    executionProfile: profile,
+    launchPolicy: agentLaunchPolicy("worker", profile),
+  };
+  const launch = await f.adapter.preflight(standard);
+  expect(launch.skills).toEqual([]);
+  expect(launch.requestedSkills).toEqual([]);
+  expect(launch.inheritSkills).toBe(false);
+  const tdd = {
+    ...standard,
+    launchPolicy: agentLaunchPolicy("worker", profile, [
+      "tdd",
+      "codebase-design",
+    ]),
+  };
+  expect(
+    (await f.adapter.preflight(tdd)).skills.map((skill) => skill.name),
+  ).toEqual(["codebase-design", "tdd"]);
+  await rm(join(f.root, "agent/skills/codebase-design"), { recursive: true });
+  await expect(
+    f.adapter.run({ ...tdd, onPrepared: async () => {} }),
+  ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
+  expect(f.events.emitted).toHaveLength(0);
+});
+
 test("definition drift while saving launch evidence still starts zero children", async () => {
   const f = await fixture();
   await expect(

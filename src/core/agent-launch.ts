@@ -247,6 +247,9 @@ export function isAgentLaunchEvidence(
     selectedSkills.every((skill) =>
       skills.some((entry: unknown) => isRecord(entry) && entry.name === skill),
     ) &&
+    skills.every(
+      (skill) => isRecord(skill) && selectedSkills.includes(String(skill.name)),
+    ) &&
     (value.agent === "worker"
       ? policy.authorityRole === "implementation" &&
         policy.builtin === true &&

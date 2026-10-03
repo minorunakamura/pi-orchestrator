@@ -31,7 +31,7 @@ import {
 
 const roots: string[] = [];
 const runId = subagentRunId("worker-1");
-const plan = `# Plan\n\n## Scope / Requirements\nKeep the change small.\n\n## Architecture / Design\nUse the existing runtime boundary.\n\n## Implementation Plan\n1. Test.\n\n## Validation Contract\n\`\`\`orchestrator-validation\n{"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}\n\`\`\``;
+const plan = `# Plan\n\n## Scope / Requirements\nKeep the change small.\n\n## Architecture / Design\nUse the existing runtime boundary.\n\n## Implementation Plan\n1. Test.\n\n## Development Method\nSTANDARD\n\n## Validation Contract\n\`\`\`orchestrator-validation\n{"schemaVersion":1,"checks":[{"id":"tests","type":"command","command":"pnpm test","cwd":".","required":true}]}\n\`\`\``;
 
 function succeeded(output: string): AgentRunResult {
   return { status: "succeeded", runId, output };

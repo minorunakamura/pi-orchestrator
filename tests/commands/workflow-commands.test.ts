@@ -11,6 +11,7 @@ import type { WorkflowState } from "../../src/core/workflow/state.ts";
 import {
   createWorkflowCommandRuntime,
   registerWorkflowCommands,
+  parseWorkflowTask,
   type WorkflowCommandRuntime,
 } from "../../src/commands/index.ts";
 import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
@@ -124,6 +125,32 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 describe("ORCH-019 workflow commands", () => {
+  test("captures explicit method intent flags without guessing from task prose", async () => {
+    expect(parseWorkflowTask("--tdd preserve behavior")).toEqual({
+      task: "preserve behavior",
+      developmentIntent: "TDD",
+    });
+    expect(parseWorkflowTask("--behavior-free update README")).toEqual({
+      task: "update README",
+      developmentIntent: "BEHAVIOR_FREE",
+    });
+    expect(parseWorkflowTask("ordinary task")).toEqual({
+      task: "ordinary task",
+    });
+    expect(() => parseWorkflowTask("--tdd")).toThrow(/Usage/u);
+    expect(() => parseWorkflowTask("--tdd --behavior-free task")).toThrow(
+      /one Development Intent/u,
+    );
+    const runtime = makeRuntime();
+    await registration(runtime)
+      .get("wf-feature")!
+      .handler("--tdd preserve behavior", context());
+    expect(runtime.start).toHaveBeenCalledWith({
+      task: "preserve behavior",
+      playbook: "feature",
+      developmentIntent: "TDD",
+    });
+  });
   test("registers exactly the documented commands", () => {
     const commands = registration(makeRuntime());
     expect([...commands.keys()]).toEqual([

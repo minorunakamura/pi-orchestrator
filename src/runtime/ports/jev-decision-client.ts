@@ -152,9 +152,7 @@ export interface DecisionClassifierPort extends JevDecisionClient {
     input: PlanningClassifierInput,
     authorization?: JevCallAuthorization,
   ): Promise<
-    import("../../core/decisions/types.ts").Decision<
-      "STANDARD" | "TDD" | "ESCALATE"
-    >
+    import("../../core/decisions/planning-routing.ts").DevelopmentMethodDecision
   >;
 }
 

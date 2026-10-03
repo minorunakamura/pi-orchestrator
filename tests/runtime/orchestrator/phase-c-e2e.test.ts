@@ -85,7 +85,7 @@ describe("Phase C full fake end-to-end contract", () => {
     expect(h.validations).toEqual([contract]);
     expect(h.jevRequests).toHaveLength(2);
     const state = await h.load();
-    expect(state.jevUsage?.attemptsReserved).toBe(5);
+    expect(state.jevUsage?.attemptsReserved).toBe(6);
     const attempt = await artifact(h, state.coding.workerAttemptRef);
     expect(attempt).toMatchObject({
       status: "succeeded",
@@ -641,7 +641,9 @@ describe("Phase C full fake end-to-end contract", () => {
       await approvePlan(h);
       if (kind === "consent")
         h.configuration.jev.runtimePolicy!.grant.active = false;
-      await expect(h.implement()).rejects.toThrow(/consent|budget/iu);
+      await expect(h.implement()).rejects.toThrow(
+        /consent|budget|operator attention/iu,
+      );
       expect((await h.load()).block?.reason).toBe(
         "operator-attention-required",
       );
@@ -662,7 +664,7 @@ describe("Phase C full fake end-to-end contract", () => {
     await expect(h.evaluate()).rejects.toThrow(/consent|budget/iu);
     const state = await h.load();
     expect(state.block?.reason).toBe("operator-attention-required");
-    expect(state.jevUsage?.attemptsReserved).toBe(5);
+    expect(state.jevUsage?.attemptsReserved).toBe(6);
     expect(h.jevRequests).toHaveLength(2);
     expect(state.coding.acceptedFindingsRef).toBeUndefined();
     expect(state.coding.findingEvaluationRef).toBeUndefined();
@@ -670,7 +672,7 @@ describe("Phase C full fake end-to-end contract", () => {
     expect(await artifact(h, state.jevUsage?.latestRequestRef)).toMatchObject({
       family: "finding",
       findingId: "C1",
-      ordinal: 5,
+      ordinal: 6,
     });
   });
 
@@ -680,7 +682,7 @@ describe("Phase C full fake end-to-end contract", () => {
     await reviewedRound(h);
     await approveCode(h);
     expect(h.jevRequests).toHaveLength(3);
-    expect((await h.load()).jevUsage?.attemptsReserved).toBe(6);
+    expect((await h.load()).jevUsage?.attemptsReserved).toBe(7);
   });
 
   test("automated retry budget exhaustion stops the actual loop before another Worker", async () => {

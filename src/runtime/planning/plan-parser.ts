@@ -1,3 +1,4 @@
+import type { DevelopmentMethod } from "../../core/decisions/planning-routing.ts";
 import {
   planSections,
   planSectionsRequired,
@@ -19,6 +20,9 @@ export class PlanParseError extends Error {
 
 export interface ParsedPlan {
   content: string;
+  developmentMethod: DevelopmentMethod;
+  testSeams?: string;
+  supportingSkills: readonly "codebase-design"[];
   sections: readonly PlanSection[];
   validationContract: ValidationContract;
 }
@@ -183,5 +187,52 @@ export function parsePlan(
   const blocks = findValidationContractBlocks(markdown);
   assertValidationBlockBelongsToSection(allHeadings, blocks);
 
-  return { content: markdown, sections, validationContract };
+  const body = (section: PlanSection) => {
+    const heading = allHeadings.find((item) => item.section === section);
+    return heading
+      ? lines
+          .slice(heading.line + 1, sectionEnd(allHeadings, heading))
+          .join("\n")
+          .trim()
+      : undefined;
+  };
+  const method = body("Development Method")
+    ?.replace(/^[-*]\s+/u, "")
+    .trim();
+  if (method !== "STANDARD" && method !== "TDD")
+    throw new PlanParseError(
+      "Development Method must be exactly STANDARD or TDD",
+    );
+  if (policy.developmentMethod && policy.developmentMethod !== method)
+    throw new PlanParseError(
+      "Plan Development Method contradicts the durable decision",
+    );
+  const testSeams = body("Test Seams");
+  if (
+    method === "TDD" &&
+    (!testSeams || /^(?:[-*]\s*)?(?:none|n\/a|tbd)$/iu.test(testSeams))
+  )
+    throw new PlanParseError(
+      "TDD requires explicit Human-reviewable Test Seams",
+    );
+  const supporting = body("Supporting Skills")
+    ?.replace(/^[-*]\s+/u, "")
+    .trim();
+  if (
+    supporting &&
+    supporting !== "none" &&
+    (method !== "TDD" || supporting !== "codebase-design")
+  )
+    throw new PlanParseError(
+      "Supporting Skills may only select codebase-design for TDD",
+    );
+  return {
+    content: markdown,
+    sections,
+    validationContract,
+    developmentMethod: method,
+    ...(testSeams ? { testSeams } : {}),
+    supportingSkills:
+      supporting === "codebase-design" ? ["codebase-design"] : [],
+  };
 }

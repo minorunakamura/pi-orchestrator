@@ -32,12 +32,37 @@ export type ClarificationMode = (typeof clarificationModes)[number];
 export type ConditionalStageDecision = Decision<StageOutcome>;
 export type ClarificationModeDecision = Decision<ClarificationMode>;
 
+export const developmentIntents = ["AUTO", "TDD", "BEHAVIOR_FREE"] as const;
+export type DevelopmentIntent = (typeof developmentIntents)[number];
+export type DevelopmentMethod = "STANDARD" | "TDD";
+export const developmentMethodOutcomes = [
+  "STANDARD",
+  "TDD",
+  "ESCALATE",
+] as const;
+export type DevelopmentMethodDecision = Decision<
+  (typeof developmentMethodOutcomes)[number]
+>;
+export type PlanningDecisionStage = ConditionalStage | "development-method";
+
+export function developmentMethodOutcome(
+  policy: StagePolicy,
+  decision: DevelopmentMethodDecision | null,
+  threshold: number,
+): (typeof developmentMethodOutcomes)[number] {
+  if (policy === "required") return "TDD";
+  if (policy === "skip") return "STANDARD";
+  return decision && decision.confidence >= threshold
+    ? decision.value
+    : "ESCALATE";
+}
+
 export interface PlanningDecisionBinding {
   schemaVersion: 1;
   decisionSchemaVersion: 1;
   workflowId: string;
   playbook: PlaybookKind;
-  stage: ConditionalStage;
+  stage: PlanningDecisionStage;
   policy: StagePolicy;
   policyVersion: "planning-routing-1";
   /** A pre-plan decision is never implementation/Plan approval authority. */
@@ -61,6 +86,11 @@ export type PlanningDecisionArtifact = PlanningDecisionBinding &
         family: "clarification";
         rawDecision: ClarificationModeDecision | null;
         outcome: ClarificationMode;
+      }
+    | {
+        family: "method";
+        rawDecision: DevelopmentMethodDecision | null;
+        outcome: (typeof developmentMethodOutcomes)[number];
       }
   ) & {
     /** Exact outbound reservation/usage, including probabilities, when a classifier was called. */
@@ -110,6 +140,11 @@ export function isConditionalStageDecision(
 ): value is ConditionalStageDecision {
   return isRawDecision(value, stageOutcomes);
 }
+export function isDevelopmentMethodDecision(
+  value: unknown,
+): value is DevelopmentMethodDecision {
+  return isRawDecision(value, developmentMethodOutcomes);
+}
 export function isClarificationModeDecision(
   value: unknown,
 ): value is ClarificationModeDecision {
@@ -149,7 +184,10 @@ export function isPlanningDecisionArtifact(
     typeof value.workflowId !== "string" ||
     !value.workflowId ||
     !isOneOf(playbookKinds, value.playbook) ||
-    !isOneOf(conditionalStages, value.stage) ||
+    !isOneOf(
+      [...conditionalStages, "development-method"] as const,
+      value.stage,
+    ) ||
     !isOneOf(["required", "conditional", "skip"] as const, value.policy) ||
     value.policyVersion !== "planning-routing-1" ||
     value.approvedPlanRef !== null ||
@@ -180,8 +218,18 @@ export function isPlanningDecisionArtifact(
     !isArtifactRef(value.requestRef)
   )
     return false;
+  if (value.family === "method")
+    return (
+      value.stage === "development-method" &&
+      isOneOf(developmentMethodOutcomes, value.outcome) &&
+      (value.policy === "conditional"
+        ? isDevelopmentMethodDecision(value.rawDecision)
+        : value.rawDecision === null &&
+          value.outcome === developmentMethodOutcome(value.policy, null, 1))
+    );
   if (value.family === "stage")
     return (
+      isOneOf(conditionalStages, value.stage) &&
       isOneOf(stageOutcomes, value.outcome) &&
       (value.policy === "conditional"
         ? isConditionalStageDecision(value.rawDecision)

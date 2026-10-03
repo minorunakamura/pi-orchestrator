@@ -25,6 +25,9 @@ Preserve the existing parser boundary.
 ## Implementation Plan
 Add regression tests and the smallest change.
 
+## Development Method
+STANDARD
+
 ## Validation Contract
 
 \`\`\`orchestrator-validation

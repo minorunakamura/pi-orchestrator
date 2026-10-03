@@ -1,3 +1,5 @@
+import { validateWorkerStrategy } from "../worker/development-strategy.ts";
+import { PlanningRouting } from "./planning-routing.ts";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { SubagentNotDispatchedError } from "../ports/subagent-executor.ts";
@@ -656,6 +658,7 @@ export async function validateCompletedWorkerAttempt(
   state: WorkflowState,
   ref: ArtifactRef<"implementation">,
   attempt: WorkerAttemptEvidence,
+  executor?: SubagentExecutor,
 ): Promise<boolean> {
   // An unpublished next attempt still belongs to reconciliation, not continuation.
   if (
@@ -774,6 +777,7 @@ export async function validateCompletedWorkerAttempt(
       routing.attempt !== attempt.targetRevision
     )
       throw new Error("Completed Worker routing binding mismatch");
+    await validateWorkerStrategy(store, state, attempt, executor);
     parsePlan(
       await readAuthoritativeText(
         readable,
@@ -784,7 +788,9 @@ export async function validateCompletedWorkerAttempt(
         architectureRequired: state.planning.architectureRequired !== false,
       },
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof RuntimePortError && error.kind === "reconciliation")
+      throw error;
     throw new WorkerAttemptAuthorityError(
       "authoritative-artifact-corrupt",
       attempt.implementationRef!,
@@ -1346,8 +1352,19 @@ export class CodingOrchestrator {
           input.state,
           previousAttemptRef,
           previousAttempt,
+          this.dependencies.subagentExecutor,
         );
       } catch (error) {
+        if (
+          error instanceof RuntimePortError &&
+          error.kind === "reconciliation"
+        )
+          return blockAndThrow(
+            input.state,
+            "operator-attention-required",
+            this.dependencies.stateStore,
+            error,
+          );
         await advanceWorkflow(
           input.state,
           {
@@ -1395,6 +1412,14 @@ export class CodingOrchestrator {
       approvedPlanRef,
       "approved plan",
     );
+    const method = await new PlanningRouting(this.dependencies).method(
+      input.state,
+      true,
+    );
+    const parsedPlan = parsePlan(planContent, {
+      architectureRequired: input.state.planning.architectureRequired !== false,
+      developmentMethod: method.method,
+    });
     const planEvidence = extractPlanEvidence(planContent);
     const refs = contextRefs(input.state);
     const contextEvidence = await Promise.all(
@@ -1645,6 +1670,10 @@ export class CodingOrchestrator {
     }
 
     const workerInput: WorkerInput = {
+      developmentMethod: parsedPlan.developmentMethod,
+      testSeams: parsedPlan.testSeams,
+      developmentMethodRef: input.state.planning.developmentMethodRef!,
+      skills: parsedPlan.supportingSkills,
       approvedPlanRef,
       contextRefs: refs,
       executionProfile: resolvedProfile,
