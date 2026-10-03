@@ -147,7 +147,7 @@ Relevant method, clarification document evidence, Plan, implementation, counters
 
 ## 11. Authorization / accounting
 
-Operator/project grant supplies upper bounds for trusted canonical project, classifier/destination, evidence categories and finite request allowance。After generating workflowId, Orchestrator captures workflow-scoped durable authorization no broader than that grant (#11)。No need to preconfigure a future workflowId。
+Operator/project grant supplies upper bounds for trusted canonical project, classifier/destination, evidence categories and finite request allowance。After generating workflowId, Orchestrator captures workflow-scoped durable authorization no broader than that grant (#11)。No need to preconfigure a future workflowId。#11 captures `jev.runtimePolicy.grant` into immutable authorization evidence and State at the first authorized classifier boundary. Request/usage records reference that binding; current grant and original consent ceilings are independent. Cached decision reuse validates active consent/accounting but spends no new request. Classifier/grant identity drift or legacy binding ambiguity blocks instead of silently renewing authority. See [implementation / acceptance evidence](../implementation/classifier-authorization.md).
 
 Before each outbound attempt (including per-finding and transport retry), validate active grant/consent and exact project/workflow/classifier scope, then persist immutable reservation → State/counter before calling classifier。Missing/revoked/mismatched consent, exhausted/unknown budget or reservation write failure → zero network calls + blocked/operator attention。
 

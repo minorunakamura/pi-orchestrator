@@ -153,7 +153,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   configuration.jev =
     script.consent === false
       ? {}
-      : jevPolicy(workflowId, repositoryCwd, (script.maxRequests ?? 100) + 3);
+      : jevPolicy(repositoryCwd, (script.maxRequests ?? 100) + 3);
   configuration.jev.maxTransportRetries = script.transportRetries ?? 0;
   configuration.validation.stopOnInfrastructureFailure =
     script.stopOnInfrastructureFailure ?? true;
@@ -534,7 +534,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   );
   planningDeps.configuration = {
     ...configuration,
-    jev: jevPolicy(workflowId, repositoryCwd, (script.maxRequests ?? 100) + 3),
+    jev: jevPolicy(repositoryCwd, (script.maxRequests ?? 100) + 3),
   };
   planningDeps.configuration.jev.maxTransportRetries =
     configuration.jev.maxTransportRetries;

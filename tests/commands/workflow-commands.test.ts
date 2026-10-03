@@ -458,13 +458,9 @@ describe("ORCH-019 workflow commands", () => {
     let statusReads = 0;
     const configuration = {
       ...defaults,
-      jev: jevPolicy("pending-test-id", root),
+      jev: jevPolicy(root),
     };
     const rpc = new FakeSubagentRpc((request, bus) => {
-      // Test-only exact grant after observing the durable workflow ID; product grant capture is #11.
-      configuration.jev.runtimePolicy!.consent.workflowId = String(
-        request.ownerRunId,
-      );
       childRequests.push(request);
       const runId = `${String(request.agent)}-1`;
       bus.receipt(request, runId);
@@ -518,6 +514,11 @@ describe("ORCH-019 workflow commands", () => {
       });
       const started = await runtime.start({ task: "smoke", playbook: "chore" });
       expect(started.state.phase).toBe("awaiting-plan-review");
+      expect(started.workflowId).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(configuration.jev.runtimePolicy!.grant).not.toHaveProperty(
+        "workflowId",
+      );
+      expect(started.state.jevUsage!.authorizationRef).toBeDefined();
       expect(childRequests.map((request) => request.agent)).toEqual([
         "workflow-scout",
         "planner",

@@ -117,7 +117,7 @@ The production command composition passes the active context.modelRegistry to th
 
 ### Product Runtime Consent and Budget (I5)
 
-Operator/project grant upper bounds canonical trusted project/classifier/destination/evidence categories/finite requests。After generated workflowId, persist workflow-scoped consent no broader than that grant (#11)。No preconfiguration of unknown workflowId is required。
+Operator/project grant upper bounds canonical trusted project/classifier/destination/evidence categories/finite requests。After generated workflowId, persist workflow-scoped consent no broader than that grant (#11)。No preconfiguration of unknown workflowId is required。#11 implements `jev.runtimePolicy.grant` and lazy immutable `decisions/jev-authorization.json` → CAS `jevUsage.authorizationRef` before the first reservation. Both current grant and captured consent ceilings apply; settings widening never expands an existing binding, and narrowing/revocation is revalidated. Cached decisions validate consent/accounting without spending or rebinding. Grant ID/version, canonical project or classifier identity drift blocks rather than replacing authority. Old consent settings/history are not silently migrated; [implementation and live generated-ID smoke](../implementation/classifier-authorization.md) records the scope.
 
 Before every outbound attempt—including per-finding and retry—validate active exact scope, persist immutable reservation then State/counter。Missing/revoked/mismatched consent, unknown/exhausted budget or save failure → zero network calls + operator-attention block。Use State returned by reservation in subsequent runner operations。
 

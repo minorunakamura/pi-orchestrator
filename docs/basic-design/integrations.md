@@ -119,7 +119,7 @@ Workflow-specific `failureKind` is used only when the chosen public execution mo
 
 #19 replaces direct client construction with Pi's public ModelRegistry。`JevIntegration` and `PiClassifierDecisionClient` are the same adapter; no model-facing typesafe_evaluate, `/typesafe enable`, direct backend registry or automatic evaluator fallback。
 
-`jev.classifier` selects explicit provider/model (default typesafe/jev-latest); consent destination binds that exact provider/model。Legacy jev.endpoint / URL consent is rejected, not silently migrated。All six family contracts use native Choice; existing three production coding runners are connected, planning lifecycle remains #6/#8/#16。Pi 0.99.1 live native Jev smoke passed; `pi-typesafe` is removed。See [#19 verification and removal gate](../implementation/native-classifier-migration.md)。
+`jev.classifier` selects explicit provider/model (default typesafe/jev-latest); `runtimePolicy.grant.destination` and captured workflow consent bind that exact provider/model。Legacy jev.endpoint / URL consent is rejected, not silently migrated。All six family contracts use native Choice; existing three production coding runners are connected, planning lifecycle remains #6/#8/#16。Pi 0.99.1 live native Jev smoke passed; `pi-typesafe` is removed。See [#19 verification and removal gate](../implementation/native-classifier-migration.md)。
 
 Orchestrator owns operator/project grant upper bounds, generated-workflow scoped consent and finite attempt budget (#11)。Credentials/model availability/Plan approval are not authorization。Reservation Artifact → State before every outbound attempt, including per-finding/retry。Timeout stays charged; no secret durability or silent transport fallback。
 

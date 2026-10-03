@@ -2,18 +2,16 @@ import type { JevConfiguration } from "../../src/core/configuration.ts";
 import type { JevCallAuthorization } from "../../src/runtime/ports/jev-decision-client.ts";
 
 export function jevPolicy(
-  workflowId: string,
   projectRoot = process.cwd(),
   maxRequests = 100,
 ): JevConfiguration {
   return {
     runtimePolicy: {
       maxRequests,
-      consent: {
+      grant: {
         id: "test-operator-consent",
         policyVersion: "test-policy-1",
         active: true,
-        workflowId,
         projectRoot,
         destination: "typesafe/jev-latest",
         evidenceCategories: [
@@ -28,6 +26,7 @@ export function jevPolicy(
           "diagnosis",
           "research",
           "clarification",
+          "design",
         ],
       },
     },

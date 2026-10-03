@@ -73,6 +73,71 @@ test.each([
   ).toThrow(SchemaValidationError);
 });
 
+test("operator grant is configurable without a future workflow ID; legacy consent is rejected", () => {
+  const configuration = validConfiguration();
+  const runtimePolicy = {
+    maxRequests: 10,
+    grant: {
+      id: "operator-grant",
+      policyVersion: "1",
+      active: true,
+      projectRoot: "/project",
+      destination: "typesafe/jev-latest",
+      evidenceCategories: ["task"],
+    },
+  };
+  expect(
+    parseConfiguration({ ...configuration, jev: { runtimePolicy } }).jev
+      .runtimePolicy,
+  ).toEqual(runtimePolicy);
+  expect(() =>
+    parseConfiguration({
+      ...configuration,
+      jev: {
+        runtimePolicy: {
+          maxRequests: 10,
+          consent: { ...runtimePolicy.grant, workflowId: "old-id" },
+        },
+      },
+    }),
+  ).toThrow(SchemaValidationError);
+  expect(() =>
+    parseConfiguration({
+      ...configuration,
+      jev: {
+        runtimePolicy: {
+          ...runtimePolicy,
+          grant: { ...runtimePolicy.grant, workflowId: "*" },
+        },
+      },
+    }),
+  ).toThrow(SchemaValidationError);
+  for (const maxRequests of [
+    Infinity,
+    NaN,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    expect(() =>
+      parseConfiguration({
+        ...configuration,
+        jev: { runtimePolicy: { ...runtimePolicy, maxRequests } },
+      }),
+    ).toThrow(SchemaValidationError);
+  expect(() =>
+    parseConfiguration({
+      ...configuration,
+      jev: {
+        runtimePolicy: {
+          ...runtimePolicy,
+          grant: { ...runtimePolicy.grant, evidenceCategories: ["*"] },
+        },
+      },
+    }),
+  ).toThrow(SchemaValidationError);
+});
+
 test("rejects invalid retry limits and missing execution profile mappings", () => {
   const configuration = validConfiguration();
 

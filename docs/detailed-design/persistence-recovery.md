@@ -94,6 +94,8 @@ This pre-side-effect barrier applies to child/Oracle/Worker dispatch, each class
 
 The next stage must never begin before State persistence succeeds.
 
+#11 classifier ordering is `operator/project grant → generated workflow → immutable authorization → CAS authorizationRef → immutable reservation → CAS counter/ref → native classify → immutable usage → CAS usageRef`. `jevUsage.authorizationRef` binds the captured workflow scope; each reservation/usage records that ref and grant/consent identity. Counters and prior reservation hashes must agree on request and reuse paths. Orphan authority/accounting and legacy consumed requests without the binding block explicit recovery; do not overwrite/rebind/refund or infer a fresh budget. See [authorization record and validation](../implementation/classifier-authorization.md).
+
 ### 6.1 Worker Attempt Evidence (I2)
 
 The normal runtime must leave a durable append-only attempt history under implementation/, with verified agent-launch projection and schema-valid lifecycle records. All attempts bind public preflight policy/actual receipt (physical model/thinking/skills/effective tools/Agent definition/inheritance/package/lifecycle/launch digest). Intent/failure records are not successful implementation results and must never be used as `coding.implementationRef` or emit `IMPLEMENTATION_COMPLETE`. `coding.workerAttemptRef` points to the latest lifecycle record; each later record links its predecessor.

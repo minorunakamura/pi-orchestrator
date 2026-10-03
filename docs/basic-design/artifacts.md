@@ -38,7 +38,7 @@ Paths below are naming patterns, created on demand; N/attempt identity must be u
 | oracle-advisory | advisory/oracle-*.json | builtin oracle → current caller; trigger/input refs/launch/budget/output; advisory only |
 | agent-launch | agent-runs/launch-*.json | public preflight + Orchestrator policy → dispatch/recovery; resolved launch projection, not State authority |
 | execution-routing | decisions/execution-routing-*.json | classifier + deterministic policy → Worker; exact authority/input/profile floor |
-| jev-request | decisions/jev-request-*.json | Orchestrator reservation/accounting → authorization/recovery; workflow grant/consent/classifier/ordinal/usage |
+| jev-request | decisions/jev-authorization.json; decisions/jev-request-*.json | Orchestrator workflow authorization + reservation/accounting → authorization/recovery; exact grant/consent/classifier/categories/budget/ref/ordinal/usage |
 | workspace-evidence | workspace/snapshot-*.json | deterministic Git/filesystem observer → Worker/review/recovery; manifest/baseline/content digest |
 | implementation | implementation/attempt-*.json or revision-*.json | Worker lifecycle/success observation → Validation; intent/failure is NOT implementation success |
 | plan-deviation | implementation/deviation-*.json | stopped Worker + Orchestrator → replan/optional Oracle; exact Plan/attempt/observed changes/proposed material change |

@@ -178,7 +178,7 @@ export async function scenario(jev: JevDecisionClient) {
     ...started,
     configuration: {
       ...configuration,
-      jev: jevPolicy(started.state.workflowId, started.state.projectRoot),
+      jev: jevPolicy(started.state.projectRoot),
     },
     repositoryCwd,
     jevDecisionClient: jev,

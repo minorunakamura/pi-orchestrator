@@ -91,6 +91,49 @@ test("loads the production configuration through Pi global then project settings
   }
 });
 
+test("untrusted project settings cannot supply classifier grants", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-orchestrator-grant-trust-"));
+  const agentDir = join(root, "agent");
+  try {
+    await mkdir(agentDir);
+    await mkdir(join(root, ".pi"));
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ piOrchestrator: settings }),
+    );
+    await writeFile(
+      join(root, ".pi", "settings.json"),
+      JSON.stringify({
+        piOrchestrator: {
+          jev: {
+            runtimePolicy: {
+              maxRequests: 1,
+              grant: {
+                id: "project-grant",
+                policyVersion: "1",
+                active: true,
+                projectRoot: root,
+                destination: "typesafe/jev-latest",
+                evidenceCategories: ["task"],
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(
+      loadProductionConfiguration(root, { agentDir, projectTrusted: false }).jev
+        .runtimePolicy,
+    ).toBeUndefined();
+    expect(
+      loadProductionConfiguration(root, { agentDir, projectTrusted: true }).jev
+        .runtimePolicy?.grant.id,
+    ).toBe("project-grant");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("fails closed when production configuration is missing or invalid", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-orchestrator-config-"));
   const agentDir = join(root, "agent");

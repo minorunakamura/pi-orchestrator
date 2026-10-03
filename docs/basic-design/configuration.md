@@ -82,13 +82,40 @@ No requirement to configure a not-yet-generated exact workflowId in project sett
 
 Reserve every actual request including per-finding and retries before dispatch。Timeout remains charged; restart/client recreation cannot refund/reset allowance。API key/model availability, Plan approval and `/typesafe enable` are not Product Runtime consent。
 
+#11 implements this grant in the existing `piOrchestrator.jev` configuration (other required decision/profile/reasoning settings are unchanged):
+
+```json
+{
+  "jev": {
+    "classifier": { "provider": "typesafe", "model": "jev-latest" },
+    "runtimePolicy": {
+      "maxRequests": 20,
+      "grant": {
+        "id": "project-classifier-grant",
+        "policyVersion": "1",
+        "active": true,
+        "projectRoot": "/absolute/project/path",
+        "destination": "typesafe/jev-latest",
+        "evidenceCategories": ["task", "scout", "diagnosis", "research", "clarification", "design", "history", "plan", "context", "implementation", "review", "validation"]
+      }
+    }
+  }
+}
+```
+
+Choose only the evidence categories the operator permits; the list above is explicit, not an implicit default or wildcard. `maxRequests` is a non-negative safe integer, `0` permits no requests. Both project paths must be absolute and resolve to the same canonical `realpath`; path aliases do not create another budget. No future UUID or `workflowId: "*"` is accepted in the grant.
+
+Capture is lazy at the first authorized classifier boundary, after `createWorkflow()` generated/persisted the workflow. Immutable `decisions/jev-authorization.json` (kind `jev-request`) binds grant ID/version, consent ID, exact workflow/canonical project/classifier/destination/categories/budget. `jevUsage.authorizationRef` is saved under CAS before the first reservation. Every reservation/usage links that authorization; current grant and captured consent independently limit requests/categories. Widening settings cannot widen existing workflow consent, narrowing settings takes effect on validation, and accounting is never reset.
+
+Cached classifier decisions also require active exact consent/accounting, without creating a new binding or spending allowance; exhaustion alone does not forbid a zero-request fresh reuse. Changing grant ID/policyVersion or classifier provider/model requires explicit operator reconciliation, not automatic rebinding. Missing legacy scope/accounting, missing authorization for consumed attempts, corruption, CAS/write failure or orphan collision blocks with zero requests. Old `runtimePolicy.consent` settings are rejected; no silent migration of historical authority. See [#11 implementation / validation / limitations](../implementation/classifier-authorization.md).
+
 ## 7. Native classifier configuration
 
 Target config selects native classifier provider/model via Pi registry; provider/auth plumbing belongs to Pi。Explicit maxRetries:0 disables hidden provider retries; each Orchestrator retry needs a new durable reservation。Use finite signal/deadline and require stopReason:stop plus valid complete answers (classify errors/aborts are returned results, not necessarily exceptions)。No silent classifier/LLM fallback。Classifier identity and bounded request/policy/config digests are required for freshness。
 
-#19 implements `jev.classifier: { provider: "typesafe", model: "jev-latest" }` (explicit default when omitted)。`runtimePolicy.consent.destination` must exactly equal `typesafe/jev-latest` (or the explicitly selected native provider/model)。The old `jev.endpoint` and URL consent are rejected; do not silently convert old authorization。Pi alone resolves provider authentication/transport; no API key/backend/endpoint belongs in product configuration。`timeoutMs` defaults to 15000 and `maxTransportRetries` to 0; explicit retries apply only to timeout/aborted results, since native error results do not expose a reliable retriable transport code。Each retry is newly reserved, never an evaluator fallback。
+#19 implements `jev.classifier: { provider: "typesafe", model: "jev-latest" }` (explicit default when omitted)。`runtimePolicy.grant.destination` must exactly equal `typesafe/jev-latest` (or the explicitly selected native provider/model)。The old `jev.endpoint` and URL consent are rejected; do not silently convert old authorization。Pi alone resolves provider authentication/transport; no API key/backend/endpoint belongs in product configuration。`timeoutMs` defaults to 15000 and `maxTransportRetries` to 0; explicit retries apply only to timeout/aborted results, since native error results do not expose a reliable retriable transport code。Each retry is newly reserved, never an evaluator fallback。
 
-Classifier provider/model and normalized non-secret configuration enter DecisionFreshness for Execution/Finding/Round, including empty finding evaluations。Runtime authorization is independently revalidated, not treated as a decision confidence/config grant。The generated-workflow operator grant → durable consent redesign remains #11; current runtime still requires exact workflow ID consent。The implementation status / dependency removal gate is [recorded separately](../implementation/native-classifier-migration.md)。
+Classifier provider/model and normalized non-secret configuration enter DecisionFreshness for Execution/Finding/Round, including empty finding evaluations。Runtime authorization is independently revalidated, not treated as a decision confidence/config grant。#11 implements operator grant → generated-workflow durable consent with separate authorization validation on outbound requests and cached decision reuse。The implementation status / dependency removal gate is [recorded separately](../implementation/native-classifier-migration.md)。
 
 ## 8. Validation / Human review / ownership
 

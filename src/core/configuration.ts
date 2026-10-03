@@ -46,11 +46,10 @@ export const jevEvidenceCategories = [
 export type JevEvidenceCategory = (typeof jevEvidenceCategories)[number];
 export interface JevRuntimePolicy {
   maxRequests: number;
-  consent: {
+  grant: {
     id: string;
     policyVersion: string;
     active: boolean;
-    workflowId: string;
     projectRoot: string;
     destination: string;
     evidenceCategories: readonly JevEvidenceCategory[];
@@ -105,33 +104,29 @@ export function isClassifierIdentity(
 export function isJevRuntimePolicy(value: unknown): value is JevRuntimePolicy {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ["maxRequests", "consent"]) ||
+    !hasOnlyKeys(value, ["maxRequests", "grant"]) ||
     !isNonNegativeInteger(value.maxRequests) ||
-    !isRecord(value.consent)
+    !Number.isSafeInteger(value.maxRequests) ||
+    !isRecord(value.grant)
   )
     return false;
-  const consent = value.consent;
+  const grant = value.grant;
   return (
-    hasOnlyKeys(consent, [
+    hasOnlyKeys(grant, [
       "id",
       "policyVersion",
       "active",
-      "workflowId",
       "projectRoot",
       "destination",
       "evidenceCategories",
     ]) &&
-    [
-      consent.id,
-      consent.policyVersion,
-      consent.workflowId,
-      consent.projectRoot,
-      consent.destination,
-    ].every(isNonEmptyString) &&
-    typeof consent.active === "boolean" &&
-    isSafeJevDestination(consent.destination) &&
-    Array.isArray(consent.evidenceCategories) &&
-    consent.evidenceCategories.every(
+    [grant.id, grant.policyVersion, grant.projectRoot, grant.destination].every(
+      isNonEmptyString,
+    ) &&
+    typeof grant.active === "boolean" &&
+    isSafeJevDestination(grant.destination) &&
+    Array.isArray(grant.evidenceCategories) &&
+    grant.evidenceCategories.every(
       (item) =>
         typeof item === "string" &&
         jevEvidenceCategories.some((category) => category === item),

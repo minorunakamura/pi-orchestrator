@@ -171,6 +171,7 @@ export interface FailureState {
 }
 
 export interface JevUsageState {
+  authorizationRef?: ArtifactRef<"jev-request">;
   attemptsReserved: number;
   latestRequestRef?: ArtifactRef<"jev-request">;
   latestUsageRef?: ArtifactRef<"jev-request">;
@@ -179,11 +180,15 @@ function isJevUsage(value: unknown): value is JevUsageState {
   return (
     isRecord(value) &&
     hasOnlyKeys(value, [
+      "authorizationRef",
       "attemptsReserved",
       "latestRequestRef",
       "latestUsageRef",
     ]) &&
     isNonNegativeInteger(value.attemptsReserved) &&
+    optional(value, "authorizationRef", (ref) =>
+      isArtifactOfKind(ref, "jev-request"),
+    ) &&
     optional(value, "latestRequestRef", (ref) =>
       isArtifactOfKind(ref, "jev-request"),
     ) &&

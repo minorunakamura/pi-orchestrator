@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,9 +10,9 @@ import {
 import { JevAuthorization } from "../../src/runtime/orchestrator/jev-authorization.ts";
 import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../src/runtime/persistence/state-store.ts";
-import type { WorkflowState } from "../../src/core/workflow/state.ts";
+import { createWorkflow } from "../../src/runtime/orchestrator/start-workflow.ts";
+import { FakeSubagentExecutor } from "../fakes/index.ts";
 import type { JevConfiguration } from "../../src/core/configuration.ts";
-import { workflowId } from "../../src/types.ts";
 
 /** Operator invokes this command to grant one harmless live classification. No Worker/Gate. */
 export default function classifierSmoke(pi: ExtensionAPI) {
@@ -41,7 +40,7 @@ export default function classifierSmoke(pi: ExtensionAPI) {
   });
   pi.registerCommand("classifier-smoke", {
     description:
-      "Authorize one live typesafe/jev-latest request with synthetic non-secret evidence (Issue #19)",
+      "Authorize one live typesafe/jev-latest request with synthetic task evidence and generated workflow consent (Issue #11)",
     handler: async (args, ctx) => {
       const reportPath = args.trim();
       if (!reportPath.startsWith("/tmp/"))
@@ -57,51 +56,40 @@ export default function classifierSmoke(pi: ExtensionAPI) {
         assert.equal(process.env.HERDR_ENV, "1");
         const root = await mkdtemp(join(tmpdir(), "pi-classifier-smoke-"));
         report.evidenceRoot = root;
-        const artifacts = new ArtifactStore(root);
-        const states = new StateStore(root);
-        const taskRef = await artifacts.writeText(
-          "task",
-          "task.md",
-          "Documentation-only spelling correction; repository inspection supplied all relevant facts. No external research needed.",
-        );
-        const now = new Date().toISOString();
-        const initial: WorkflowState = {
-          schemaVersion: 1,
-          workflowId: workflowId(`issue19-native-smoke-${randomUUID()}`),
-          projectRoot: await realpath(ctx.cwd),
-          stateRevision: 0,
-          playbook: "chore",
-          phase: "planning",
-          taskRef,
-          planning: { context: {}, currentPlanVersion: 0 },
-          coding: { implementationRevision: 0, reviewRound: 0 },
-          counters: {
-            automatedFixRoundsUsed: 0,
-            strongerRetriesUsed: 0,
-            humanCodeFeedbackRounds: 0,
-          },
-          jevUsage: { attemptsReserved: 0 },
-          external: {},
-          createdAt: now,
-          updatedAt: now,
-        };
-        const state = await states.saveState(initial, 0);
         const configuration: JevConfiguration = {
           timeoutMs: 15000,
           maxTransportRetries: 0,
           runtimePolicy: {
             maxRequests: 1,
-            consent: {
+            grant: {
               id: "operator-invoked-classifier-smoke",
-              policyVersion: "issue19-smoke-1",
+              policyVersion: "issue11-smoke-1",
               active: true,
-              workflowId: state.workflowId,
-              projectRoot: state.projectRoot!,
+              projectRoot: await realpath(ctx.cwd),
               destination: "typesafe/jev-latest",
               evidenceCategories: ["task"],
             },
           },
         };
+        // The grant exists before createWorkflow generates its UUID. No child is run.
+        const created = await createWorkflow(
+          {
+            task: "Synthetic documentation-only spelling correction; supplied facts are complete. No external research needed.",
+            playbook: "chore",
+            cwd: ctx.cwd,
+          },
+          { runsDirectory: root, subagentExecutor: new FakeSubagentExecutor() },
+        );
+        const { state, taskRef } = created;
+        const artifacts = new ArtifactStore(created.runDirectory);
+        const states = new StateStore(created.runDirectory);
+        assert.match(state.workflowId, /^[0-9a-f-]{36}$/u);
+        assert.equal(
+          Object.hasOwn(configuration.runtimePolicy!.grant, "workflowId"),
+          false,
+        );
+        report.workflowId = state.workflowId;
+        report.runDirectory = created.runDirectory;
         let requests = 0;
         const registry: PiClassifierRuntime = {
           findOfType: (type, provider, id) =>
@@ -111,9 +99,23 @@ export default function classifierSmoke(pi: ExtensionAPI) {
             const reserved = await states.loadState();
             assert.equal(reserved.jevUsage?.attemptsReserved, requests);
             assert.ok(reserved.jevUsage?.latestRequestRef);
+            assert.ok(reserved.jevUsage?.authorizationRef);
+            const binding = JSON.parse(
+              await artifacts.readText(reserved.jevUsage.authorizationRef),
+            );
+            assert.equal(binding.workflowId, state.workflowId);
+            assert.equal(binding.projectRoot, await realpath(ctx.cwd));
+            assert.equal(binding.destination, "typesafe/jev-latest");
+            assert.deepEqual(binding.evidenceCategories, ["task"]);
+            assert.equal(binding.maxRequests, 1);
             const record = JSON.parse(
               await artifacts.readText(reserved.jevUsage.latestRequestRef),
             );
+            assert.deepEqual(
+              record.authorizationRef,
+              reserved.jevUsage.authorizationRef,
+            );
+            assert.equal(record.consentId, binding.consentId);
             assert.equal(record.destination, "typesafe/jev-latest");
             assert.equal(record.recordType, "reservation");
             assert.equal(options?.maxRetries, 0);
@@ -140,8 +142,8 @@ export default function classifierSmoke(pi: ExtensionAPI) {
             ...configuration,
             runtimePolicy: {
               ...configuration.runtimePolicy!,
-              consent: {
-                ...configuration.runtimePolicy!.consent,
+              grant: {
+                ...configuration.runtimePolicy!.grant,
                 active: false,
               },
             },
@@ -177,7 +179,10 @@ export default function classifierSmoke(pi: ExtensionAPI) {
           3,
         );
         await assert.rejects(
-          adapter.routeStage(
+          new PiClassifierDecisionClient({
+            ...configuration,
+            modelRegistry: registry,
+          }).routeStage(
             input,
             new JevAuthorization(
               durable,
@@ -196,7 +201,7 @@ export default function classifierSmoke(pi: ExtensionAPI) {
         );
         assert.equal(
           durable.phase,
-          "planning",
+          "gathering-context",
           "classifier does not grant Workflow authority",
         );
         Object.assign(report, {
@@ -205,6 +210,7 @@ export default function classifierSmoke(pi: ExtensionAPI) {
           requests,
           decision,
           probabilities: result.answers.decision.probabilities,
+          authorizationRef: durable.jevUsage.authorizationRef,
           reservationRef: durable.jevUsage.latestRequestRef,
           resultRef: durable.jevUsage.latestUsageRef,
           requestDigest: result.requestDigest,
@@ -213,6 +219,8 @@ export default function classifierSmoke(pi: ExtensionAPI) {
           usage: result.usage,
           checks: [
             "live Pi native classifier",
+            "grant before generated workflow UUID",
+            "exact durable workflow authorization before request",
             "denied consent: zero calls",
             "reservation before classify",
             "maxRetries:0",
