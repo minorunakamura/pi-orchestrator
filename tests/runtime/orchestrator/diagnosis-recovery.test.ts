@@ -54,7 +54,7 @@ async function setup(receipt = true) {
     subagentExecutor: executor,
     loadState: () => stateStore.loadState(),
     cwd: root,
-    configuration: { ...configuration, jev: jevPolicy("diagnosis", root) },
+    configuration: { ...configuration, jev: jevPolicy(root) },
     jevDecisionClient: classifier,
   };
   await createWorkflow(

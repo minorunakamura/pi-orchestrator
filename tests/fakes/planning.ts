@@ -12,7 +12,7 @@ import {
   type StartWorkflowOptions,
 } from "../../src/runtime/orchestrator/start-workflow.ts";
 
-/** Explicit scripted classifier + exact workflow consent for unrelated stage/gate fixtures. */
+/** Explicit scripted classifier + project grant for unrelated stage/gate fixtures. */
 export function planningDependencies(
   state: Pick<WorkflowState, "workflowId" | "projectRoot">,
   choices: PlaybookContext = {},
@@ -20,7 +20,7 @@ export function planningDependencies(
   return {
     configuration: {
       ...configuration,
-      jev: jevPolicy(state.workflowId, state.projectRoot),
+      jev: jevPolicy(state.projectRoot),
     },
     jevDecisionClient: new FakeJevDecisionClient({
       stages: {

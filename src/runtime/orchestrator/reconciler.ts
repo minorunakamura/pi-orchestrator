@@ -85,6 +85,7 @@ import {
 } from "./coding-evidence.ts";
 import { routeRoundDecision } from "../../core/decisions/round-decision.ts";
 import { isDecisionFresh } from "../../core/decisions/decision-freshness.ts";
+import { JevAuthorization } from "./jev-authorization.ts";
 import { assertCodingAuthority } from "../../core/coding/authority.ts";
 
 export type ReconciliationStatus =
@@ -1716,6 +1717,20 @@ export class WorkflowReconciler {
         )
       )
         return "stale";
+      if (raw.length)
+        await new JevAuthorization(
+          state,
+          this.deps.configuration.jev,
+          this.deps.artifactStore,
+          this.deps.stateStore,
+          "finding",
+          [
+            "plan",
+            "implementation",
+            "review",
+            ...(evidence.previousDecision ? ["history" as const] : []),
+          ],
+        ).assertAllowed(false);
       const evaluatedIds = evaluation.findings.map((item) => item.findingId);
       if (
         raw.length !== evaluation.findings.length ||
@@ -1897,6 +1912,20 @@ export class WorkflowReconciler {
         ...inputRefs,
         ...(evidence.previousDecision ? [evidence.previousDecision.ref] : []),
       ];
+      await new JevAuthorization(
+        state,
+        this.deps.configuration!.jev,
+        this.deps.artifactStore,
+        this.deps.stateStore,
+        "round",
+        [
+          "plan",
+          "implementation",
+          "validation",
+          ...(state.phase === "reviewing" ? ["review" as const] : []),
+          ...(evidence.previousDecision ? ["history" as const] : []),
+        ],
+      ).assertAllowed(false);
       return artifact.freshness &&
         isDecisionFresh(
           artifact.freshness,

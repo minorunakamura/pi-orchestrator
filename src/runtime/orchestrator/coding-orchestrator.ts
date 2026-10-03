@@ -1465,6 +1465,24 @@ export class CodingOrchestrator {
           "Execution routing decision does not match the approved plan",
         );
       }
+      const authorization = new JevAuthorization(
+        input.state,
+        this.dependencies.configuration.jev,
+        store,
+        this.dependencies.stateStore,
+        "routing",
+        ["plan", "context"],
+      );
+      try {
+        await authorization.assertAllowed(false);
+      } catch (error) {
+        return blockAndThrow(
+          authorization.state,
+          jevBlockedReason(error),
+          this.dependencies.stateStore,
+          error,
+        );
+      }
       priorRouting = routingArtifact;
       if (!isDecisionFresh(routingArtifact.freshness, freshness)) {
         if (
@@ -1488,7 +1506,7 @@ export class CodingOrchestrator {
       );
       let rawDecision;
       try {
-        authorization.assertAllowed();
+        await authorization.assertAllowed();
         rawDecision = await this.dependencies.jevDecisionClient.routeExecution(
           routingInput,
           authorization.context,

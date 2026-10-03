@@ -165,7 +165,7 @@ export default function (pi: ExtensionAPI) {
           cwd,
           configuration: {
             ...defaults,
-            jev: jevPolicy(created.workflowId, cwd, 3),
+            jev: jevPolicy(cwd, 3),
           },
           jevDecisionClient: classifier,
         };

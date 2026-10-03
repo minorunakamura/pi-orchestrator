@@ -73,6 +73,33 @@ function digest(value: unknown): string {
   return calculateSha256(JSON.stringify(value));
 }
 
+function planningCategories(
+  refs: readonly ArtifactRef[],
+): JevEvidenceCategory[] {
+  const categories: JevEvidenceCategory[] = ["task", "scout"];
+  if (refs.some((item) => item.kind === "domain-document-write"))
+    categories.push("design");
+  for (const kind of [
+    "diagnosis",
+    "research",
+    "clarification",
+    "plan",
+  ] as const)
+    if (refs.some((item) => item.kind === kind)) categories.push(kind);
+  if (
+    refs.some((item) =>
+      [
+        "conditional-stage",
+        "clarification-mode",
+        "plan-review",
+        "round-decision",
+      ].includes(item.kind),
+    )
+  )
+    categories.push("history");
+  return categories;
+}
+
 /** Sequential durable decisions only; no questions, domain writes, or implementation grants. */
 export class PlanningRouting {
   constructor(private readonly deps: PlanningRoutingDependencies) {}
@@ -243,6 +270,17 @@ export class PlanningRouting {
           ? state.planning.stageDecisionRefs?.[stage]
           : state.planning.clarificationModeRef;
       if (ref) {
+        if (called) {
+          authorization = new JevAuthorization(
+            state,
+            configuration!.jev,
+            this.deps.artifactStore,
+            this.deps.stateStore,
+            family,
+            planningCategories(refs),
+          );
+          await authorization.assertAllowed(false);
+        }
         artifact = parsePlanningDecisionArtifact(
           JSON.parse(await authoritativeText(this.deps.artifactStore, ref)),
         );
@@ -288,27 +326,7 @@ export class PlanningRouting {
               "infrastructure",
               "Planning classifier is unavailable",
             );
-          const categories: JevEvidenceCategory[] = ["task", "scout"];
-          if (refs.some((item) => item.kind === "domain-document-write"))
-            categories.push("design");
-          for (const kind of [
-            "diagnosis",
-            "research",
-            "clarification",
-            "plan",
-          ] as const)
-            if (refs.some((item) => item.kind === kind)) categories.push(kind);
-          if (
-            refs.some((item) =>
-              [
-                "conditional-stage",
-                "clarification-mode",
-                "plan-review",
-                "round-decision",
-              ].includes(item.kind),
-            )
-          )
-            categories.push("history");
+          const categories = planningCategories(refs);
           authorization = new JevAuthorization(
             state,
             configuration!.jev,
@@ -317,7 +335,7 @@ export class PlanningRouting {
             family,
             categories,
           );
-          authorization.assertAllowed();
+          await authorization.assertAllowed();
           if (family === "stage") {
             const rawDecision = await client.routeStage(
               { ...input, stage, policy: "conditional" },

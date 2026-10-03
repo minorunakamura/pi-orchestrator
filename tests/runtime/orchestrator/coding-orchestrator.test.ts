@@ -160,7 +160,7 @@ function dependencies(
     subagentExecutor: new FakeSubagentExecutor({ run: succeeded("done") }),
     configuration: {
       ...configuration,
-      jev: jevPolicy(started.state.workflowId, started.state.projectRoot),
+      jev: jevPolicy(started.state.projectRoot),
     },
     ...overrides,
   };
@@ -609,7 +609,7 @@ describe("CodingOrchestrator ORCH-012", () => {
       const resumed = await persistedState(started.runDirectory);
       const config = {
         ...structuredClone(configuration),
-        jev: jevPolicy(started.state.workflowId, started.state.projectRoot),
+        jev: jevPolicy(started.state.projectRoot),
       };
       if (change === "configuration")
         config.decision.autoDecisionThreshold = 0.99;

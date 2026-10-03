@@ -64,7 +64,7 @@ async function setup(script: Script = {}) {
   const artifactStore = new ArtifactStore(runDirectory);
   const stateStore = new StateStore(runDirectory);
   const configuration = structuredClone(defaults);
-  configuration.jev = jevPolicy("routing", root);
+  configuration.jev = jevPolicy(root);
   const trace: string[] = [];
   const inputs: ClassifierContext[] = [];
   const client = new PiClassifierDecisionClient({
@@ -474,7 +474,7 @@ test("over-bound evidence, missing consent and exhausted budget all prevent clas
     // oxlint-disable-next-line eslint/no-await-in-loop
     const h = await setup();
     if (fault === "consent")
-      h.deps.configuration.jev.runtimePolicy!.consent.active = false;
+      h.deps.configuration.jev.runtimePolicy!.grant.active = false;
     if (fault === "budget")
       h.deps.configuration.jev.runtimePolicy!.maxRequests = 0;
     if (fault === "bound") {
@@ -529,6 +529,36 @@ test("low-confidence clarification mode escalates without invoking a Human port 
   ).toBe("blocked");
   expect(h.inputs).toHaveLength(count);
 });
+
+test.each(["revoked", "provider", "model", "categories", "grant"])(
+  "cached planning decisions cannot bypass %s consent drift",
+  async (change) => {
+    const h = await setup();
+    await h.gather();
+    const count = h.inputs.length;
+    const grant = h.deps.configuration.jev.runtimePolicy!.grant;
+    if (change === "revoked") grant.active = false;
+    if (change === "provider") {
+      h.deps.configuration.jev.classifier = {
+        provider: "openrouter",
+        model: "jev-latest",
+      };
+      grant.destination = "openrouter/jev-latest";
+    }
+    if (change === "model") {
+      h.deps.configuration.jev.classifier = {
+        provider: "typesafe",
+        model: "other",
+      };
+      grant.destination = "typesafe/other";
+    }
+    if (change === "categories") grant.evidenceCategories = [];
+    if (change === "grant") grant.id = "replacement";
+    expect((await h.drive()).status).toBe("blocked");
+    expect(h.inputs).toHaveLength(count);
+    expect(h.executor.calls.run).toHaveLength(1);
+  },
+);
 
 test("fresh decisions survive client recreation without any classifier capability", async () => {
   const h = await setup();

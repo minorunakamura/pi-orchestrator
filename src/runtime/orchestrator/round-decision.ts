@@ -695,7 +695,7 @@ export class RoundDecisionRunner {
     );
     let rawDecision;
     try {
-      authorization.assertAllowed();
+      await authorization.assertAllowed();
       rawDecision = await this.dependencies.jevDecisionClient.decideRound(
         request,
         authorization.context,

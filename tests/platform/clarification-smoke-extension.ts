@@ -98,11 +98,11 @@ export default function (pi: ExtensionAPI) {
           },
           mode,
         });
-        const config = { ...configuration, jev: jevPolicy(id, ctx.cwd, 6) };
+        const config = { ...configuration, jev: jevPolicy(ctx.cwd, 6) };
         // Explicit fixture consent for sending authorized domain-document evidence, never an ambient grant.
         if (mode === "GRILL_WITH_DOCS")
-          config.jev.runtimePolicy!.consent.evidenceCategories = [
-            ...config.jev.runtimePolicy!.consent.evidenceCategories,
+          config.jev.runtimePolicy!.grant.evidenceCategories = [
+            ...config.jev.runtimePolicy!.grant.evidenceCategories,
             "design",
           ];
         const scout = new FakeSubagentExecutor({

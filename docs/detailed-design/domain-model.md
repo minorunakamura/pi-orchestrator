@@ -98,8 +98,12 @@ interface WorkflowState {
   coding: CodingState;
   counters: RetryCounters;
   ownershipRef: ArtifactRef<"reconciliation">;
-  classifierAuthorizationRef?: ArtifactRef<"jev-request">;
-  jevUsage: { attemptsReserved: number; latestRequestRef?: ArtifactRef<"jev-request"> };
+  jevUsage: {
+    authorizationRef?: ArtifactRef<"jev-request">;
+    attemptsReserved: number;
+    latestRequestRef?: ArtifactRef<"jev-request">;
+    latestUsageRef?: ArtifactRef<"jev-request">;
+  };
   latestOracleRef?: ArtifactRef<"oracle-advisory">;
   oracleAttemptsUsed: number;
   external: Record<string, string>;
@@ -110,7 +114,7 @@ interface WorkflowState {
 }
 ```
 
-Ownership projection binds active canonical workspace + root session + workflow identity and narrowly scoped write authority。A reconciliation-kind ownership record is lifecycle evidence, never a Human approval。Classifier authorization captures workflow-scoped grant/consent after workflowId creation; API credentials stay outside domain data。
+Ownership projection binds active canonical workspace + root session + workflow identity and narrowly scoped write authority。A reconciliation-kind ownership record is lifecycle evidence, never a Human approval。Classifier authorization captures workflow-scoped grant/consent after workflowId creation; API credentials stay outside domain data。#11 stores the immutable `recordType: authorization` as `jevUsage.authorizationRef` before its first reservation; reservation/usage records bind that ref and grant/consent IDs. Missing legacy binding/accounting does not default into permission or reset spent attempts. See [configuration](../basic-design/configuration.md#6-operatorproject-grant-vs-workflow-consent-11).
 
 ## 6. Planning State
 

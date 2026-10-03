@@ -20,7 +20,7 @@ import { plan, implementationEvidence } from "../../fakes/coding-scenario.ts";
 import { createArtifactRef } from "../../../src/runtime/persistence/artifact-store.ts";
 const roots: string[] = [];
 import { jevPolicy } from "../../fakes/jev-policy.ts";
-const jevConfiguration = jevPolicy("workflow-finding-evaluation-1");
+const jevConfiguration = jevPolicy();
 const policy = {
   autoDecisionThreshold: 0.8,
   escalationThreshold: 0.5,

@@ -637,10 +637,10 @@ describe("Phase C full fake end-to-end contract", () => {
   test.each(["consent", "budget"])(
     "Jev %s failure sends no request and starts no Worker",
     async (kind) => {
-      const h = await setup(
-        kind === "consent" ? { consent: false } : { maxRequests: 0 },
-      );
+      const h = await setup(kind === "budget" ? { maxRequests: 0 } : {});
       await approvePlan(h);
+      if (kind === "consent")
+        h.configuration.jev.runtimePolicy!.grant.active = false;
       await expect(h.implement()).rejects.toThrow(/consent|budget/iu);
       expect((await h.load()).block?.reason).toBe(
         "operator-attention-required",

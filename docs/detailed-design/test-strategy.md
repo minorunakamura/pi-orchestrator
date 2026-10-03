@@ -81,6 +81,8 @@ Fixtures: valid/low-confidence/unknown choice/missing result/schema mismatch/aut
 
 Generated workflowId receives consent derived from operator/project grant upper bounds。Missing/revoked/mismatched grant/consent, classifier/destination/category mismatch, unknown/exhausted allowance and failed reservation → zero requests。Per-finding and transport retries reserve durably; client recreation doesn't reset, timeout doesn't refund (I5)。Pi key/availability, typesafe enable and Plan approval are not consent。
 
+#11 additionally verifies grant configuration before generated UUID, exact durable consent before classify, scope tampering/copying, grant/provider/model drift, bounded widening/narrowing, consent/reservation save failure and concurrent attempts. Cached decision consent checks spend no new request. The explicit one-request real Pi / generated-ID smoke and limits are recorded in [Classifier authorization](../implementation/classifier-authorization.md).
+
 Live native smoke precedes pi-typesafe removal。During transition, validated destination-specific credential prevents arbitrary TypeSafe-authenticated endpoint rewrite。No automatic second transport/classifier/LLM fallback。
 
 ## 7. Clarification / ownership / Codemode tests

@@ -37,7 +37,7 @@ const configuration: Pick<
   OrchestratorConfiguration,
   "decision" | "retries" | "jev"
 > = {
-  jev: jevPolicy("round-decision-workflow"),
+  jev: jevPolicy(),
   decision: { autoDecisionThreshold: 0.8, escalationThreshold: 0.5 },
   retries: { maxAutomatedFixRounds: 3, maxStrongerRetries: 1 },
 };

@@ -352,8 +352,8 @@ test("GRILL_WITH_DOCS exact CONTEXT/ADR grant and before/intent/answer/after evi
 
 test("Architecture consumes exact domain evidence under explicit design consent; lost intent rejects cached routing", async () => {
   const h = await setup("GRILL_WITH_DOCS");
-  h.configuration.jev.runtimePolicy!.consent.evidenceCategories = [
-    ...h.configuration.jev.runtimePolicy!.consent.evidenceCategories,
+  h.configuration.jev.runtimePolicy!.grant.evidenceCategories = [
+    ...h.configuration.jev.runtimePolicy!.grant.evidenceCategories,
     "design",
   ];
   h.autoAnswer();

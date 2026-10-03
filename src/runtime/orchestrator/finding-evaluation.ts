@@ -477,7 +477,7 @@ export class FindingEvaluationRunner {
     );
     let evaluated: EvaluatedFinding[];
     try {
-      if (findings.length) authorization.assertAllowed();
+      if (findings.length) await authorization.assertAllowed();
       const rawDecisions =
         findings.length === 0
           ? []

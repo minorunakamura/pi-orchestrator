@@ -41,6 +41,8 @@ Subsequent #7 update: bugfix/hotfix は Scout → required read-only Diagnosis �
 
 Subsequent #8 update: production root/Main は resolved grilling / mode-aware domain-modeling と public questionnaire v1 から durable request → rounds → final Human confirmation → exact CONTEXT/ADR intent/before/after → CLARIFICATION_COMPLETE → normal continuation を実行する。Transient prompt / prose-only answer / mode-only write grant に依存しない。Both-mode actual Human TUI + real Planner smoke と focused persistence/authority tests は [Clarification implementation / acceptance / validation](./clarification.md)。Generated-workflow consent は #11、general ownership は #5、full production Human Gates は #12 のまま。
 
+Subsequent #11 update: `jev.runtimePolicy.grant` は未来の workflow ID を要求しない。最初の classifier request 前に exact generated-workflow consent Artifact → CAS State → reservation → CAS State を保存し、current grant と captured consent の両 ceiling、再作成後の counters/history、cached decision の active consent を検証する。Legacy consent/history、classifier/grant drift、保存失敗は fail closed。Focused tests と real Pi 0.99.1 / typesafe/jev-latest の explicit 1-request generated-ID smoke は [Classifier authorization implementation / acceptance / validation](./classifier-authorization.md)。Full production lifecycle / actual Human Gates は #12 のまま。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order
