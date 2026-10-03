@@ -1,3 +1,4 @@
+import { diagnosisReport } from "../../fakes/diagnosis.ts";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +54,7 @@ interface Script {
   confidence?: number;
   modeConfidence?: number;
   diagnosis?: boolean;
+  diagnosisOutput?: string;
   invalid?: boolean;
 }
 async function setup(script: Script = {}) {
@@ -110,6 +112,16 @@ async function setup(script: Script = {}) {
   const executor = new FakeSubagentExecutor({
     run: [
       succeeded("Scout: local implementation and unknowns"),
+      ...(["bugfix", "hotfix"].includes(script.playbook ?? "feature")
+        ? [
+            succeeded(
+              script.diagnosisOutput ??
+                (script.diagnosis === false
+                  ? "invalid diagnosis"
+                  : JSON.stringify(diagnosisReport)),
+            ),
+          ]
+        : []),
       ...(script.stages?.research === "RUN"
         ? [succeeded("Research: released API source and uncertainty")]
         : []),
@@ -120,8 +132,13 @@ async function setup(script: Script = {}) {
   vi.spyOn(executor, "run").mockImplementation(async (input) => {
     const state = await stateStore.loadState();
     trace.push(`child:${input.agent}`);
-    if (input.agent === "workflow-scout")
+    if (input.agent === "workflow-scout") {
       expect(state.planning.stageDecisionRefs).toEqual({});
+      if (input.dispatch?.nodeId === "diagnosis") {
+        expect(state.planning.context.scoutRef).toBeDefined();
+        expect(state.planning.context.diagnosisRef).toBeUndefined();
+      }
+    }
     if (input.agent === "pi-ketch.researcher")
       expect(state.planning.stageDecisionRefs?.research).toBeDefined();
     if (input.agent === "planner") {
@@ -131,7 +148,7 @@ async function setup(script: Script = {}) {
     }
     return run(input);
   });
-  const created = await createWorkflow(
+  await createWorkflow(
     {
       task: "Implement the bounded routing change",
       playbook: script.playbook ?? "feature",
@@ -150,20 +167,6 @@ async function setup(script: Script = {}) {
       subagentExecutor: executor,
     },
   );
-  if (script.diagnosis) {
-    const diagnosisRef = await artifactStore.writeText(
-      "diagnosis",
-      "diagnosis.md",
-      "Observed failure; competing causes; external dependency signal; unresolved reproduction gap",
-    );
-    await stateStore.saveState(
-      {
-        ...created.state,
-        planning: { ...created.state.planning, context: { diagnosisRef } },
-      },
-      created.state.stateRevision,
-    );
-  }
   const deps = {
     artifactStore,
     stateStore,
@@ -336,12 +339,12 @@ test.each(["bugfix", "hotfix"] as const)(
 );
 
 test.each(["bugfix", "hotfix"] as const)(
-  "%s blocks without Diagnosis instead of silently skipping the unimplemented #7 producer",
+  "%s blocks on invalid Diagnosis instead of silently skipping evidence",
   async (playbook) => {
-    const h = await setup({ playbook });
+    const h = await setup({ playbook, diagnosis: false });
     const result = await h.drive();
     expect(result.state.block?.reason).toBe("operator-attention-required");
-    expect(h.trace).toEqual(["child:workflow-scout"]);
+    expect(h.trace).toEqual(["child:workflow-scout", "child:workflow-scout"]);
   },
 );
 
@@ -439,7 +442,7 @@ test.each([
     const count = h.inputs.length;
     expect((await h.drive()).status).toBe("blocked");
     expect(h.inputs).toHaveLength(count);
-    expect(h.executor.calls.run).toHaveLength(1);
+    expect(h.executor.calls.run).toHaveLength(2);
   },
 );
 
@@ -604,3 +607,217 @@ test("legacy flags are not accepted as conditional authority", async () => {
   ).rejects.toBeInstanceOf(PlanningRoutingStoppedError);
   expect(h.inputs).toEqual([]);
 });
+
+test.each(["bugfix", "hotfix"] as const)(
+  "%s cannot directly launch Planner with missing Diagnosis",
+  async (playbook) => {
+    const h = await setup({ playbook });
+    const state = await h.load();
+    const scoutRef = await h.deps.artifactStore.writeText(
+      "scout",
+      "scout.md",
+      "Existing Scout evidence",
+    );
+    await h.deps.stateStore.saveState(
+      {
+        ...state,
+        phase: "planning",
+        planning: { ...state.planning, context: { scoutRef } },
+      },
+      state.stateRevision,
+    );
+    expect((await h.drive()).status).toBe("blocked");
+    expect(h.executor.calls.run).toEqual([]);
+    expect(h.inputs).toEqual([]);
+  },
+);
+
+test.each(["not-reproduced", "unavailable"] as const)(
+  "Diagnosis preserves %s and factual gaps without guessing a cause",
+  async (status) => {
+    const report = structuredClone(diagnosisReport);
+    report.expectedBehavior = null;
+    report.reproduction = {
+      status,
+      steps: [],
+      evidence: "No runtime/logs available under the read-only tool ceiling",
+    };
+    report.rootCause = {
+      status: "unknown",
+      explanation: "Insufficient facts",
+      evidenceStrength: "none",
+      supportingEvidence: [],
+      contradictingEvidence: [],
+    };
+    report.unresolvedFactualGaps = ["Need the affected deployment version"];
+    const h = await setup({
+      playbook: "bugfix",
+      diagnosisOutput: JSON.stringify(report),
+      stages: { clarification: "RUN" },
+    });
+    const result = await h.drive();
+    expect(result.state.phase).toBe("clarifying");
+    const body = JSON.parse(
+      await h.deps.artifactStore.readText(
+        result.state.planning.context.diagnosisRef!,
+      ),
+    );
+    expect(body.report).toEqual(report);
+    expect(h.trace.slice(0, 3)).toEqual([
+      "child:workflow-scout",
+      "child:workflow-scout",
+      "decide:research",
+    ]);
+  },
+);
+
+test("external dependency Diagnosis flows into Research, later routing and Planner", async () => {
+  const report = {
+    ...diagnosisReport,
+    externalDependencySignals: [
+      "Released cache-client version changed missing-key behavior",
+    ],
+  };
+  const h = await setup({
+    playbook: "bugfix",
+    diagnosisOutput: JSON.stringify(report),
+    stages: { research: "RUN" },
+  });
+  const result = await h.drive();
+  expect(result.state.phase).toBe("awaiting-plan-review");
+  const ref = result.state.planning.context.diagnosisRef!;
+  expect(
+    h.executor.calls.run.find((input) => input.agent === "pi-ketch.researcher")
+      ?.inputRefs,
+  ).toContainEqual(ref);
+  expect(JSON.stringify(h.inputs)).toContain(
+    report.externalDependencySignals[0],
+  );
+  expect(
+    h.executor.calls.run.find((input) => input.agent === "planner")?.inputRefs,
+  ).toContainEqual(ref);
+});
+
+test.each(["scope-exceeded", "unknown"] as const)(
+  "hotfix %s is durable and stops before classifier/Architecture/Planner, including resume",
+  async (scope) => {
+    const report = {
+      ...diagnosisReport,
+      hotfix: {
+        scope,
+        reason:
+          "Requires architecture/scope redesign or a Human boundary decision",
+        riskNotes: ["Cross-service contract change"],
+      },
+    };
+    const h = await setup({
+      playbook: "hotfix",
+      diagnosisOutput: JSON.stringify(report),
+    });
+    const result = await h.drive();
+    expect(result.status).toBe("blocked");
+    expect(result.state.block?.evidenceRef).toEqual(
+      result.state.planning.context.diagnosisRef,
+    );
+    expect(result.state.planning.stageDecisionRefs).toEqual({});
+    expect(h.inputs).toEqual([]);
+    const resumed = await resumeWorkflow("routing", {
+      ...h.deps,
+      runDirectory: h.runDirectory,
+    });
+    expect(resumed.status).toBe("blocked");
+    expect(h.executor.calls.run).toHaveLength(2);
+    // Even a manually moved phase cannot make the Diagnosis a scope/implementation grant.
+    const state = await h.load();
+    delete state.block;
+    state.phase = "planning";
+    await h.deps.stateStore.saveState(state, state.stateRevision);
+    expect((await h.drive()).status).toBe("blocked");
+    expect(h.inputs).toEqual([]);
+    expect(h.executor.calls.run).toHaveLength(2);
+  },
+);
+
+test("completed Diagnosis is reused after runtime recreation without status calls or redispatch; launch drift blocks", async () => {
+  const h = await setup({ playbook: "bugfix" });
+  await h.gather();
+  const state = await h.load();
+  await h.deps.stateStore.saveState(
+    { ...state, phase: "gathering-context" },
+    state.stateRevision,
+  );
+  const result = await resumeWorkflow("routing", {
+    ...h.deps,
+    runDirectory: h.runDirectory,
+  });
+  expect(result.state.phase).toBe("awaiting-plan-review");
+  expect(
+    h.executor.calls.run.filter(
+      (input) => input.dispatch?.nodeId === "diagnosis",
+    ),
+  ).toHaveLength(1);
+  expect(h.executor.calls.status).toHaveLength(0);
+  const preflight = h.executor.preflight.bind(h.executor);
+  vi.spyOn(h.executor, "preflight").mockImplementation(async (input) => ({
+    ...(await preflight(input)),
+    thinking: "changed",
+  }));
+  const stale = await h.drive();
+  expect(stale.status).toBe("blocked");
+  expect(h.executor.calls.run).toHaveLength(3);
+});
+
+test.each(["artifact", "state"] as const)(
+  "Diagnosis %s failure stops before routing; exact output recovery never redispatches",
+  async (fault) => {
+    const h = await setup({ playbook: "bugfix" });
+    const deps = {
+      ...h.deps,
+      artifactStore: {
+        readText: h.deps.artifactStore.readText.bind(h.deps.artifactStore),
+        writeText: <K extends ArtifactRef["kind"]>(
+          kind: K,
+          name: string,
+          content: string,
+        ) => {
+          if (fault === "artifact" && kind === "diagnosis")
+            throw Error("Diagnosis persistence fault");
+          return h.deps.artifactStore.writeText(kind, name, content);
+        },
+      },
+      stateStore: {
+        saveState: (
+          state: Awaited<ReturnType<typeof h.load>>,
+          revision?: number,
+        ) => {
+          if (fault === "state" && state.planning.context.diagnosisRef)
+            throw Error("Diagnosis persistence fault");
+          return h.deps.stateStore.saveState(state, revision);
+        },
+      },
+    };
+    await expect(driveWorkflow("routing", deps)).rejects.toThrow(
+      "Diagnosis persistence fault",
+    );
+    expect(h.inputs).toEqual([]);
+    const state = await h.load();
+    expect(state.planning.context.diagnosisRef).toBeUndefined();
+    const receipt = state.planning.agentAttempts!.diagnosis.receipt!;
+    vi.spyOn(h.executor, "status").mockResolvedValue({
+      runId: succeeded("").value.runId,
+      status: "succeeded",
+      result: succeeded(JSON.stringify(diagnosisReport)).value,
+    });
+    expect(receipt.runId).toBe(succeeded("").value.runId);
+    const result = await resumeWorkflow("routing", {
+      ...h.deps,
+      runDirectory: h.runDirectory,
+    });
+    expect(result.state.phase).toBe("awaiting-plan-review");
+    expect(
+      h.executor.calls.run.filter(
+        (input) => input.dispatch?.nodeId === "diagnosis",
+      ),
+    ).toHaveLength(1);
+  },
+);

@@ -37,6 +37,8 @@ Subsequent #4 update: commands now use createWorkflow → driveWorkflow over exi
 
 Subsequent #6 update: Research/Clarification/Architecture は Scout 後に accumulated durable evidence から逐次解決し、stage/mode decision の immutable persistence / freshness / conservative escalation を normal driver に接続した。旧 transient hints は authority にしない。Diagnosis ref を消費するが、bugfix/hotfix の missing producer は block し、実行は #7。root bridge は #8、consent capture は #11。Research は operator 指定の GitHub-only source / commit `e49fd9e` と実 Pi child を検証し、Ketch-only tools / context inheritance の policy 不整合を修正した。詳細は [#6 implementation / coverage / limitations](./conditional-stage-routing.md)。
 
+Subsequent #7 update: bugfix/hotfix は Scout → required read-only Diagnosis → routing を normal driver が自動継続する。Structured symptom/reproduction/root-cause/gap/dependency/scope/risk evidence を immutable Artifact と State に保存し、routing/Planner が exact input/launch freshness を検証する。Completed Diagnosis は再 dispatch せず、hotfix scope-exceeded/unknown は Human reclassification/replanning 待ちで停止する。詳細は [Diagnosis implementation / acceptance / validation](./diagnosis.md)。Root clarification/consent/TDD/Plan strategy/non-Git/Code corrections/full lifecycle は各既存 producer / #12 のまま。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order

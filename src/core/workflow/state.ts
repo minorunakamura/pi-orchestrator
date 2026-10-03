@@ -214,6 +214,7 @@ export interface WorkflowState {
 }
 
 export type WorkflowEvent =
+  | { type: "DIAGNOSIS_PERSISTED"; diagnosisRef: ArtifactRef<"diagnosis"> }
   | {
       type: "STAGE_RESOLVED";
       stage: ConditionalStage;
@@ -552,6 +553,11 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
   }
 
   switch (value.type) {
+    case "DIAGNOSIS_PERSISTED":
+      return (
+        isEvent(value, ["type", "diagnosisRef"]) &&
+        isArtifactOfKind(value.diagnosisRef, "diagnosis")
+      );
     case "STAGE_RESOLVED":
       return (
         isEvent(value, ["type", "stage", "decisionRef", "required"]) &&

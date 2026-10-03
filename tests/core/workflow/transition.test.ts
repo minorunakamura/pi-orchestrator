@@ -50,6 +50,46 @@ function apply(state: WorkflowState, event: WorkflowEvent): WorkflowState {
   return result.state;
 }
 
+test("Diagnosis publication requires Scout and bugfix/hotfix; cannot replace evidence or publish after routing", () => {
+  const state = initialState();
+  state.playbook = "bugfix";
+  state.planning.context.scoutRef = ref("scout", "context/scout.md");
+  const diagnosisRef = ref("diagnosis", "context/diagnosis.md");
+  const event = { type: "DIAGNOSIS_PERSISTED", diagnosisRef } as const;
+  const saved = apply(state, event);
+  expect(saved.phase).toBe("gathering-context");
+  expect(saved.planning.context.diagnosisRef).toEqual(diagnosisRef);
+  expect(
+    apply({ ...state, playbook: "hotfix" }, event).planning.context
+      .diagnosisRef,
+  ).toEqual(diagnosisRef);
+  for (const invalid of [
+    { ...state, playbook: "feature" as const },
+    { ...state, phase: "planning" as const },
+    { ...state, planning: { ...state.planning, context: {} } },
+    {
+      ...state,
+      planning: {
+        ...state.planning,
+        stageDecisionRefs: {
+          research: ref("conditional-stage", "decisions/research.json"),
+        },
+      },
+    },
+    {
+      ...saved,
+      planning: {
+        ...saved.planning,
+        context: {
+          ...saved.planning.context,
+          diagnosisRef: { ...diagnosisRef, sha256: "b".repeat(64) },
+        },
+      },
+    },
+  ])
+    expect(transition(invalid, event).ok).toBe(false);
+});
+
 const planRef = ref("plan", "plans/plan-v1.md");
 const planV2Ref = ref("plan", "plans/plan-v2.md");
 const reviewRef = ref("plan-review", "plan-reviews/review-1.md");
