@@ -20,6 +20,21 @@ export const conditionalStages = [
   "architecture",
 ] as const;
 export type ConditionalStage = (typeof conditionalStages)[number];
+/** The same instructions are sent to the classifier and bound into policy freshness. */
+export const planningRoutingInstructions = {
+  stage: {
+    research:
+      "Decide whether external Research is needed, not whether implementation is ready. RUN for missing external API/library/source facts; SKIP when local evidence suffices and no external facts are needed. Unanswered product choices belong to downstream Clarification and do not alone require Research or ESCALATE. ESCALATE only when the need for external Research cannot safely be determined.",
+    clarification:
+      "Decide whether Human Clarification is needed. RUN for unresolved product, scope, behavior or architecture choices that a Human can answer; SKIP only when no Human decisions remain. Unanswered Human choices are a reason to RUN, not to ESCALATE. ESCALATE only when the clarification need itself cannot safely be determined. This decision neither answers questions nor authorizes writes.",
+    architecture:
+      "Decide whether the Planner needs an Architecture / Design section beyond local implementation details. RUN for architectural boundaries, components, dependencies or design trade-offs; SKIP when the confirmed scope is a local change with no architectural decisions. ESCALATE when the need for Architecture cannot safely be determined. Do not approve a design or broaden scope.",
+  },
+  clarification:
+    "Select the Human clarification mode. GRILL_ME for Human choices without domain-document work; GRILL_WITH_DOCS for Human choices requiring CONTEXT/context-map/ADR creation or updates; SKIP only with sufficient evidence and no unresolved Human choices. Unanswered choices are the purpose of grilling, not alone a reason to ESCALATE. ESCALATE only when a safe mode cannot be determined. Do not generate questions, answer for the Human, or grant write authority.",
+  method:
+    "Which implementation method fits the eligible behavior change? STANDARD or TDD, ESCALATE for unresolved Human preference. Explicit Human TDD and inapplicable work are resolved deterministically before this call.",
+} as const;
 export const stageOutcomes = ["RUN", "SKIP", "ESCALATE"] as const;
 export type StageOutcome = (typeof stageOutcomes)[number];
 export const clarificationModes = [

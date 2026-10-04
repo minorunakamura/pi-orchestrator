@@ -33,7 +33,7 @@ export default function (pi: ExtensionAPI) {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
     ],
-    streamSimple(model, context) {
+    streamSimple(model, context, options) {
       const stream = createAssistantMessageEventStream();
       const prompt = getCurrentSystemPrompt(context.messages);
       const evidence = {
@@ -51,6 +51,9 @@ export default function (pi: ExtensionAPI) {
           .map((tool) => tool.name)
           .toSorted(),
         model: `${model.provider}/${model.id}`,
+        ...(JSON.stringify(context.messages).includes("PLATFORM_LARGE_OUTPUT")
+          ? { padding: "x".repeat(100000) }
+          : {}),
       };
       const message: AssistantMessage = {
         role: "assistant",
@@ -69,11 +72,27 @@ export default function (pi: ExtensionAPI) {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
       };
-      queueMicrotask(() => {
+      const finish = () => {
         stream.push({ type: "start", partial: message });
         stream.push({ type: "done", reason: "stop", message });
         stream.end();
-      });
+      };
+      if (JSON.stringify(context.messages).includes("PLATFORM_DELAY_OUTPUT")) {
+        const timer = setTimeout(finish, 10000);
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            stream.push({
+              type: "error",
+              reason: "aborted",
+              error: { ...message, stopReason: "aborted", content: [] },
+            });
+            stream.end();
+          },
+          { once: true },
+        );
+      } else queueMicrotask(finish);
       return stream;
     },
   });

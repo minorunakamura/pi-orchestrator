@@ -182,6 +182,60 @@ describe("PiClassifierDecisionClient", () => {
     );
     expect(classify.mock.calls[5][1].state).toMatchObject(roundInput);
   });
+  test.each(["research", "clarification", "architecture"] as const)(
+    "conditional %s asks only its stage purpose and preserves uncertain evidence",
+    async (stage) => {
+      const registry = nativeRuntime(async (_model, request) => {
+        const instructions = request.questions.decision.instructions;
+        expect(instructions).toContain(
+          stage === "research"
+            ? "external Research"
+            : stage === "clarification"
+              ? "Human Clarification"
+              : "Architecture / Design",
+        );
+        if (stage !== "architecture")
+          expect(instructions).toContain("Unanswered");
+        expect(instructions).toContain("ESCALATE");
+        return classification({
+          decision: answer("ESCALATE", ["RUN", "SKIP", "ESCALATE"], 0.3),
+        });
+      });
+      await expect(
+        new JevIntegration({ modelRegistry: registry }).routeStage(
+          { ...planningInput, stage, policy: "conditional" },
+          adapterAuthorization,
+        ),
+      ).resolves.toEqual({ value: "ESCALATE", confidence: 0.3 });
+    },
+  );
+
+  test("clarification treats unanswered Human choices as grilling, never answers or document authority", async () => {
+    const registry = nativeRuntime(async (_model, request) => {
+      const instructions = request.questions.decision.instructions;
+      expect(instructions).toContain(
+        "Unanswered choices are the purpose of grilling",
+      );
+      expect(instructions).toContain(
+        "Do not generate questions, answer for the Human, or grant write authority",
+      );
+      return classification({
+        decision: answer("GRILL_ME", [
+          "SKIP",
+          "GRILL_ME",
+          "GRILL_WITH_DOCS",
+          "ESCALATE",
+        ]),
+      });
+    });
+    await expect(
+      new JevIntegration({ modelRegistry: registry }).routeClarification(
+        planningInput,
+        adapterAuthorization,
+      ),
+    ).resolves.toEqual({ value: "GRILL_ME", confidence: 0.91 });
+  });
+
   test("required/skip policy is never sent to the classifier", async () => {
     const registry = new FakeClassifierRuntime([]);
     for (const policy of ["required", "skip"]) {

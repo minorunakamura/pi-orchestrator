@@ -62,6 +62,9 @@ export interface RoundReply {
   reasonConfidence?: number;
 }
 export interface WorkflowScript {
+  /** Leave creation to the public command runtime; no pre-completed planning fixture. */
+  commandStart?: boolean;
+  task?: string;
   nonGit?: boolean;
   workerChanges?: Record<string, string | null>[];
   developmentIntent?: "AUTO" | "TDD" | "BEHAVIOR_FREE";
@@ -142,7 +145,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   await mkdir(repositoryCwd);
   if (!script.nonGit)
     await promisify(execFile)("git", ["init", "--quiet", repositoryCwd]);
-  const workflowId = "full-fake";
+  let workflowId = "full-fake";
   const fixturePlan =
     script.developmentIntent === "TDD" || script.method === "TDD"
       ? plan.replace(
@@ -152,8 +155,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       : plan;
   const runsDirectory = join(repositoryCwd, ".pi", "orchestrator", "runs");
   const runDirectory = join(runsDirectory, workflowId);
-  const artifactStore = new ArtifactStore(runDirectory);
-  const stateStore = new StateStore(runDirectory);
+  let artifactStore = new ArtifactStore(runDirectory);
+  let stateStore = new StateStore(runDirectory);
   const configuration = structuredClone(defaults);
   configuration.jev =
     script.consent === false
@@ -318,6 +321,11 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   };
   const events = new FakeSubagentRpc((request, bus) => {
     if (!isChildRequest(request)) throw Error("Invalid child request");
+    if (script.commandStart && workflowId !== request.ownerRunId) {
+      workflowId = request.ownerRunId;
+      artifactStore = new ArtifactStore(join(runsDirectory, workflowId));
+      stateStore = new StateStore(join(runsDirectory, workflowId));
+    }
     children.push(request);
     childCounts.set(request.agent, (childCounts.get(request.agent) ?? 0) + 1);
     bus.receipt(request, `${request.agent}-${childCounts.get(request.agent)}`);
@@ -411,7 +419,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   const jevRequests: ClassifierContext[] = [];
   let roundCalls = 0,
     routeCalls = 0,
-    planningCalls = 3;
+    planningCalls = script.commandStart ? 0 : 3;
   const client: PiClassifierRuntime = nativeRuntime(async (_model, request) => {
     if (
       request.questions.decision?.criteria &&
@@ -591,27 +599,29 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   planningDeps.configuration.jev.maxTransportRetries =
     configuration.jev.maxTransportRetries;
   try {
-    const started = await startWorkflow(
-      {
-        task: "Implement the approved feature",
-        developmentIntent: script.developmentIntent,
-        playbook: "feature",
-        cwd: repositoryCwd,
-      },
-      {
-        runsDirectory,
-        workflowIdFactory: () => workflowId,
-        artifactStore,
-        stateStore: stateWriter,
-        subagentExecutor,
-        ...planningDeps,
-      },
-    );
-    if (started.state.phase === "planning")
-      await new PlanningRouting({ ...deps, ...planningDeps }).stage(
-        started.state,
-        "architecture",
+    if (!script.commandStart) {
+      const started = await startWorkflow(
+        {
+          task: script.task ?? "Implement the approved feature",
+          developmentIntent: script.developmentIntent,
+          playbook: "feature",
+          cwd: repositoryCwd,
+        },
+        {
+          runsDirectory,
+          workflowIdFactory: () => workflowId,
+          artifactStore,
+          stateStore: stateWriter,
+          subagentExecutor,
+          ...planningDeps,
+        },
       );
+      if (started.state.phase === "planning")
+        await new PlanningRouting({ ...deps, ...planningDeps }).stage(
+          started.state,
+          "architecture",
+        );
+    }
   } catch (error) {
     await rm(root, { recursive: true, force: true });
     throw error;
@@ -619,8 +629,12 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   return {
     root,
     repositoryCwd,
-    artifactStore,
-    stateStore,
+    get artifactStore() {
+      return artifactStore;
+    },
+    get stateStore() {
+      return stateStore;
+    },
     configuration,
     subagentExecutor,
     events,

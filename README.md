@@ -155,11 +155,15 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 /wf-resume は exact State/Artifact/historical launch/review/decision を reconcile後、normal driverへ continuation。Ambiguous Worker/document mutation、lost synchronous Human result、unknown ownership は blocked、blind relaunch/reopen/approval inference をしません。Failed は safely unreconstructable authority/stateのみ。
 
+## Issue #12 production verification
+
+[Production verification record](./docs/implementation/production-verification.md) records connected Git/non-Git runs using the unchanged production package, actual Human clarification/Plan/Code Gates, native Jev and TDD Workers, plus released-owner host contracts and focused strategy/advisory probes. Read-only audits verify retained hashes, exact authority, current patches and completed history after `/reload` without relaunch. The record distinguishes scripted setup from live integrations and is not a package version bump or automatic tracking-Issue closure.
+
 ## Scope / verification limits
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11)、Development Method / TDD (#16) は実装・検証済みです。Read-only Codemode は Plan Simplicity Reviewer のみ実装・検証済み（[#20 implementation / isolation / real smoke](docs/implementation/readonly-codemode.md)）。Non-Git workspace evidence (#10) の実装と検証状況は上記記録を参照してください。Simplicity/Oracle escalation/deviation/ownership/synchronous Code corrections はそれぞれの child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Producer Issues の実装・focused verification と、#12 の connected production / host-contract verification を区別します。#12 は実 Human clarification / Plan / Code Gates、native Jev、TDD Worker を含む Git/non-Git normal lifecycle と、focused simplicity/refinement・deviation/reapproval・Oracle、recovery/authority regressions を検証しました（[release verification と制限](./docs/release/v1-production-verification.md)）。Read-only Codemode の採用は Plan Simplicity Reviewer のみ（[#20 isolation / real smoke](docs/implementation/readonly-codemode.md)）。全 optional-stage 組合せを一つの live workflow で検証したという意味ではなく、各 record の real / scripted 境界を維持します。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。Package release / merge / Issue #13 closure はこの検証から推定しません。
 
 ## Further reading
 

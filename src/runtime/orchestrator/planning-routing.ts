@@ -9,6 +9,7 @@ import {
 } from "../../core/configuration.ts";
 import {
   clarificationOutcome,
+  planningRoutingInstructions,
   stageOutcome,
   parsePlanningDecisionArtifact,
   isConditionalStageDecision,
@@ -302,6 +303,7 @@ export class PlanningRouting {
           version: "planning-routing-1",
           matrix: getPlaybookStagePolicy(state.playbook),
           limits: PLANNING_EVIDENCE_LIMITS,
+          instructions: planningRoutingInstructions,
         }),
         configurationDigest: digest(
           called

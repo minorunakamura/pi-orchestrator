@@ -21,7 +21,10 @@ import {
   hasOnlyKeys,
   isOneOf,
 } from "../../core/schema.ts";
-import { conditionalStages } from "../../core/decisions/planning-routing.ts";
+import {
+  conditionalStages,
+  planningRoutingInstructions,
+} from "../../core/decisions/planning-routing.ts";
 import type { ReviewFinding } from "../../core/coding/finding.ts";
 import type {
   ExecutionRoutingInput,
@@ -352,7 +355,7 @@ export class PiClassifierDecisionClient implements DecisionClassifierPort {
       input,
       "stage",
       ["RUN", "SKIP", "ESCALATE"] as const,
-      "Should the named conditional stage run given the supplied accumulated evidence? RUN if needed, SKIP only with sufficient evidence, ESCALATE if unresolved.",
+      planningRoutingInstructions.stage[input.stage],
       authorization,
     );
   }
@@ -365,7 +368,7 @@ export class PiClassifierDecisionClient implements DecisionClassifierPort {
       input,
       "clarification",
       ["SKIP", "GRILL_ME", "GRILL_WITH_DOCS", "ESCALATE"] as const,
-      "Which clarification mode is needed? SKIP only with sufficient evidence; GRILL_ME for Human choices; GRILL_WITH_DOCS for Human choices needing domain documents; ESCALATE if unresolved. Do not generate questions or grant write authority.",
+      planningRoutingInstructions.clarification,
       authorization,
     );
   }
@@ -378,7 +381,7 @@ export class PiClassifierDecisionClient implements DecisionClassifierPort {
       input,
       "method",
       ["STANDARD", "TDD", "ESCALATE"] as const,
-      "Which implementation method fits the eligible behavior change? STANDARD or TDD, ESCALATE for unresolved Human preference. Explicit Human TDD and inapplicable work are resolved deterministically before this call.",
+      planningRoutingInstructions.method,
       authorization,
     );
   }

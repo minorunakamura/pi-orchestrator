@@ -304,7 +304,80 @@ describe("ORCH-019 workflow commands", () => {
     }
   });
 
-  test("production command runtime continues through Worker, reviews, Code Gate, and duplicate resume", async () => {
+  test.each([false, true])(
+    "single start command drives owned Git/non-Git (%s) from Task through both Gates without resume",
+    async (nonGit) => {
+      const h = await phaseCWorkflow({
+        commandStart: true,
+        nonGit,
+        developmentIntent: "TDD",
+      });
+      const events: EventBus = {
+        on: (event, listener) => h.events.on(event, listener),
+        emit: (event, payload) =>
+          event === PLANNOTATOR_REQUEST_CHANNEL
+            ? h.gateEvents.emit(event, payload)
+            : h.events.emit(event, payload),
+      };
+      const runtime = createWorkflowCommandRuntime(events, h.repositoryCwd, {
+        ownership: new WorkflowOwnership(h.repositoryCwd, "root-1"),
+        launchResolver: fakeLaunchResolver,
+        configuration: h.configuration,
+        jevDecisionClient: h.jevDecisionClient,
+        validationExecutor: h.validationExecutor,
+      });
+      const resume = vi.spyOn(runtime, "resume");
+      try {
+        const ctx = context(h.repositoryCwd);
+        await registration(runtime)
+          .get("wf-feature")!
+          .handler("--tdd implement checkout", ctx);
+        expect(ctx.notify).not.toHaveBeenCalledWith(
+          expect.stringContaining("failed"),
+          "error",
+        );
+        const waiting = await h.load();
+        expect(waiting.phase).toBe("awaiting-plan-review");
+        expect(waiting.planning.approvedPlanRef).toBeUndefined();
+        expect(h.children.map((child) => child.agent)).toEqual([
+          "workflow-scout",
+          "planner",
+          "plan-simplicity-reviewer",
+        ]);
+        h.events.deliver("plannotator:review-result", {
+          reviewId: "wrong-plan",
+          approved: true,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect((await h.load()).phase).toBe("awaiting-plan-review");
+        h.events.deliver("plannotator:review-result", {
+          reviewId: waiting.planning.planReview!.reviewId,
+          approved: true,
+        });
+        await vi.waitFor(
+          async () => expect((await h.load()).phase).toBe("completed"),
+          { timeout: 15000 },
+        );
+        const done = await h.load();
+        expect(done.coding.latestCodeReviewRef).toBeDefined();
+        expect(done.planning.latestPlanReviewRef).toBeDefined();
+        expect(done.planning.developmentMethodRef).toBeDefined();
+        expect(
+          h.children.filter((child) => child.agent === "worker"),
+        ).toHaveLength(1);
+        expect(h.validations).toHaveLength(1);
+        expect(
+          h.gates.filter((gate) => gate.action === "code-review"),
+        ).toHaveLength(1);
+        expect(resume).not.toHaveBeenCalled();
+      } finally {
+        await h.cleanup();
+      }
+    },
+    20000,
+  );
+
+  test("one recovery command restores a lost driver, then normal notifications complete; terminal reconciliation is a no-op", async () => {
     const workflow = await phaseCWorkflow({
       validations: ["failed", "passed"],
       rounds: [{ action: "RETRY" }],

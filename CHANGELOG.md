@@ -2,6 +2,17 @@
 
 `pi-orchestrator` の利用者に影響する Initial Scope の機能と保証を記録します。内部の実装履歴や remediation の経緯は含めません。
 
+## [Unreleased]
+
+### Fixed
+
+- Conditional routing が Research の必要性と未回答の Human choices を混同しないよう、stage/mode の判断目的を明確化。Instructions を policy freshness に bindし、古い decision の再利用を拒否。Confidence / ESCALATE / mandatory Human Gates は維持。
+
+### Verified
+
+- Issue #12: Pi 0.99.1 / pi-subagents 0.74.0 の公開契約、Git/non-Git の単一 command production lifecycle、実 Human clarification / Plan / Code Gates、native Jev、TDD / Test Seams、focused simplicity/refinement・material deviation/reapproval・Oracle advisory、recovery/authority regressions を検証。Final check: 66 files / 907 tests PASS。
+- [v1 production verification](./docs/release/v1-production-verification.md) に、real / scripted の検証境界、失敗記録、exact versions と制限を記録。Package version / historical v0.1.0 release evidence / tracking #13 は変更しない。
+
 ## [0.1.0] — Initial Scope release candidate
 
 ### Core orchestration

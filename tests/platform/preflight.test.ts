@@ -22,6 +22,10 @@ test("host peers use wildcard ranges and released baseline no longer installs th
   expect(manifest.dependencies["pi-subagents"]).toBe("0.74.0");
   expect(manifest.dependencies["pi-typesafe"]).toBeUndefined();
   expect(VERSION).toBe("0.99.1");
+  const lock = await readFile(resolve("pnpm-lock.yaml"), "utf8");
+  expect(lock).not.toContain("pi-typesafe");
+  expect(lock).not.toContain("pi-coding-agent@0.87.1");
+  expect(lock).not.toContain("pi-ai@0.87.1");
 });
 
 test("0.74 public preflight binds identity, explicit skills, tools, model and protocol without dispatch", async () => {

@@ -44,6 +44,8 @@ Conflicts are resolved through explicit Issue/canonical design changes, never si
 
 Implementation records: [#4 normal driver foundation](./implementation/normal-workflow-driver.md)、[#19 native classifier](./implementation/native-classifier-migration.md)、[#11 generated-workflow consent](./implementation/classifier-authorization.md)、[#21 launch contract](./implementation/agent-launch-contract.md)、[#15 Plan strategy boundary / material deviation](./implementation/plan-deviation.md)、[#9 synchronous Human Code Gate](./implementation/code-review.md)。各 record の検証範囲は full v1 production readiness と区別します。
 
+Integrated verification / reproducible harness: [#12 production verification](./implementation/production-verification.md) separates connected Git/non-Git actual Human Gates/native Jev from focused advisory/refinement/deviation probes and automated recovery coverage. Its final disposition does not imply a package release or closure of tracking #13.
+
 ## 5. Commands / runtime target
 
 ```text
