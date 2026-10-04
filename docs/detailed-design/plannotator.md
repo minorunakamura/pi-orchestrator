@@ -90,7 +90,7 @@ Static patch opens without live filesystem affordances。Empty intentional patch
 
 A patch/source is evidence only: generating it is not Code Approval。
 
-#9 implementation uses the existing `code-review` Artifact family with `recordType: code-review-attempt`, `coding.codeReviewAttemptRef` and a local `coding.codeReview.attemptId` binding。Git review is pinned to an exact generated static patch (`source.type: git-patch`) with current succeeded Worker snapshot identity; the public adapter also accepts supported Git options。Non-Git source production remains #10。See [implementation / acceptance / focused validation](../implementation/code-review.md)。
+#9 implementation uses the existing `code-review` Artifact family with `recordType: code-review-attempt`, `coding.codeReviewAttemptRef` and a local `coding.codeReview.attemptId` binding。Git review is pinned to an exact generated static patch (`source.type: git-patch`) with current succeeded Worker snapshot identity; the public adapter also accepts supported Git options。#10 adds `source.type: filesystem-patch` with exact original baseline/current Worker refs, retained contents and deterministic patch regeneration while preserving the same synchronous intent/result barriers. See [Code integration](../implementation/code-review.md) and [Workspace implementation / acceptance / validation](../implementation/workspace-evidence.md)。
 
 ## 5. Validation obligations
 

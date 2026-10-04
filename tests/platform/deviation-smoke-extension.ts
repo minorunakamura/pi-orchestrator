@@ -392,9 +392,12 @@ export default function (pi: ExtensionAPI) {
           launch: worker.launch,
           processTerminal: publicStatus.processTerminal,
           sourceAtAuditStart: before,
-          sourceBeforeDigest: worker.before.untracked.find(
-            (entry) => entry.path === "greeting.mjs",
-          )?.sha256,
+          sourceBeforeDigest:
+            worker.before.kind === "git"
+              ? worker.before.untracked.find(
+                  (entry) => entry.path === "greeting.mjs",
+                )?.sha256
+              : undefined,
           sourceAfter: await readFile(join(ctx.cwd, "greeting.mjs"), "utf8"),
           behaviorAudit: behavior.stdout.trim(),
           continuationWorkerRuns: 1,

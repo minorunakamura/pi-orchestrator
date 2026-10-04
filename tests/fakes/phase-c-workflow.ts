@@ -62,6 +62,8 @@ export interface RoundReply {
   reasonConfidence?: number;
 }
 export interface WorkflowScript {
+  nonGit?: boolean;
+  workerChanges?: Record<string, string | null>[];
   developmentIntent?: "AUTO" | "TDD" | "BEHAVIOR_FREE";
   method?: "STANDARD" | "TDD";
   supportingSkills?: boolean;
@@ -138,7 +140,8 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
   const root = await mkdtemp(join(tmpdir(), "phase-c-e2e-"));
   const repositoryCwd = join(root, "repo");
   await mkdir(repositoryCwd);
-  await promisify(execFile)("git", ["init", "--quiet", repositoryCwd]);
+  if (!script.nonGit)
+    await promisify(execFile)("git", ["init", "--quiet", repositoryCwd]);
   const workflowId = "full-fake";
   const fixturePlan =
     script.developmentIntent === "TDD" || script.method === "TDD"
@@ -232,6 +235,15 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         join(repositoryCwd, "implementation.txt"),
         `implementation revision ${nth}\n`,
       );
+      for (const [path, content] of Object.entries(
+        script.workerChanges?.[nth - 1] ?? {},
+      )) {
+        // Fixture actions happen only inside the Worker dispatch after durable intent.
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        if (content === null) await rm(join(repositoryCwd, path));
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        else await writeFile(join(repositoryCwd, path), content);
+      }
       const outcome = script.workers?.[nth - 1] ?? "success";
       if (outcome === "timeout") return;
       if (outcome === "deviation") {

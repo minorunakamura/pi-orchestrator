@@ -11,6 +11,7 @@ import {
 } from "./planning-routing.ts";
 import { recoverClarification } from "./clarification.ts";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { PlanningAgentPendingError } from "./planning-agent-run.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -58,9 +59,9 @@ import type {
 import { RuntimePortError } from "../ports/errors.ts";
 import { subagentRunId, type SubagentRunId } from "../../types.ts";
 import {
-  captureRepository,
-  type RepositorySnapshot,
-} from "../worker/repository-evidence.ts";
+  captureWorkspace,
+  type WorkspaceSnapshot,
+} from "../worker/workspace-evidence.ts";
 import {
   parseWorkerAttempt,
   type WorkerAttemptEvidence,
@@ -1253,6 +1254,22 @@ export class WorkflowReconciler {
       );
     }
     try {
+      const current = await captureWorkspace(
+        attempt.before.cwd,
+        this.deps.artifactStore.rootDirectory,
+        attempt.before,
+      );
+      if (!isDeepStrictEqual(current, attempt.after.snapshot))
+        throw Error("Workspace changed since successful Worker");
+    } catch (error) {
+      return this.block(
+        state,
+        "agent-execution-ambiguous",
+        attemptRef,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    try {
       const implementation = await readJson(
         this.deps.artifactStore,
         implementationRef,
@@ -1318,17 +1335,23 @@ export class WorkflowReconciler {
         attemptRef,
         "Worker returned no usable output",
       );
-    let after: RepositorySnapshot;
+    let after: WorkspaceSnapshot;
     try {
-      after = await captureRepository(
+      after = await captureWorkspace(
         this.deps.cwd ??
           this.deps.repositoryCwd ??
           state.projectRoot ??
           process.cwd(),
         this.deps.artifactStore.rootDirectory,
+        attempt.before,
       );
       if (after.root !== attempt.before.root)
         throw Error("repository identity changed");
+      if (
+        attempt.after?.status === "observed" &&
+        !isDeepStrictEqual(attempt.after.snapshot, after)
+      )
+        throw Error("Workspace changed since persisted Worker observation");
     } catch (error) {
       return this.block(
         state,
