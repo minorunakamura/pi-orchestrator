@@ -1,3 +1,4 @@
+import { WorkflowOwnership } from "../runtime/orchestrator/workflow-ownership.ts";
 import { CLARIFICATION_COMPLETE_EVENT } from "../runtime/integrations/clarification.ts";
 import type { ClarificationPort } from "../runtime/ports/clarification-port.ts";
 import {
@@ -86,6 +87,7 @@ export interface WorkflowCommandRuntime {
 }
 
 export interface WorkflowCommandRuntimeOptions {
+  ownership?: WorkflowOwnership;
   launchHost?: AgentLaunchHost;
   launchResolver?: LaunchResolver;
   projectTrusted?: boolean;
@@ -290,12 +292,15 @@ export function createWorkflowCommandRuntime(
   options: WorkflowCommandRuntimeOptions = {},
 ): WorkflowCommandRuntime {
   const root = runsDirectory(cwd);
+  // Standalone callers without an installed host boundary cannot execute a workflow.
+  const ownership = options.ownership ?? new WorkflowOwnership(cwd, "");
   const configuration = options.configuration;
   const dependencies = (workflowId: string) => {
     const artifactStore = new ArtifactStore(join(root, workflowId));
     const stateStore = new StateStore(join(root, workflowId));
     return {
       runsDirectory: root,
+      ownership,
       artifactStore,
       stateStore,
       loadState: () => stateStore.loadState(),
@@ -438,13 +443,19 @@ export function createWorkflowCommandRuntime(
       const deps = dependencies(workflowId);
       let started: StartedWorkflow | undefined;
       const driven = await watch(workflowId, deps, async (signal) => {
-        started = await createWorkflow(
-          { ...input, cwd: input.cwd ?? cwd },
-          {
-            ...deps,
-            workflowIdFactory: () => workflowId,
-          },
-        );
+        const create = async () => {
+          if (input.cwd && input.cwd !== cwd && options.ownership)
+            throw Error("Workflow command cannot change the owned workspace");
+          const created = await createWorkflow(
+            { ...input, cwd: input.cwd ?? cwd },
+            { ...deps, workflowIdFactory: () => workflowId },
+          );
+          created.state = options.ownership
+            ? await ownership.initialize(created.state, deps.stateStore)
+            : await ownership.validate(created.state, deps.stateStore);
+          return created;
+        };
+        started = await ownership.start(create);
         return driveWorkflow(workflowId, { ...deps, signal });
       });
       return { ...started!, state: driven.state };
@@ -454,9 +465,17 @@ export function createWorkflowCommandRuntime(
       const deps = dependencies(workflowId);
       return watch(workflowId, deps, async (signal) => {
         await deps.stateStore.withLock(async () => {
-          const state = await deps.loadState();
+          let state = await deps.loadState();
           if (state.workflowId !== workflowId)
             throw Error("Oracle workflow identity mismatch");
+          {
+            const phase = state.phase;
+            state = await ownership.validate(state, {
+              saveState: (next, revision) =>
+                deps.stateStore.saveState(next, revision, { lockHeld: true }),
+            });
+            if (phase !== "blocked" && state.phase === "blocked") return state;
+          }
           return requestOracleAdvice(state, question, {
             ...deps,
             stateStore: {

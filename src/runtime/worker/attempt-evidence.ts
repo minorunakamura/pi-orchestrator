@@ -65,7 +65,9 @@ const digest = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 const date = (value: unknown) =>
   isNonEmptyString(value) && Number.isFinite(Date.parse(value));
-function snapshot(value: unknown): value is WorkspaceSnapshot {
+export function isWorkspaceSnapshot(
+  value: unknown,
+): value is WorkspaceSnapshot {
   if (isFilesystemSnapshot(value)) return true;
   return (
     isRecord(value) &&
@@ -173,7 +175,7 @@ function assertWorkerAttempt(
     !date(value.observedAt) ||
     (value.launch !== undefined && !isAgentLaunchEvidence(value.launch)) ||
     (value.receipt !== undefined && !isAgentRunReceipt(value.receipt)) ||
-    !snapshot(value.before) ||
+    !isWorkspaceSnapshot(value.before) ||
     !isOneOf(
       [
         "intent",
@@ -218,7 +220,7 @@ function assertWorkerAttempt(
         hasOnlyKeys(value.after, ["status"])) ||
       (value.after.status === "observed" &&
         hasOnlyKeys(value.after, ["status", "snapshot"]) &&
-        snapshot(value.after.snapshot)) ||
+        isWorkspaceSnapshot(value.after.snapshot)) ||
       (value.after.status === "unavailable" &&
         hasOnlyKeys(value.after, ["status", "reason"]) &&
         value.after.reason === "observation-failed")
@@ -228,7 +230,7 @@ function assertWorkerAttempt(
   if (
     isRecord(value.after) &&
     value.after.status === "observed" &&
-    snapshot(value.after.snapshot)
+    isWorkspaceSnapshot(value.after.snapshot)
   )
     assertWorkspaceIdentity(value.before, value.after.snapshot);
   if (

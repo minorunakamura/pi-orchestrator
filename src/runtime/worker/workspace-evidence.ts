@@ -193,28 +193,53 @@ export function assertWorkspaceIdentity(
   )
     throw Error("Workspace provider/root/policy identity changed");
 }
+/** Exclude only the exact proposed documents, never their containing workload. */
+export function unchangedDocumentScope(
+  before: WorkspaceSnapshot,
+  after: WorkspaceSnapshot,
+  paths: string[],
+): boolean {
+  if (before.kind !== "filesystem" || after.kind !== "filesystem")
+    return isDeepStrictEqual(before, after);
+  const old = new Set(before.entries.map((entry) => entry.path));
+  const entries = after.entries.filter(
+    (entry) =>
+      !(
+        entry.kind === "directory" &&
+        !old.has(entry.path) &&
+        paths.some((path) => path.startsWith(`${entry.path}/`))
+      ),
+  );
+  return isDeepStrictEqual(before, {
+    ...after,
+    entries,
+    digest: calculateSha256(JSON.stringify(entries)),
+  });
+}
+
 export async function captureWorkspace(
   cwd: string,
   excludedDirectory?: string,
   expected?: WorkspaceSnapshot,
+  excludedPaths: string[] = [],
 ): Promise<WorkspaceSnapshot> {
+  if (!excludedPaths.every(safePath))
+    throw Error("Invalid workspace exclusions");
   const canonical = await realpath(cwd);
   const kind = await detectProvider(canonical);
   if (expected && kind !== expected.kind)
     throw Error("Workspace evidence provider changed");
   const snapshot =
     kind === "git"
-      ? await GitWorkspaceEvidenceProvider.capture(canonical, excludedDirectory)
-      : await FilesystemWorkspaceEvidenceProvider.capture(
-          canonical,
-          excludedDirectory,
-        );
+      ? await captureRepository(canonical, excludedDirectory, excludedPaths)
+      : await captureFilesystem(canonical, excludedDirectory, excludedPaths);
   if (expected) assertWorkspaceIdentity(expected, snapshot);
   return snapshot;
 }
 async function captureFilesystem(
   cwd: string,
   excludedDirectory?: string,
+  excludedPaths: string[] = [],
 ): Promise<FilesystemSnapshot> {
   const root = await realpath(cwd);
   const artifactPath = excludedDirectory
@@ -227,6 +252,7 @@ async function captureFilesystem(
   const exclusions = [
     ...new Set([
       ".pi/orchestrator",
+      ...excludedPaths,
       ...(artifactPath &&
       !artifactPath.startsWith("../") &&
       artifactPath !== ".." &&

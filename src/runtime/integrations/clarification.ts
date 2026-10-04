@@ -1,6 +1,7 @@
 // Root skill/resource restoration is ordered and side-effect free.
 // oxlint-disable eslint/no-await-in-loop
 import { isRecord } from "../../core/schema.ts";
+import type { WorkflowOwnership } from "../orchestrator/workflow-ownership.ts";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -37,6 +38,7 @@ const toolNames = ["wf_clarification_round", "wf_clarification_complete"];
 /** Root/Main owns the conversation. This bridge neither creates a child nor calls a classifier. */
 export function registerClarificationBridge(
   pi: ExtensionAPI,
+  ownership?: (context: ExtensionContext) => WorkflowOwnership,
 ): (context: ExtensionCommandContext) => ClarificationPort {
   const active = new Map<
     string,
@@ -146,7 +148,12 @@ export function registerClarificationBridge(
     const directory = join(rootDirectory(ctx.cwd), input.workflowId);
     const stateStore = new StateStore(directory);
     const artifactStore = new ArtifactStore(directory);
-    const state = await stateStore.loadState();
+    let state = await stateStore.loadState();
+    if (ownership) {
+      state = await ownership(ctx).validate(state, stateStore);
+      if (state.phase !== "clarifying")
+        throw Error("Workflow ownership does not authorize clarification");
+    }
     if (state.workflowId !== input.workflowId)
       throw Error("Clarification workflow identity mismatch");
     const request = await loadClarification(
@@ -158,9 +165,9 @@ export function registerClarificationBridge(
       throw Error("Clarification root workspace identity mismatch");
     if (!request.setup) throw Error("Missing root skill setup");
     await validateClarificationSetup(request.setup);
-    const next = await runClarificationRound(
+    let next = await runClarificationRound(
       state,
-      { stateStore, artifactStore },
+      { stateStore, artifactStore, ownership: ownership?.(ctx) },
       {
         requestHash: input.requestHash,
         summary: input.summary,
@@ -172,6 +179,8 @@ export function registerClarificationBridge(
       },
       (id, questions) => bus.ask(id, questions, signal),
     );
+    if (ownership && next.phase !== "blocked")
+      next = await ownership(ctx).validate(next, stateStore);
     if (next.phase === "planning") {
       active.delete(input.workflowId);
       // Wake-up only; the production driver reloads exact persisted authority.

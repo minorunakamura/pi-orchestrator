@@ -49,6 +49,8 @@ Subsequent #15 update: bounded Worker terminal stop → immutable exact Plan/att
 
 Subsequent #14 update: Planner/parser の必須 recipe を strategy sections に変更し、PLAN_CREATED は durable candidate として planning に留まる。Exact-bound read-only simplicity → durable one-shot refinement cap → fresh review → PLAN_REVIEW_READY → mandatory Human Plan Gate を normal driver / resume に接続した。Residual findings は public Plan payloadで全件表示し、Gate binding/settled evidenceはsimplicity refを含む。Focused tests / actual read-only reviewer・refinement Planner・pending Plannotator UI / zero-redispatch recovery は [Plan simplicity implementation / acceptance / validation](./plan-simplicity.md)。Material deviationは #15、Codemodeは #20、full production verificationは #12のまま。
 
+Subsequent #5 update: production Main/root ownershipはcanonical workspace / root session / workflow / accepted workspaceにbindする。Public tool/user-bash hooks、deny-only session breadcrumbs、normal driver / resume / pre-Worker drift checksによりdirect/indirect bypassを拒否する。GRILL_WITH_DOCSのexact Human-authorized CONTEXT/ADR exceptionはbefore-intent-afterとseparate workspace snapshot refsを持ち、implementation authorityを付与しない。Legacy/conflict/lost-State/unknown mutationはfail closed。Focused tests / actual Human document confirmation・denied Main mutation / untrusted native-child smokeは [Ownership implementation / acceptance / validation](./workflow-ownership.md)。Integrated production lifecycle / full actual Human Gatesは #12のまま。Local implementation/validationはIssue closure/merge/releaseを意味しない。
+
 Existing immutable Artifacts, exact approvals, lock/stateRevision, stale decisions, B1–B5/I1–I5 coding safety remain required; redesign must not weaken them while replacing incompatible contracts。
 
 ## 3. Dependency order

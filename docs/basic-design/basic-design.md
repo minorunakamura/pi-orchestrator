@@ -119,6 +119,8 @@ docs/adr/*.md
 
 許可対象は CONTEXT / context map / ADR の narrowly-scoped design-document writes。canonical project root 内に限定し、path traversal・symlink escape・source / implementation / configuration mutation を拒否する。before identity（absence を含む）、authorized intent、clarification binding を **write 前**に保存し、after identity / exact diff / Human answers の refs を write 後に保存する。missing / ambiguous evidence は fail closed。これは source implementation authority、一般的 docs write 権、Plan approval の代替ではない。
 
+正規化は case-sensitive POSIX project-relative path の exact spelling を要求する。Absolute / backslash / control-byte path、`posix.normalize(path) !== path`、`.` / `..` / `.git` / `.pi` / `node_modules` component を拒否する。Nested `CONTEXT-MAP.md` と `docs/adr` の再帰的 file placement は許可しない。Create/update のみで、parent/target symlink・hardlink・非regular file は拒否する。Raw edit/write/bash は例外の対象ではなく、Human-confirmed exact content を owned bridge が execution 時に再検証して書く。全workspaceの before/after と、exact対象fileだけを除外した scope観測を intent/result に bindし、同時の無関係な変更を許可しない。
+
 ## 7. Plan contract and simplicity review
 
 Plan は frozen line-by-line execution recipe ではなく、Human が承認する **implementation strategy and boundary**。exact approved Plan content/hash が Implementation Authority である。

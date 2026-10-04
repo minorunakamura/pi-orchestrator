@@ -111,6 +111,12 @@ pi install git:github.com/minorunakamura/pi-ask-user-question@0a6ad2c5fd7f79cecc
 
 Allowed document candidates: CONTEXT.md、CONTEXT-MAP.md、nested CONTEXT.md、docs/adr/*.md / nested docs/adr/*.md。Orchestrator が active clarification に bind した **exact path scope / intent / before identity を write 前に**保存し、after identity/diff/answer evidence を保存します。source/config/implementation mutation は Main に許可されず、docs exception も implementation authority ではありません。
 
+## Active workflow ownership
+
+#5 のproduction boundaryは canonical workspace / root session / workflow をdurableにbindします。Active（blockedを含む）workflow中はMainのraw tool / shell / MCP / Codemode / child executionを拒否し、Human chatとowned clarificationだけを許可します。Trusted project resourcesやread-only hintsでも実装権限は増えません。Normal driver / resume / Worker直前でworkspaceを検証し、unexpected mutationはbaselineに取り込まずblockします。
+
+GRILL_WITH_DOCSの例外は実Humanが確認したexact CONTEXT/ADR create/updateだけです。Legacy ownership、conflict、workspace/provider/root/session drift、unresolved mutationは自動adoption/retryしません。Gitはrepository rootで開始してください。Hooksはtrusted extensionのdirect filesystem accessに対するOS sandboxではなく、その変更はworkspace driftとして検出します。[実装・acceptance・real Pi証拠と制限](./docs/implementation/workflow-ownership.md)。
+
 ## Plan strategy / simplicity / TDD / Worker boundary
 
 Plan は frozen editing recipe ではなく approved implementation strategy/boundary。必須 content:

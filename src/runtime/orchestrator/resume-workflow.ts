@@ -113,11 +113,24 @@ async function runReconciliation(
   const execute = async (): Promise<
     { planning: WorkflowState } | { result: ReconciliationResult }
   > => {
-    const state = await load();
+    let state = await load();
     if (state.workflowId !== workflowId) {
       throw new Error(
         "Persisted Workflow State identity does not match resume input",
       );
+    }
+    if (options.ownership) {
+      const phase = state.phase;
+      state = await options.ownership.validate(state, deps.stateStore, true);
+      if (phase !== "blocked" && state.phase === "blocked")
+        return {
+          result: {
+            state,
+            phase: state.phase,
+            status: "blocked",
+            reason: state.block?.reason,
+          },
+        };
     }
     if (
       state.oracle?.pendingRef &&

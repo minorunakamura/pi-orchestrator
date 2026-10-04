@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
+import { WorkflowOwnership } from "../../../src/runtime/orchestrator/workflow-ownership.ts";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -301,7 +302,8 @@ test("stale queued State or missing historical receipt cannot cause a new Oracle
 
 test("production composition exposes bounded advisory through the existing public RPC adapter", async () => {
   const f = await setup();
-  const state = await f.h.load();
+  const ownership = new WorkflowOwnership(f.h.repositoryCwd, "root-1");
+  const state = await ownership.initialize(await f.h.load(), f.h.stateStore);
   await f.h.stateStore.saveState(
     {
       ...state,
@@ -320,6 +322,7 @@ test("production composition exposes bounded advisory through the existing publi
     );
   });
   const runtime = createWorkflowCommandRuntime(events, f.h.repositoryCwd, {
+    ownership,
     launchResolver: fakeLaunchResolver,
   });
   const result = await runtime.advise!(state.workflowId, f.question);
@@ -347,7 +350,8 @@ test("production composition exposes bounded advisory through the existing publi
 
 test("exact completion notification wakes a reconciled running Oracle without manual resume or redispatch", async () => {
   const f = await setup();
-  const source = await f.h.load();
+  const ownership = new WorkflowOwnership(f.h.repositoryCwd, "root-1");
+  const source = await ownership.initialize(await f.h.load(), f.h.stateStore);
   const blocked = await f.h.stateStore.saveState(
     {
       ...source,
@@ -371,6 +375,7 @@ test("exact completion notification wakes a reconciled running Oracle without ma
   const pending = await requestOracleAdvice(blocked, f.question, deps);
   await runOracleAdvice(pending, deps); // bounded wait expired, native public status remains running
   const runtime = createWorkflowCommandRuntime(events, f.h.repositoryCwd, {
+    ownership,
     launchResolver: fakeLaunchResolver,
   });
   expect((await runtime.resume(source.workflowId)).status).toBe("pending");

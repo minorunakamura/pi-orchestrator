@@ -32,6 +32,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
 async function observe(
   cwd: string,
   excludedDirectory?: string,
+  excludedPaths: string[] = [],
 ): Promise<RepositorySnapshot> {
   const root = await realpath(
     (await git(cwd, ["rev-parse", "--show-toplevel"])).trim(),
@@ -57,6 +58,7 @@ async function observe(
     : undefined;
   const exclusions = [
     ".pi/orchestrator",
+    ...excludedPaths,
     ...(exclude && !exclude.startsWith("..") && !isAbsolute(exclude)
       ? [exclude]
       : []),
@@ -150,13 +152,14 @@ async function observe(
 export async function captureRepository(
   cwd: string,
   excludedDirectory?: string,
+  excludedPaths: string[] = [],
 ): Promise<RepositorySnapshot> {
   const canonical = await realpath(cwd);
   const excluded = excludedDirectory
     ? await realpath(excludedDirectory)
     : undefined;
-  const before = await observe(canonical, excluded);
-  const after = await observe(canonical, excluded);
+  const before = await observe(canonical, excluded, excludedPaths);
+  const after = await observe(canonical, excluded, excludedPaths);
   if (JSON.stringify(before) !== JSON.stringify(after))
     throw Error("Repository changed during observation");
   return after;

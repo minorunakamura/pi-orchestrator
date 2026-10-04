@@ -65,6 +65,14 @@ Worker mutation requires current approved strategy/routing/launch/attempt identi
 
 Pi/pi-subagents own trust inheritance。Untrusted trust-gated project settings/.pi prompts/skills/extensions must be skipped; AGENTS.md/CLAUDE.md context and startup sessionDir lookup are exceptions, not sandboxed by trust。Use explicit inheritance policy for context exclusion。tool_call guards model/nested/MCP calls, not arbitrary trusted extension pi.exec/filesystem code; deny unknown mutation providers and detect out-of-band workspace drift。Single active owner is reconciled before continuation; ownership conflicts block rather than switching Main into executor。
 
+### #5 implemented ownership projection
+
+Production composition は public `session_start` / `before_agent_start` / `tool_call` / `user_bash` を登録し、毎callで同じworkspaceの durable active State を再観測する。Workspace-wide lock 下で single owner を確認し、initial State → immutable `ownershipRef`（canonical root/root session/workflow/full workspace observation）→ CAS State を保存してから normal driving を開始する。Public session custom entriesはdeny-only breadcrumbとしてState binding前に保存する。Known State/runtime-directoryの消失をowner解放とみなさず、reload/branch navigation後もnew start/raw toolを拒否する。Session hintsはpermission/approvalではなく、current State/Artifactsだけがauthority。`blocked` は ownership を保持し、`completed` / `failed` は terminal とする。Legacy/unbound owner、conflict、corrupt observation、別root sessionへのadoptionは permission にせず停止する。Git workflow のcwdは canonical repository root を要求する。
+
+Active ownership中は Main の raw toolsをすべて拒否する（read-only hints / trusted project tool / shell / MCP / Codemode / childも含む）。Human chatと `/wf-status` は可能。Clarifying中の例外は owned `wf_clarification_round` / `wf_clarification_complete` のみで、effective params/session/path/workspace は `execute()` で再検証する。Missing factsはOrchestrator-owned evidence待ちであり、Mainへのraw investigation permissionを推定しない。
+
+Normal driver、resume/reconciliation entry、Oracle request、最初/次のWorker baseline直前で ownership/workspaceを検証する。Changed workspaceはfresh baselineにせず durable denial → block。`workspaceCheckpointRef` はexact succeeded/deviated Workerのbefore/after、またはconfirmed clarification/document intent/result/full workspace/scope evidenceだけから更新する。Unresolved Workerはexisting exact historical reconcilerへ渡し、ここでrelaunch/rebaselineしない。Ownership/checkpointは implementation/Plan/Code approvalではない。[実装・acceptance・real smoke](../implementation/workflow-ownership.md)。
+
 ## 6. pi-subagents Integration
 
 Mapping: workflow-scout / read-only Diagnosis role / pi-ketch.researcher / planner / plan-simplicity-reviewer / worker / reviewer / ponytail-reviewer / builtin oracle。Product custom definitions must exist before runtime selection; development-time builtin helpers do not replace them。

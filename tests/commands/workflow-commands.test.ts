@@ -1,3 +1,4 @@
+import { WorkflowOwnership } from "../../src/runtime/orchestrator/workflow-ownership.ts";
 import { CLARIFICATION_COMPLETE_EVENT } from "../../src/runtime/integrations/clarification.ts";
 import { runClarificationRound } from "../../src/runtime/orchestrator/clarification.ts";
 import { fakeLaunchResolver } from "../fakes/agent-launch.ts";
@@ -316,10 +317,13 @@ describe("ORCH-019 workflow commands", () => {
             ? workflow.gateEvents.emit(event, payload)
             : workflow.events.emit(event, payload),
       };
+      const ownership = new WorkflowOwnership(workflow.repositoryCwd, "root-1");
+      await ownership.initialize(await workflow.load(), workflow.stateStore);
       const runtime = createWorkflowCommandRuntime(
         runtimeEvents,
         workflow.repositoryCwd,
         {
+          ownership,
           launchResolver: fakeLaunchResolver,
           configuration: workflow.configuration,
           jevDecisionClient: workflow.jevDecisionClient,
@@ -372,10 +376,13 @@ describe("ORCH-019 workflow commands", () => {
             ? workflow.gateEvents.emit(event, payload)
             : workflow.events.emit(event, payload),
       };
+      const ownership = new WorkflowOwnership(workflow.repositoryCwd, "root-1");
+      await ownership.initialize(await workflow.load(), workflow.stateStore);
       const runtime = createWorkflowCommandRuntime(
         events,
         workflow.repositoryCwd,
         {
+          ownership,
           launchResolver: fakeLaunchResolver,
           configuration: workflow.configuration,
           jevDecisionClient: workflow.jevDecisionClient,
@@ -537,6 +544,7 @@ describe("ORCH-019 workflow commands", () => {
     };
     try {
       const runtime = createWorkflowCommandRuntime(events, root, {
+        ownership: new WorkflowOwnership(root, "root-1"),
         launchResolver: fakeLaunchResolver,
         configuration,
         jevDecisionClient: new FakeJevDecisionClient(),

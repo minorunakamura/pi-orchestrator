@@ -134,6 +134,7 @@ test.each(["explicit", "installed"])(
         "session_start",
         "before_agent_start",
         "tool_call",
+        "user_bash",
       ]);
     } finally {
       await rm(isolated, { recursive: true, force: true });

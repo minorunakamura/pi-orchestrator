@@ -231,10 +231,24 @@ export async function driveWorkflow(
   // oxlint-disable eslint/no-await-in-loop
   while (true) {
     const execute = async (): Promise<ReconciliationResult | WorkflowState> => {
-      const state = await deps.loadState();
+      let state = await deps.loadState();
       if (state.workflowId !== workflowId)
         throw Error("Workflow driver identity mismatch");
       assertStateInvariants(state);
+      if (deps.ownership) {
+        const phase = state.phase;
+        state = await deps.ownership.validate(
+          state,
+          deps.stateStore.withLock
+            ? {
+                saveState: (next, revision) =>
+                  deps.stateStore.saveState(next, revision, { lockHeld: true }),
+              }
+            : deps.stateStore,
+        );
+        if (phase !== "blocked" && state.phase === "blocked")
+          return result(state);
+      }
       if (
         deps.signal?.aborted &&
         !["completed", "failed", "blocked"].includes(state.phase)
