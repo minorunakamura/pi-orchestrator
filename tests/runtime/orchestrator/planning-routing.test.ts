@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { diagnosisReport } from "../../fakes/diagnosis.ts";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import type { ClassifierContext } from "@earendil-works/pi-ai";
 import { isRecord, isOneOf } from "../../../src/core/schema.ts";
 import type { ArtifactRef } from "../../../src/core/artifacts/references.ts";
 import type { PlaybookKind } from "../../../src/types.ts";
+import { getPlaybookStagePolicy } from "../../../src/core/playbooks/policy.ts";
 import type {
   ConditionalStage,
   StageOutcome,
@@ -27,6 +29,7 @@ import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning
 import {
   PlanningRouting,
   PlanningRoutingStoppedError,
+  PLANNING_EVIDENCE_LIMITS,
 } from "../../../src/runtime/orchestrator/planning-routing.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
@@ -439,6 +442,41 @@ test("resume reuses fresh decisions without classifier calls and rejects configu
   const stale = await h2.drive();
   expect(stale.state.block?.reason).toBe("operator-attention-required");
   expect(h2.trace).not.toContain("child:planner");
+});
+
+test("old classifier instructions cannot reuse an otherwise exact stage decision", async () => {
+  const h = await setup();
+  await h.gather();
+  const state = await h.load();
+  const research = await h.decision(
+    state.planning.stageDecisionRefs!.research!,
+  );
+  const legacy = {
+    ...research,
+    policyDigest: createHash("sha256")
+      .update(
+        JSON.stringify({
+          version: "planning-routing-1",
+          matrix: getPlaybookStagePolicy(state.playbook),
+          limits: PLANNING_EVIDENCE_LIMITS,
+        }),
+      )
+      .digest("hex"),
+  };
+  const ref = await h.deps.artifactStore.writeJson(
+    "conditional-stage",
+    "legacy-instructions.json",
+    legacy,
+    parsePlanningDecisionArtifact,
+  );
+  state.planning.stageDecisionRefs!.research = ref;
+  await h.deps.stateStore.saveState(state, state.stateRevision);
+  const count = h.inputs.length;
+  const stopped = await h.drive();
+  expect(stopped.status).toBe("blocked");
+  expect(stopped.state.block?.reason).toBe("operator-attention-required");
+  expect(h.inputs).toHaveLength(count);
+  expect(h.trace).not.toContain("child:planner");
 });
 
 test.each([

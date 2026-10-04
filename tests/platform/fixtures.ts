@@ -10,7 +10,7 @@ const skill = (name: string) =>
   `---\nname: ${name}\ndescription: Platform contract canary\n---\n${name}\n`;
 
 /** Disposable resources only; never changes operator settings or dependencies. */
-export async function platformFixture() {
+export async function platformFixture(toolActivation?: "dynamic" | "eager") {
   const root = await mkdtemp(join(tmpdir(), "pi-orchestrator-platform-"));
   const agentDir = join(root, "agent");
   const cwd = join(root, "project");
@@ -22,6 +22,11 @@ export async function platformFixture() {
       subagents: { intercomBridge: { mode: "off" } },
     }),
   );
+  if (toolActivation)
+    await file(
+      join(agentDir, "extensions/subagent/config.json"),
+      JSON.stringify({ toolActivation }),
+    );
   await file(
     join(agentDir, "skills/ambient-skill/SKILL.md"),
     skill("ambient-skill"),
