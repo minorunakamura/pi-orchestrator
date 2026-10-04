@@ -31,9 +31,8 @@ export {
   type RoundDecisionRawDecision,
 } from "./jev-decision-client.ts";
 export {
-  type CodeReviewHandle,
   type CodeReviewRequest,
-  type CodeReviewStatus,
+  type CodeReviewResult,
   type PlanReviewHandle,
   type PlanReviewRequest,
   type PlanReviewStatus,

@@ -37,7 +37,7 @@ describe.each(["execute", "resume"] as const)(
           ? await workflow.implement()
           : await workflow.resume();
       expect(result.state.phase).toBe(
-        entry === "execute" ? "validating" : "awaiting-code-review",
+        entry === "execute" ? "validating" : "completed",
       );
       expect(result.state.coding.implementationRevision).toBe(2);
       expect(

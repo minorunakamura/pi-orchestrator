@@ -13,9 +13,8 @@ import type {
   ClarificationPort,
   ClarificationRequest,
   ClarificationResult,
-  CodeReviewHandle,
   CodeReviewRequest,
-  CodeReviewStatus,
+  CodeReviewResult,
   ExecutionRoutingInput,
   ExecutionRoutingRawDecision,
   FindingEvaluationInput,
@@ -332,8 +331,7 @@ export class FakeJevDecisionClient implements JevDecisionClient {
 export interface FakePlannotatorGateOptions {
   openPlanReview?: FakeSequence<PlanReviewHandle>;
   getPlanReview?: FakeSequence<PlanReviewStatus>;
-  openCodeReview?: FakeSequence<CodeReviewHandle>;
-  getCodeReview?: FakeSequence<CodeReviewStatus>;
+  openCodeReview?: FakeSequence<CodeReviewResult>;
 }
 
 export class FakePlannotatorGate implements PlannotatorGate {
@@ -341,7 +339,6 @@ export class FakePlannotatorGate implements PlannotatorGate {
     openPlanReview: [] as PlanReviewRequest[],
     getPlanReview: [] as PlannotatorReviewId[],
     openCodeReview: [] as CodeReviewRequest[],
-    getCodeReview: [] as PlannotatorReviewId[],
   };
 
   constructor(private readonly outcomes: FakePlannotatorGateOptions = {}) {}
@@ -373,21 +370,12 @@ export class FakePlannotatorGate implements PlannotatorGate {
     );
   }
 
-  openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle> {
+  openCodeReview(input: CodeReviewRequest): Promise<CodeReviewResult> {
     this.calls.openCodeReview.push(input);
     return resolve(
       "PlannotatorGate.openCodeReview",
       this.outcomes.openCodeReview,
       this.calls.openCodeReview.length - 1,
-    );
-  }
-
-  getCodeReview(reviewId: PlannotatorReviewId): Promise<CodeReviewStatus> {
-    this.calls.getCodeReview.push(reviewId);
-    return resolve(
-      "PlannotatorGate.getCodeReview",
-      this.outcomes.getCodeReview,
-      this.calls.getCodeReview.length - 1,
     );
   }
 }

@@ -101,7 +101,7 @@ test("routed TDD can resume approved authority without another method decision o
   );
   expect(method).toMatchObject({ family: "method", outcome: "TDD" });
   const result = await h.resume();
-  expect(result.state.phase).toBe("awaiting-code-review");
+  expect(result.state.phase).toBe("completed");
   expect(result.state.planning.developmentMethodRef).toEqual(methodRef);
   expect(result.state.planning.approvedPlanRef).toEqual(
     implemented.state.planning.approvedPlanRef,

@@ -226,9 +226,6 @@ async function setup(script: Script = {}) {
       openCodeReview: async () => {
         throw Error("No implementation authority");
       },
-      getCodeReview: async () => {
-        throw Error("not used");
-      },
     },
   };
   return {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ArtifactRef } from "../../../src/core/artifacts/references.ts";
 import {
   PLANNOTATOR_REQUEST_CHANNEL,
@@ -16,12 +16,6 @@ const planRef: ArtifactRef<"plan"> = {
   sha256: "a".repeat(64),
 };
 const reviewId = plannotatorReviewId("review-1");
-const implementationRef: ArtifactRef<"implementation"> = {
-  kind: "implementation",
-  path: "implementation/implementation-1.json",
-  schemaVersion: 1,
-  sha256: "b".repeat(64),
-};
 
 type Request = {
   requestId: string;
@@ -193,106 +187,114 @@ describe("PlannotatorIntegration", () => {
     expect(events.calls).toHaveLength(1);
   });
 
-  test("opens a code review with the exact implementation revision binding", async () => {
-    const events = new FakeEventBus([
-      {
-        status: "handled",
-        result: { status: "pending", reviewId },
-      },
-    ]);
-    const gate = new PlannotatorIntegration({
-      events,
-      planReader: { readText: async () => "# Plan" },
-    });
-
-    await expect(
-      gate.openCodeReview({ implementationRef, implementationRevision: 1 }),
-    ).resolves.toEqual({
-      reviewId,
-      implementationRef,
-      implementationRevision: 1,
-    });
-    expect(events.calls[0]).toMatchObject({
-      request: {
+  test.each([true, false])(
+    "uses the published settled Code result (approved=%s) and only public patch payload",
+    async (approved) => {
+      const result = {
+        approved,
+        feedback: "Human notes",
+        annotations: [{ line: 1 }],
+        agentSwitch: "untrusted-ui-hint",
+      };
+      const events = new FakeEventBus([{ status: "handled", result }]);
+      const gate = new PlannotatorIntegration({
+        events,
+        planReader: { readText: async () => "# Plan" },
+      });
+      await expect(
+        gate.openCodeReview({
+          requestId: "local-request",
+          cwd: "/workspace",
+          patchFile: "/workspace/review.diff",
+        }),
+      ).resolves.toEqual({
+        approved,
+        feedback: "Human notes",
+        annotations: [{ line: 1 }],
+      });
+      expect(events.calls[0]?.request).toMatchObject({
+        requestId: "local-request",
         action: "code-review",
-        payload: {
-          implementationRef,
-          implementationRevision: 1,
-          origin: "pi-orchestrator",
+        payload: { cwd: "/workspace", patchFile: "/workspace/review.diff" },
+      });
+      expect(Object.keys(events.calls[0].request.payload)).toEqual([
+        "cwd",
+        "patchFile",
+      ]);
+      expect(events.calls.map((call) => call.request.action)).toEqual([
+        "code-review",
+      ]);
+    },
+  );
+  test("supports the public Git review options", async () => {
+    const events = new FakeEventBus([
+      { status: "handled", result: { approved: true } },
+    ]);
+    const gate = new PlannotatorIntegration({
+      events,
+      planReader: { readText: async () => "# Plan" },
+    });
+    await gate.openCodeReview({
+      requestId: "git-request",
+      cwd: "/repo",
+      diffType: "uncommitted",
+      vcsType: "git",
+      useLocal: true,
+    });
+    expect(events.calls[0].request.payload).toEqual({
+      cwd: "/repo",
+      diffType: "uncommitted",
+      vcsType: "git",
+      useLocal: true,
+    });
+  });
+  test("Human deliberation beyond five seconds never becomes an integration timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let request: Request | undefined;
+      const gate = new PlannotatorIntegration({
+        events: {
+          emit: (_channel, payload) => {
+            if (!isRequest(payload)) throw Error("request");
+            request = payload;
+          },
         },
-      },
-    });
+        planReader: { readText: async () => "# Plan" },
+      });
+      let settled = false;
+      const pending = gate
+        .openCodeReview({
+          requestId: "local-request",
+          cwd: "/repo",
+          patchFile: "review.diff",
+        })
+        .then((result) => {
+          settled = true;
+          return result;
+        });
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      expect(settled).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      request!.respond({ status: "handled", result: { approved: true } });
+      request!.respond({ status: "handled", result: { approved: false } });
+      await expect(pending).resolves.toEqual({ approved: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
-
-  test("reconciles a code review with an exact persisted binding after adapter restart", async () => {
-    const events = new FakeEventBus([
-      {
-        status: "handled",
-        result: { status: "completed", reviewId, approved: true },
-      },
-    ]);
+  test.each([
+    { status: "pending", reviewId },
+    {},
+    { approved: "yes" },
+    { approved: true, feedback: 1 },
+    { approved: true, annotations: {} },
+  ])("rejects invalid Code result %j", async (result) => {
     const gate = new PlannotatorIntegration({
-      events,
+      events: new FakeEventBus([{ status: "handled", result }]),
       planReader: { readText: async () => "# Plan" },
     });
-
     await expect(
-      gate.getCodeReview(reviewId, {
-        reviewId,
-        implementationRef,
-        implementationRevision: 1,
-      }),
-    ).resolves.toEqual({
-      reviewId,
-      implementationRef,
-      implementationRevision: 1,
-      status: "approved",
-    });
-  });
-
-  test("rejects a code review binding that is not the persisted implementation", async () => {
-    const events = new FakeEventBus([
-      { status: "handled", result: { status: "pending", reviewId } },
-    ]);
-    const gate = new PlannotatorIntegration({
-      events,
-      planReader: { readText: async () => "# Plan" },
-    });
-    await gate.openCodeReview({ implementationRef, implementationRevision: 1 });
-
-    await expect(
-      gate.getCodeReview(reviewId, {
-        reviewId,
-        implementationRef,
-        implementationRevision: 2,
-      }),
-    ).rejects.toMatchObject({ kind: "reconciliation" });
-    expect(events.calls).toHaveLength(1);
-  });
-
-  test("rejects an external code-review result bound to another revision", async () => {
-    const events = new FakeEventBus([
-      {
-        status: "handled",
-        result: {
-          status: "completed",
-          reviewId,
-          approved: true,
-          implementationRevision: 2,
-        },
-      },
-    ]);
-    const gate = new PlannotatorIntegration({
-      events,
-      planReader: { readText: async () => "# Plan" },
-    });
-
-    await expect(
-      gate.getCodeReview(reviewId, {
-        reviewId,
-        implementationRef,
-        implementationRevision: 1,
-      }),
+      gate.openCodeReview({ requestId: "local", cwd: "/repo" }),
     ).rejects.toMatchObject({ kind: "reconciliation" });
   });
 

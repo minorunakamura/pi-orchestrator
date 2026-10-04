@@ -93,7 +93,6 @@ describe("ORCH-018 reconciliation fault boundaries", () => {
     await workflow.review();
     await workflow.evaluate();
     await workflow.decide();
-    await workflow.openCode();
     const secret = "Bearer super-secret-token";
     const failingGate = {
       openPlanReview: async () => {
@@ -103,9 +102,6 @@ describe("ORCH-018 reconciliation fault boundaries", () => {
         throw new Error("unused");
       },
       openCodeReview: async () => {
-        throw new Error("unused");
-      },
-      getCodeReview: async () => {
         throw new RuntimePortError("reconciliation", secret);
       },
     };

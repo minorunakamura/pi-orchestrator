@@ -90,6 +90,8 @@ Static patch opens without live filesystem affordances。Empty intentional patch
 
 A patch/source is evidence only: generating it is not Code Approval。
 
+#9 implementation uses the existing `code-review` Artifact family with `recordType: code-review-attempt`, `coding.codeReviewAttemptRef` and a local `coding.codeReview.attemptId` binding。Git review is pinned to an exact generated static patch (`source.type: git-patch`) with current succeeded Worker snapshot identity; the public adapter also accepts supported Git options。Non-Git source production remains #10。See [implementation / acceptance / focused validation](../implementation/code-review.md)。
+
 ## 5. Validation obligations
 
 Adapter fixtures must match actual public Plan async and Code settled shapes. Fake synchronous Code responder must remain pending longer than five seconds without being classified as infrastructure failure; finite tests control explicit settlement rather than real-time sleeps。

@@ -37,8 +37,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     const workflow = await setup();
     const created = await workflow.createPlan();
     const resumed = await workflow.resume();
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(resumed.state.planning.approvedPlanRef).toEqual(created.planRef);
     expect(
       workflow.children.filter((child) => child.agent === "worker"),
@@ -74,8 +74,7 @@ describe("ORCH-018 phase-specific reconciliation", () => {
       const workflow = await setup();
       await reachReview(workflow);
       await workflow.evaluate();
-      await workflow.decide();
-      const opened = await workflow.openCode();
+      const opened = await workflow.decide();
       const path = join(
         workflow.artifactStore.rootDirectory,
         opened.state.coding.implementationRef!.path,
@@ -100,8 +99,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const opened = await workflow.resume();
 
-    expect(opened.status).toBe("pending");
-    expect(opened.state.phase).toBe("awaiting-code-review");
+    expect(opened.status).toBe("advanced");
+    expect(opened.state.phase).toBe("completed");
     expect(
       workflow.gates.filter((gate) => gate.action === "code-review"),
     ).toHaveLength(1);
@@ -124,7 +123,7 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     const round = await workflow.decide();
     expect(round.state.phase).toBe("awaiting-code-review");
     const opened = await workflow.openCode();
-    expect(opened.status).toBe("opened");
+    expect(opened.status).toBe("approved");
     const before = workflow.gates.filter(
       (gate) => gate.action === "code-review",
     ).length;
@@ -154,8 +153,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(resumed.state.coding.validationRef).toEqual(
       validation.validationRef,
     );
@@ -172,8 +171,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(
       workflow.children.filter(
         (child) =>
@@ -194,8 +193,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(workflow.roundCalls()).toBe(calls);
   });
 
@@ -217,8 +216,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(resumed.state.coding.findingEvaluationRef).toBeDefined();
     expect(resumed.state.coding.acceptedFindingsRef).toBeDefined();
     expect(
@@ -237,8 +236,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume({ changeScope: "changed scope" });
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(
       workflow.jevRequests.filter(
         (request) => "modelTier" in request.questions,
@@ -264,8 +263,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(resumed.state.coding.implementationRevision).toBe(2);
     expect(resumed.state.coding.workerAttemptRef).not.toEqual(
       completedAttemptRef,
@@ -382,8 +381,8 @@ describe("ORCH-018 phase-specific reconciliation", () => {
 
     const resumed = await workflow.resume();
 
-    expect(resumed.status).toBe("pending");
-    expect(resumed.state.phase).toBe("awaiting-code-review");
+    expect(resumed.status).toBe("advanced");
+    expect(resumed.state.phase).toBe("completed");
     expect(resumed.state.block).toBeUndefined();
     expect(
       workflow.children.filter((child) => child.agent === "worker"),
@@ -396,7 +395,7 @@ describe("ORCH-018 phase-specific reconciliation", () => {
     await workflow.evaluate();
     const round = await workflow.decide();
     workflow.faults.codeIdentityState = true;
-    // The external open succeeds, but local identity persistence is faulted.
+    // Local attempt State fails before the external request; the orphan remains a barrier.
     await expect(workflow.openCode()).rejects.toThrow();
     const before = workflow.gates.filter(
       (gate) => gate.action === "code-review",

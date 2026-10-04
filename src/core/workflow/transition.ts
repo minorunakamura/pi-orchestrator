@@ -110,6 +110,7 @@ function clearCurrentRoundEvidence(state: WorkflowState): void {
   delete state.coding.roundDecisionRef;
   delete state.coding.latestCodeReviewRef;
   delete state.coding.codeReview;
+  delete state.coding.codeReviewAttemptRef;
 }
 
 function requireContextDecisions(state: WorkflowState): void {

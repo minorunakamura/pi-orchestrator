@@ -11,6 +11,7 @@ import { PlanningAgentPendingError } from "./planning-agent-run.ts";
 import {
   CodingOrchestrator,
   CodeReviewOpenAttemptError,
+  CodeReviewSourceError,
   CodeReviewAuthorityError,
   StaleCodeReviewError,
 } from "./coding-orchestrator.ts";
@@ -165,21 +166,35 @@ async function advance(
         const next = await coding().openCodeReview({ state });
         return result(next.state, next.state.phase === state.phase);
       } catch (error) {
-        if (error instanceof CodeReviewOpenAttemptError)
-          return block("operator-attention-required");
+        // Code opening persisted a pending local attempt before the Human side effect.
+        const current = await deps.loadState();
+        if (
+          error instanceof CodeReviewOpenAttemptError ||
+          error instanceof CodeReviewSourceError
+        )
+          return result(
+            await advanceWorkflow(
+              current,
+              { type: "BLOCK", reason: "operator-attention-required" },
+              deps.stateStore,
+            ),
+          );
         if (
           error instanceof CodeReviewAuthorityError ||
           error instanceof StaleCodeReviewError
         )
           return result(
             await advanceWorkflow(
-              state,
+              current,
               {
                 type: "FAIL",
                 reason:
                   error instanceof CodeReviewAuthorityError
                     ? "authoritative-artifact-corrupt"
                     : "authority-inconsistent",
+                evidenceRef:
+                  current.coding.codeReviewAttemptRef ??
+                  current.coding.implementationRef,
               },
               deps.stateStore,
             ),

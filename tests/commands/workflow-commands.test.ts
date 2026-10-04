@@ -340,13 +340,11 @@ describe("ORCH-019 workflow commands", () => {
         approved: true,
       });
       await vi.waitFor(
-        async () =>
-          expect((await workflow.load()).coding.codeReview).toBeDefined(),
+        async () => expect((await workflow.load()).phase).toBe("completed"),
         { timeout: 10_000 },
       );
-      expect((await workflow.load()).phase).toBe("awaiting-code-review");
-      // The existing Code Gate port is still async until #9; accept its bound Human result normally.
-      expect((await workflow.drive()).state.phase).toBe("completed");
+      // Synchronous Code result already persisted and normal continuation completed.
+      expect((await workflow.load()).coding.latestCodeReviewRef).toBeDefined();
       expect((await resume()).phase).toBe("completed");
       expect(
         workflow.children.filter((child) => child.agent === "worker"),

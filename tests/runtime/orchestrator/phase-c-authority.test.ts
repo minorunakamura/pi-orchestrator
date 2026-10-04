@@ -30,12 +30,7 @@ test("real runners connect both Human Gates through complete empty reviews", asy
     state: f.evaluated.state,
     validation: f.validated.validation,
   });
-  const opened = await f.coding.openCodeReview({ state: round.state });
-  if (opened.status !== "opened") throw Error("expected gate");
-  const approved = await f.coding.reconcileCodeReview({
-    state: opened.state,
-    reviewId: opened.handle.reviewId,
-  });
+  const approved = await f.coding.openCodeReview({ state: round.state });
   expect(approved.state.phase).toBe("completed");
 });
 
@@ -254,13 +249,19 @@ test("Human Code Feedback keeps its authority across a fresh Fix and new Code Ga
     state: f.evaluated.state,
     validation: f.validated.validation,
   });
-  const opened = await f.coding.openCodeReview({ state: round.state });
-  if (opened.status !== "opened") throw Error("expected gate");
-  const feedback = await f.coding.applyCodeReview({
-    state: opened.state,
-    reviewId: opened.handle.reviewId,
-    status: { ...opened.handle, status: "feedback", feedback: "Add coverage" },
-  });
+  const { CodingOrchestrator } = await import(
+    "../../../src/runtime/orchestrator/coding-orchestrator.ts"
+  );
+  const feedback = await new CodingOrchestrator({
+    ...f,
+    plannotatorGate: {
+      ...f.plannotatorGate,
+      openCodeReview: async () => ({
+        approved: false,
+        feedback: "Add coverage",
+      }),
+    },
+  }).openCodeReview({ state: round.state });
   const fixed = await f.coding.execute({ state: feedback.state });
   expect(fixed.state.coding.codeReview).toBeUndefined();
   expect(fixed.state.counters.automatedFixRoundsUsed).toBe(0);
@@ -279,8 +280,8 @@ test("Human Code Feedback keeps its authority across a fresh Fix and new Code Ga
   await expect(
     f.coding.applyCodeReview({
       state: newGate.state,
-      reviewId: opened.handle.reviewId,
-      status: { ...opened.handle, status: "approved" },
+      attemptId: feedback.state.coding.codeReview!.attemptId,
+      result: { approved: true },
     }),
   ).rejects.toThrow();
 });

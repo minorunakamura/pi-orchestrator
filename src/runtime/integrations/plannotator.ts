@@ -1,16 +1,12 @@
 import { randomUUID } from "node:crypto";
-import {
-  isArtifactRef,
-  type ArtifactRef,
-} from "../../core/artifacts/references.ts";
+import type { ArtifactRef } from "../../core/artifacts/references.ts";
 import { plannotatorReviewId, type PlannotatorReviewId } from "../../types.ts";
 import { isPlanReviewBinding } from "../../core/workflow/state.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
 import {
   RuntimePortError,
-  type CodeReviewHandle,
   type CodeReviewRequest,
-  type CodeReviewStatus,
+  type CodeReviewResult,
   type PlanReviewHandle,
   type PlanReviewRequest,
   type PlanReviewStatus,
@@ -55,8 +51,6 @@ interface ReviewStatusResult {
   reviewId?: string;
   approved?: boolean;
   feedback?: string;
-  implementationRef?: ArtifactRef<"implementation">;
-  implementationRevision?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,31 +120,9 @@ function parseReviewStatusResult(
       "Plannotator feedback must be a string",
     );
   }
-  if (
-    value.implementationRef !== undefined &&
-    !isImplementationRef(value.implementationRef)
-  ) {
-    throw new RuntimePortError(
-      "reconciliation",
-      "Plannotator returned an invalid implementation binding",
-    );
-  }
-  if (
-    value.implementationRevision !== undefined &&
-    (typeof value.implementationRevision !== "number" ||
-      !Number.isSafeInteger(value.implementationRevision) ||
-      value.implementationRevision <= 0)
-  ) {
-    throw new RuntimePortError(
-      "reconciliation",
-      "Plannotator returned an invalid implementation revision",
-    );
-  }
   const responseReviewId = value.reviewId;
   const responseApproved = value.approved;
   const responseFeedback = value.feedback;
-  const responseImplementationRef = value.implementationRef;
-  const responseImplementationRevision = value.implementationRevision;
   return {
     status: value.status,
     ...(typeof responseReviewId === "string"
@@ -162,31 +134,7 @@ function parseReviewStatusResult(
     ...(typeof responseFeedback === "string"
       ? { feedback: responseFeedback }
       : {}),
-    ...(isImplementationRef(responseImplementationRef)
-      ? { implementationRef: responseImplementationRef }
-      : {}),
-    ...(typeof responseImplementationRevision === "number"
-      ? { implementationRevision: responseImplementationRevision }
-      : {}),
   };
-}
-
-function isImplementationRef(
-  value: unknown,
-): value is ArtifactRef<"implementation"> {
-  return isArtifactRef(value) && value.kind === "implementation";
-}
-
-function isCodeReviewHandle(value: unknown): value is CodeReviewHandle {
-  return (
-    isRecord(value) &&
-    Object.keys(value).length === 3 &&
-    isNonEmptyString(value.reviewId) &&
-    isImplementationRef(value.implementationRef) &&
-    typeof value.implementationRevision === "number" &&
-    Number.isSafeInteger(value.implementationRevision) &&
-    value.implementationRevision > 0
-  );
 }
 
 function normalizeResponse(response: unknown): unknown {
@@ -236,7 +184,6 @@ export class PlannotatorIntegration implements PlannotatorGate {
   private readonly timeoutMs: number;
   private readonly requestIdFactory: () => string;
   private readonly reviews = new Map<string, PlanReviewHandle>();
-  private readonly codeReviews = new Map<string, CodeReviewHandle>();
 
   constructor(options: PlannotatorIntegrationOptions) {
     if (!Number.isSafeInteger(options.timeoutMs ?? PLANNOTATOR_TIMEOUT_MS)) {
@@ -339,102 +286,66 @@ export class PlannotatorIntegration implements PlannotatorGate {
     };
   }
 
-  async openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle> {
+  async openCodeReview(input: CodeReviewRequest): Promise<CodeReviewResult> {
     if (
-      !isImplementationRef(input.implementationRef) ||
-      !Number.isSafeInteger(input.implementationRevision) ||
-      input.implementationRevision <= 0
-    ) {
+      !isRecord(input) ||
+      Object.keys(input).some(
+        (key) =>
+          ![
+            "requestId",
+            "cwd",
+            "patchFile",
+            "diffType",
+            "defaultBranch",
+            "vcsType",
+            "useLocal",
+          ].includes(key),
+      ) ||
+      !isNonEmptyString(input.requestId) ||
+      !isNonEmptyString(input.cwd) ||
+      (input.patchFile !== undefined && !isNonEmptyString(input.patchFile)) ||
+      (input.diffType !== undefined && input.diffType !== "uncommitted") ||
+      (input.vcsType !== undefined && input.vcsType !== "git") ||
+      (input.useLocal !== undefined && typeof input.useLocal !== "boolean") ||
+      (input.defaultBranch !== undefined &&
+        !isNonEmptyString(input.defaultBranch))
+    )
       throw new RuntimePortError(
         "domain",
-        "Code review requires a valid implementation revision binding",
+        "Code review requires an exact local request and source",
       );
-    }
-    const result = assertReviewStartResult(
-      await this.request("code-review", {
-        implementationRef: input.implementationRef,
-        implementationRevision: input.implementationRevision,
-        origin: "pi-orchestrator",
-      }),
-      "code-review",
-    );
-    const handle: CodeReviewHandle = {
-      reviewId: plannotatorReviewId(result.reviewId),
-      implementationRef: input.implementationRef,
-      implementationRevision: input.implementationRevision,
-    };
-    this.codeReviews.set(reviewKey(handle.reviewId), handle);
-    return handle;
-  }
-
-  async getCodeReview(
-    reviewId: PlannotatorReviewId,
-    persistedBinding?: CodeReviewHandle,
-  ): Promise<CodeReviewStatus> {
-    const cached = this.codeReviews.get(reviewKey(reviewId));
+    const { requestId, ...payload } = input;
+    const result = await this.request("code-review", payload, requestId);
     if (
-      persistedBinding !== undefined &&
-      (!isCodeReviewHandle(persistedBinding) ||
-        persistedBinding.reviewId !== reviewId ||
-        (cached &&
-          (cached.implementationRevision !==
-            persistedBinding.implementationRevision ||
-            !sameArtifactRef(
-              cached.implementationRef,
-              persistedBinding.implementationRef,
-            ))))
-    ) {
+      !isRecord(result) ||
+      typeof result.approved !== "boolean" ||
+      (result.feedback !== undefined && typeof result.feedback !== "string") ||
+      (result.annotations !== undefined && !Array.isArray(result.annotations))
+    )
       throw new RuntimePortError(
         "reconciliation",
-        "Persisted code review binding does not match the review identity",
+        "Plannotator returned an invalid settled Code Review result",
       );
-    }
-    const handle = cached ?? persistedBinding;
-    if (!handle) {
-      return {
-        reviewId,
-        status: "unknown",
-        reason: "No exact code review binding is available",
-      };
-    }
-    const result = parseReviewStatusResult(
-      await this.request("review-status", { reviewId }),
-      reviewId,
-    );
-    if (
-      (result.implementationRef &&
-        !sameArtifactRef(result.implementationRef, handle.implementationRef)) ||
-      (result.implementationRevision !== undefined &&
-        result.implementationRevision !== handle.implementationRevision)
-    ) {
-      throw new RuntimePortError(
-        "reconciliation",
-        "Plannotator code review binding is stale",
-      );
-    }
-    if (result.status === "pending") return { ...handle, status: "pending" };
-    if (result.status === "missing") {
-      return {
-        reviewId,
-        status: "unknown",
-        reason: "Plannotator no longer has the review",
-      };
-    }
-    if (result.approved) return { ...handle, status: "approved" };
+    // agentSwitch and other UI hints do not grant workflow authority.
     return {
-      ...handle,
-      status: "feedback",
-      feedback: result.feedback ?? "",
+      approved: result.approved,
+      ...(typeof result.feedback === "string"
+        ? { feedback: result.feedback }
+        : {}),
+      ...(Array.isArray(result.annotations)
+        ? { annotations: structuredClone(result.annotations) }
+        : {}),
     };
   }
 
   private request(
     action: PlannotatorAction,
     payload: Record<string, unknown>,
+    requestId?: string,
   ): Promise<unknown> {
     return new Promise((resolve) => {
       let settled = false;
-      let timer: ReturnType<typeof setTimeout>;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = (response: unknown): void => {
         if (settled) return;
         settled = true;
@@ -445,14 +356,16 @@ export class PlannotatorIntegration implements PlannotatorGate {
           resolve(Promise.reject(error));
         }
       };
-      timer = setTimeout(() => {
-        finish({
-          status: "unavailable",
-          error: `Plannotator did not respond within ${this.timeoutMs}ms`,
-        } satisfies PlannotatorResponse);
-      }, this.timeoutMs);
+      // Code Review settles only after the Human; elapsed time is not failure.
+      if (action !== "code-review")
+        timer = setTimeout(() => {
+          finish({
+            status: "unavailable",
+            error: `Plannotator did not respond within ${this.timeoutMs}ms`,
+          } satisfies PlannotatorResponse);
+        }, this.timeoutMs);
       const request = {
-        requestId: this.requestIdFactory(),
+        requestId: requestId ?? this.requestIdFactory(),
         action,
         payload,
         respond: finish,
