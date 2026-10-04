@@ -47,8 +47,8 @@ async function reviewedRound(h: PhaseCWorkflow) {
 }
 async function approveCode(h: PhaseCWorkflow) {
   const opened = await h.openCode();
-  expect(opened.status).toBe("opened");
-  expect((await h.load()).phase).toBe("awaiting-code-review");
+  expect(opened.status).toBe("approved");
+  expect((await h.load()).phase).toBe("completed");
   const completed = await h.settleCode();
   expect(completed.state.phase).toBe("completed");
   return completed;
@@ -499,7 +499,7 @@ describe("Phase C full fake end-to-end contract", () => {
     await approvePlan(h);
     await reviewedRound(h);
     const opened = await h.openCode();
-    if (opened.status !== "opened") throw Error("expected opened");
+    if (opened.status !== "approved") throw Error("expected approval");
     const state = await h.load();
     delete state.coding.codeReview;
     await h.stateStore.saveState(state, state.stateRevision);
@@ -507,21 +507,20 @@ describe("Phase C full fake end-to-end contract", () => {
     await expect(
       h.coding(true).reconcileCodeReview({
         state: await h.load(),
-        reviewId: opened.handle.reviewId,
+        attemptId: opened.attemptId,
       }),
     ).rejects.toThrow(/binding/iu);
     expect(h.gates.filter((g) => g.action === "review-status")).toHaveLength(
       polls,
     );
-    expect((await h.load()).phase).toBe("awaiting-code-review");
+    expect((await h.load()).phase).toBe("completed");
   });
 
-  test("same-revision mismatched implementation digest from the external Code Gate is rejected", async () => {
+  test("workspace mutation during the synchronous Code Gate is rejected", async () => {
     const h = await setup({ staleCodeStatus: true });
     await approvePlan(h);
     await reviewedRound(h);
-    await h.openCode();
-    await expect(h.settleCode(true)).rejects.toThrow(/binding|stale/iu);
+    await expect(h.openCode()).rejects.toThrow(/workspace changed/iu);
     expect((await h.load()).phase).toBe("awaiting-code-review");
     expect((await h.load()).coding.latestCodeReviewRef).toBeUndefined();
   });
@@ -531,10 +530,8 @@ describe("Phase C full fake end-to-end contract", () => {
     await approvePlan(h);
     await reviewedRound(h);
     await h.openCode();
-    const result = await h
-      .coding(true)
-      .openCodeReview({ state: await h.load() });
-    expect(result.status).toBe("reconciled");
+    const result = await h.settleCode(true);
+    expect(result.status).toBe("approved");
     expect(result.state.phase).toBe("completed");
     expect(codeGates(h)).toHaveLength(1);
   });
@@ -544,18 +541,18 @@ describe("Phase C full fake end-to-end contract", () => {
     await approvePlan(h);
     await reviewedRound(h);
     const old = await h.openCode();
-    if (old.status !== "opened") throw Error("expected opened");
+    if (old.status !== "feedback") throw Error("expected feedback");
     await h.settleCode();
     await reviewedRound(h);
     await h.openCode();
     await expect(
       h.coding(true).applyCodeReview({
         state: await h.load(),
-        reviewId: old.handle.reviewId,
-        status: { ...old.handle, status: "approved" },
+        attemptId: old.attemptId,
+        result: { approved: true },
       }),
     ).rejects.toThrow(/identity|revision|binding/iu);
-    expect((await h.load()).phase).toBe("awaiting-code-review");
+    expect((await h.load()).phase).toBe("completed");
     expect((await h.settleCode(true)).state.phase).toBe("completed");
   });
 
@@ -765,9 +762,8 @@ describe("Phase C full fake end-to-end contract", () => {
     const h = await setup();
     await approvePlan(h);
     await reviewedRound(h);
-    await h.openCode();
     h.faults.codeApprovalState = true;
-    await expect(h.settleCode()).rejects.toThrow(
+    await expect(h.openCode()).rejects.toThrow(
       "injected Code Approval State failure",
     );
     const state = await h.load();

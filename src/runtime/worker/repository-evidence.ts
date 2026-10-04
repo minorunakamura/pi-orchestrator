@@ -141,8 +141,11 @@ export async function captureRepository(
   excludedDirectory?: string,
 ): Promise<RepositorySnapshot> {
   const canonical = await realpath(cwd);
-  const before = await observe(canonical, excludedDirectory);
-  const after = await observe(canonical, excludedDirectory);
+  const excluded = excludedDirectory
+    ? await realpath(excludedDirectory)
+    : undefined;
+  const before = await observe(canonical, excluded);
+  const after = await observe(canonical, excluded);
   if (JSON.stringify(before) !== JSON.stringify(after))
     throw Error("Repository changed during observation");
   return after;

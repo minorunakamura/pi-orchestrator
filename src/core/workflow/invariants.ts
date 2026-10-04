@@ -119,12 +119,10 @@ export function assertStateInvariants(state: WorkflowState): void {
         coding.codeReview.implementationRef,
         coding.implementationRef,
       ) ||
-      state.external[
-        `plannotator.code-review.r${coding.implementationRevision}`
-      ] !== coding.codeReview.reviewId)
+      !coding.codeReviewAttemptRef)
   )
     fail(
-      "Code Review binding must match the current implementation and external identity",
+      "Code Review binding must match the current implementation and local attempt",
     );
 
   if (

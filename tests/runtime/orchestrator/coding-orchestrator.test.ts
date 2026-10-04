@@ -14,8 +14,6 @@ import { parseAcceptedFindingsArtifact } from "../../../src/core/decisions/types
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import {
   CodingOrchestrator,
-  codeReviewIdentityKey,
-  parseCodeReviewArtifact,
   parseExecutionRoutingArtifact,
   type CodingOrchestratorDependencies,
 } from "../../../src/runtime/orchestrator/coding-orchestrator.ts";
@@ -31,7 +29,7 @@ import {
   FakeSubagentExecutor,
   failure,
 } from "../../fakes/index.ts";
-import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
+import { subagentRunId } from "../../../src/types.ts";
 
 import { jevPolicy } from "../../fakes/jev-policy.ts";
 function noopListener(_payload: unknown): void {}
@@ -985,44 +983,23 @@ describe("CodingOrchestrator ORCH-012", () => {
       { type: "REVIEW_COMPLETE", decisionRef },
       started.stateStore,
     );
-    const reviewId = plannotatorReviewId("code-review-1");
-    reviewing = await started.stateStore.saveState(
-      {
-        ...reviewing,
-        external: {
-          ...reviewing.external,
-          [codeReviewIdentityKey(1)]: reviewId,
-        },
-        coding: {
-          ...reviewing.coding,
-          codeReview: {
-            reviewId,
-            implementationRef: initial.implementationRef!,
-            implementationRevision: 1,
+    const { state: fixing } = await new CodingOrchestrator(
+      dependencies(started, {
+        plannotatorGate: {
+          openPlanReview: async () => {
+            throw Error("not used");
           },
+          getPlanReview: async () => {
+            throw Error("not used");
+          },
+          openCodeReview: async () => ({
+            approved: false,
+            feedback: "Please add a regression test.",
+          }),
         },
-      },
-      reviewing.stateRevision,
-    );
-    const feedback = {
-      schemaVersion: 1 as const,
-      reviewId: "code-review-1",
-      status: "feedback" as const,
-      implementationRef: initial.implementationRef,
-      implementationRevision: 1,
-      feedback: "Please add a regression test.",
-    };
-    const feedbackRef = await started.artifactStore.writeJson!(
-      "code-review",
-      "code-review-1.json",
-      feedback,
-      parseCodeReviewArtifact,
-    );
-    const fixing = await advanceWorkflow(
-      reviewing,
-      { type: "CODE_FEEDBACK", feedbackRef },
-      started.stateStore,
-    );
+      }),
+    ).openCodeReview({ state: reviewing });
+    const feedbackRef = fixing.coding.latestCodeReviewRef!;
     expect(fixing.coding.latestCodeReviewRef).toEqual(feedbackRef);
     const fixWorker = new FakeSubagentExecutor({ run: succeeded("fixed") });
     const fix = await new CodingOrchestrator(

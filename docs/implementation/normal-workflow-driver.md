@@ -14,7 +14,7 @@ GitHub #4 と #13 の本文・acceptance criteria・comments、AGENTS.md、canon
 - Clarification の prompt/port が未供給なら genuine Human wait。provided answer は既存 runner の immutable evidence / State 保存後のみ Planning に進む。Declined answer は継続しない。
 - 公開 `plannotator:review-result` は **wake-up hint のみ**。Command runtime は workflow ごとに通知を直列化し、initial open/binding save と競合した通知も保存完了後に処理する。Notification の approved/text を authority にせず、exact persisted Plan binding + public status を既存 runner が検証・保存する。無関係な reviewId は無視する。
 - Plan Gate open intent と State marker を open 前に保存する。Binding 保存失敗後や orphan intent からは自動再 open しない。
-- 既存 Code Gate port の accepted result も driver 内で検証・保存後に継続する。**現行 production Code adapter の async/reviewId 仮定の是正は #9**。Plan notification を Code result として使う架空の bridge は追加しない。
+- 既存 Code Gate port の accepted result も driver 内で検証・保存後に継続する。**#4 実装当時の production Code adapter の async/reviewId 仮定の是正は #9**（[同期 Code Gate の実装記録](./code-review.md)）。Plan notification を Code result として使う架空の bridge は追加しない。
 
 ## Authority / persistence / execution
 

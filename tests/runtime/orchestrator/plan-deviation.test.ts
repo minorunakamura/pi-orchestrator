@@ -90,7 +90,7 @@ test("exact Plan -> local freedom or stop -> automatic fresh simplicity/Human Ga
     await readFile(join(h.repositoryCwd, "implementation.txt"), "utf8"),
   ).toBe("implementation revision 1\n");
   const progressed = await h.drive();
-  expect(progressed.state.phase).toBe("awaiting-code-review");
+  expect(progressed.state.phase).toBe("completed");
   expect(progressed.state.planning.approvedPlanVersion).toBe(2);
   expect(progressed.state.coding.implementationRevision).toBe(1);
   expect(h.children.filter((c) => c.agent === "worker")).toHaveLength(2);

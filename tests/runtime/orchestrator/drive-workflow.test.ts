@@ -6,6 +6,8 @@ import {
   type WorkflowScript,
 } from "../../fakes/phase-c-workflow.ts";
 import { WorkflowReconciler } from "../../../src/runtime/orchestrator/reconciler.ts";
+import { PlannotatorIntegration } from "../../../src/runtime/integrations/plannotator.ts";
+import type { CodeReviewResult } from "../../../src/runtime/ports/index.ts";
 
 const workflows: PhaseCWorkflow[] = [];
 async function setup(script: WorkflowScript = {}) {
@@ -35,12 +37,12 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
     const reconcile = vi.spyOn(WorkflowReconciler.prototype, "reconcile");
     await planGate(h);
     const waiting = await h.drive();
-    expect(waiting.status).toBe("pending");
-    expect(waiting.state.phase).toBe("awaiting-code-review");
+    expect(waiting.status).toBe("advanced");
+    expect(waiting.state.phase).toBe("completed");
     expect(waiting.state.planning.latestPlanReviewRef).toBeDefined();
     expect(waiting.state.coding.findingEvaluationRef).toBeDefined();
     expect(waiting.state.coding.acceptedFindingsRef).toBeDefined();
-    expect(waiting.state.coding.latestCodeReviewRef).toBeUndefined();
+    expect(waiting.state.coding.latestCodeReviewRef).toBeDefined();
     const completed = await h.drive();
     expect(completed.state.phase).toBe("completed");
     expect((await h.drive()).state).toEqual(completed.state);
@@ -50,6 +52,46 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
     expect(h.validations).toHaveLength(1);
     expect(reconcile).not.toHaveBeenCalled();
   });
+
+  test("a genuine synchronous Human Code wait preserves durable attempt and automatically continues only after settlement", async () => {
+    const h = await setup();
+    await planGate(h);
+    const gate = new PlannotatorIntegration({
+      events: h.gateEvents,
+      planReader: h.artifactStore,
+    });
+    let settle!: (result: CodeReviewResult) => void;
+    const answer = new Promise<CodeReviewResult>((resolve) => {
+      settle = resolve;
+    });
+    const open = vi.fn(async () => answer);
+    let finished = false;
+    const progress = h
+      .drive({
+        plannotatorGate: {
+          openPlanReview: gate.openPlanReview.bind(gate),
+          getPlanReview: gate.getPlanReview.bind(gate),
+          openCodeReview: open,
+        },
+      })
+      .then((result) => {
+        finished = true;
+        return result;
+      });
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce(), {
+      timeout: 10000,
+    });
+    expect(finished).toBe(false);
+    const waiting = await h.load();
+    expect(waiting.phase).toBe("awaiting-code-review");
+    expect(waiting.coding.codeReviewAttemptRef).toBeDefined();
+    expect(waiting.coding.latestCodeReviewRef).toBeUndefined();
+    settle({ approved: true });
+    const completed = await progress;
+    expect(completed.state.phase).toBe("completed");
+    expect(completed.state.coding.latestCodeReviewRef).toBeDefined();
+    expect(open).toHaveBeenCalledOnce();
+  }, 10000);
 
   test.each([
     {
@@ -72,7 +114,7 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
       const h = await setup(script);
       await planGate(h);
       const result = await h.drive();
-      expect(result.state.phase).toBe("awaiting-code-review");
+      expect(result.state.phase).toBe("completed");
       expect(result.state.coding.implementationRevision).toBe(2);
       expect(result.state.counters.automatedFixRoundsUsed).toBe(1);
       expect(
@@ -95,7 +137,7 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
     expect(h.children.filter((child) => child.agent === "worker")).toHaveLength(
       0,
     );
-    expect((await h.drive()).state.phase).toBe("awaiting-code-review");
+    expect((await h.drive()).state.phase).toBe("completed");
   });
 
   test("Human Code feedback automatically fixes, validates and reviews before a new Code Gate", async () => {
@@ -103,7 +145,7 @@ describe("normal lifecycle driver over existing runners (not full v1)", () => {
     await planGate(h);
     await h.drive();
     const fixed = await h.drive();
-    expect(fixed.state.phase).toBe("awaiting-code-review");
+    expect(fixed.state.phase).toBe("completed");
     expect(fixed.state.coding.implementationRevision).toBe(2);
     expect(fixed.state.counters.humanCodeFeedbackRounds).toBe(1);
     expect(fixed.state.counters.automatedFixRoundsUsed).toBe(0);

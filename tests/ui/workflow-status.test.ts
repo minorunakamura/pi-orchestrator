@@ -76,7 +76,7 @@ function state(phase: WorkflowState["phase"]): WorkflowState {
       ...(phase === "awaiting-code-review"
         ? {
             codeReview: {
-              reviewId: plannotatorReviewId("code-review-3"),
+              attemptId: "code-attempt-3",
               implementationRef: implementation,
               implementationRevision: 3,
             },
@@ -157,7 +157,7 @@ describe("workflow status projection", () => {
     const source = state("blocked");
     source.block!.blockedFrom = "awaiting-code-review";
     source.coding.codeReview = {
-      reviewId: plannotatorReviewId("code-review-3"),
+      attemptId: "code-attempt-3",
       implementationRef: source.coding.implementationRef!,
       implementationRevision: 3,
     };
@@ -169,7 +169,7 @@ describe("workflow status projection", () => {
     expect(projection.humanGate).toMatchObject({
       kind: "code",
       status: "pending",
-      reviewId: "code-review-3",
+      attemptId: "code-attempt-3",
     });
   });
 

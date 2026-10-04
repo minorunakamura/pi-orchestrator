@@ -142,14 +142,7 @@ export const gate: PlannotatorGate = {
     if (!binding) throw Error("missing binding");
     return { ...binding, status: "approved" };
   },
-  openCodeReview: async (input) => ({
-    ...input,
-    reviewId: plannotatorReviewId(`code-${input.implementationRevision}`),
-  }),
-  getCodeReview: async (_id, binding) => {
-    if (!binding) throw Error("missing binding");
-    return { ...binding, status: "approved" };
-  },
+  openCodeReview: async () => ({ approved: true }),
 };
 export async function scenario(jev: JevDecisionClient) {
   const root = await mkdtemp(join(tmpdir(), "phase-c-authority-"));

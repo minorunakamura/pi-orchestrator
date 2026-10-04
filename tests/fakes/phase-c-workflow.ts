@@ -17,10 +17,7 @@ import type {
   ValidationCheckStatus,
 } from "../../src/core/decisions/types.ts";
 import type { WorkflowArtifactWriter } from "../../src/runtime/orchestrator/planning-orchestrator.ts";
-import {
-  isArtifactRef,
-  type ArtifactRef,
-} from "../../src/core/artifacts/references.ts";
+import type { ArtifactRef } from "../../src/core/artifacts/references.ts";
 import type { WorkflowState } from "../../src/core/workflow/state.ts";
 import { ArtifactStore } from "../../src/runtime/persistence/artifact-store.ts";
 import { StateStore } from "../../src/runtime/persistence/state-store.ts";
@@ -134,12 +131,6 @@ function isGateRequest(value: unknown): value is GateRequest {
     isRecord(value.payload) &&
     typeof value.respond === "function"
   );
-}
-
-function isImplementationRef(
-  value: unknown,
-): value is ArtifactRef<"implementation"> {
-  return isArtifactRef(value) && value.kind === "implementation";
 }
 
 /** Explicit public stage calls only: no transition engine, recovery loop, or synthetic authority. */
@@ -370,12 +361,12 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         throw Error("Gate opened before durable phase");
       if (
         code &&
-        (request.payload.implementationRevision !==
-          durable.coding.implementationRevision ||
-          JSON.stringify(request.payload.implementationRef) !==
-            JSON.stringify(durable.coding.implementationRef))
+        (!durable.coding.codeReviewAttemptRef ||
+          !durable.coding.codeReview ||
+          typeof request.payload.patchFile !== "string" ||
+          "implementationRef" in request.payload)
       )
-        throw Error("Gate opened with stale implementation");
+        throw Error("Gate opened without durable local source binding");
       const reviewId = code ? `code-${++codeGates}` : `plan-${++planGates}`;
       const feedback = code
         ? script.codeReviews?.[codeGates - 1] === "feedback"
@@ -385,25 +376,17 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         ...(feedback
           ? { feedback: "Add the requested regression coverage" }
           : {}),
-        ...(code && script.staleCodeStatus
-          ? {
-              implementationRef: {
-                ...(() => {
-                  if (!isImplementationRef(request.payload.implementationRef))
-                    throw Error("Invalid implementation reference");
-                  return request.payload.implementationRef;
-                })(),
-                sha256: "f".repeat(64),
-              },
-              implementationRevision: Number(
-                request.payload.implementationRevision,
-              ),
-            }
-          : {}),
       });
+      if (code && script.staleCodeStatus)
+        await writeFile(
+          join(repositoryCwd, "implementation.txt"),
+          "out-of-band mutation during Human review",
+        );
       request.respond({
         status: "handled",
-        result: { status: "pending", reviewId },
+        result: code
+          ? externalReviews.get(reviewId)
+          : { status: "pending", reviewId },
       });
     },
   };
@@ -716,7 +699,7 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
       if (!state.coding.codeReview) throw Error("No durable Code Gate");
       return coding(freshGate).reconcileCodeReview({
         state,
-        reviewId: state.coding.codeReview.reviewId,
+        attemptId: state.coding.codeReview.attemptId,
       });
     },
     listenerCount: () =>

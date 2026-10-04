@@ -75,6 +75,7 @@ import {
   WorkerAttemptAuthorityError,
   CodeReviewAuthorityError,
   CodeReviewOpenAttemptError,
+  CodeReviewSourceError,
   StaleCodeReviewError,
   isImplementationArtifact,
   parseExecutionRoutingArtifact,
@@ -2124,20 +2125,12 @@ export class WorkflowReconciler {
   private async reconcileCodeGate(
     state: WorkflowState,
   ): Promise<ReconciliationResult> {
-    const gate = this.deps.plannotatorGate;
-    if (!gate)
-      return this.block(
-        state,
-        "human-gate-unavailable",
-        undefined,
-        "Code Gate integration is unavailable",
-      );
     const current = state.coding.codeReview;
     const identity =
       state.external[
         `plannotator.code-review.r${state.coding.implementationRevision}`
       ];
-    if (!current && identity)
+    if (!current && (identity || state.coding.codeReviewAttemptRef))
       return this.block(
         state,
         "operator-attention-required",
@@ -2149,7 +2142,7 @@ export class WorkflowReconciler {
       if (!current) return { status: "advanced", state, phase: state.phase };
       const outcome = await orchestrator.reconcileCodeReview({
         state,
-        reviewId: current.reviewId,
+        attemptId: current.attemptId,
       });
       if (outcome.status === "approved" || outcome.status === "feedback")
         return {
@@ -2164,18 +2157,20 @@ export class WorkflowReconciler {
           phase: outcome.state.phase,
         };
       return {
-        status: "pending",
+        status: "blocked",
         state: outcome.state,
         phase: outcome.state.phase,
-        reason: outcome.status === "unknown" ? outcome.reason : undefined,
       };
     } catch (error) {
-      if (error instanceof CodeReviewOpenAttemptError)
+      if (
+        error instanceof CodeReviewOpenAttemptError ||
+        error instanceof CodeReviewSourceError
+      )
         return this.block(
           state,
           "operator-attention-required",
           undefined,
-          "A Code Review open attempt exists without a durable binding",
+          "An unresolved local Code Review attempt requires explicit recovery; no polling or reopen",
         );
       if (error instanceof CodeReviewAuthorityError)
         return this.fail(

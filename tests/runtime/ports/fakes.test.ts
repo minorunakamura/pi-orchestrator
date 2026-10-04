@@ -18,7 +18,7 @@ import type {
   AgentRunRequest,
   AgentRunResult,
   AgentRunStatus,
-  CodeReviewStatus,
+  CodeReviewResult,
   PlanReviewStatus,
 } from "../../../src/runtime/ports/index.ts";
 import { plannotatorReviewId, subagentRunId } from "../../../src/types.ts";
@@ -49,12 +49,6 @@ const planEvidence = {
 const contextEvidence = [
   { ref: contextRef, content: "Repository context from the scout artifact." },
 ];
-const implementationRef: ArtifactRef<"implementation"> = {
-  kind: "implementation",
-  path: "implementations/implementation-1.json",
-  schemaVersion: 1,
-  sha256: "b".repeat(64),
-};
 const request: AgentRunRequest = { agent: "worker", task: "implement it" };
 const agentResult: AgentRunResult = {
   status: "succeeded",
@@ -220,12 +214,7 @@ describe("fake runtime ports", () => {
       status: "feedback",
       feedback: "Please clarify the rollback step.",
     };
-    const codeStatus: CodeReviewStatus = {
-      reviewId,
-      implementationRef,
-      implementationRevision: 1,
-      status: "approved",
-    };
+    const codeResult: CodeReviewResult = { approved: true };
     const fake = new FakePlannotatorGate({
       openPlanReview: {
         type: "result",
@@ -234,9 +223,8 @@ describe("fake runtime ports", () => {
       getPlanReview: { type: "result", value: planStatus },
       openCodeReview: {
         type: "result",
-        value: { reviewId, implementationRef, implementationRevision: 1 },
+        value: codeResult,
       },
-      getCodeReview: { type: "result", value: codeStatus },
     });
 
     expect(await fake.openPlanReview({ planRef, planVersion: 1 })).toEqual({
@@ -247,11 +235,11 @@ describe("fake runtime ports", () => {
     expect(await fake.getPlanReview(reviewId)).toEqual(planStatus);
     expect(
       await fake.openCodeReview({
-        implementationRef,
-        implementationRevision: 1,
+        requestId: "local",
+        cwd: "/repo",
+        patchFile: "review.diff",
       }),
-    ).toEqual({ reviewId, implementationRef, implementationRevision: 1 });
-    expect(await fake.getCodeReview(reviewId)).toEqual(codeStatus);
+    ).toEqual(codeResult);
   });
 
   test("supports ordered retry/reconciliation outcomes across calls", async () => {

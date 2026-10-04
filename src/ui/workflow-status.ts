@@ -24,6 +24,7 @@ export interface HumanGateProjection {
   kind: "plan" | "code" | "none";
   status: HumanGateStatus;
   reviewId?: string;
+  attemptId?: string;
   planVersion?: number;
   implementationRevision?: number;
 }
@@ -205,14 +206,14 @@ function codeGate(
   phase: WorkflowPhase,
 ): HumanGateProjection {
   const binding = state.coding.codeReview;
-  const reviewId = binding ? visibleReviewId(binding.reviewId) : undefined;
+  const attemptId = binding ? visibleReviewId(binding.attemptId) : undefined;
   if (phase === "awaiting-code-review") {
     return {
       kind: "code",
       status: binding ? "pending" : "unknown",
       ...(binding
         ? {
-            ...(reviewId ? { reviewId } : {}),
+            ...(attemptId ? { attemptId } : {}),
             implementationRevision: binding.implementationRevision,
           }
         : {}),
@@ -379,7 +380,11 @@ function formatRef(ref: ArtifactRef | undefined): string {
 }
 
 function formatGate(gate: HumanGateProjection): string {
-  const identity = gate.reviewId ? ` review=${gate.reviewId}` : "";
+  const identity = gate.reviewId
+    ? ` review=${gate.reviewId}`
+    : gate.attemptId
+      ? ` local-attempt=${gate.attemptId}`
+      : "";
   const version =
     gate.planVersion === undefined ? "" : ` planVersion=${gate.planVersion}`;
   const revision =

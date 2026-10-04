@@ -22,25 +22,21 @@ export type PlanReviewStatus =
     };
 
 export interface CodeReviewRequest {
-  implementationRef: ArtifactRef<"implementation">;
-  implementationRevision: number;
+  requestId: string;
+  cwd: string;
+  /** Static patch is pinned by the Orchestrator before requesting review. */
+  patchFile?: string;
+  diffType?: "uncommitted";
+  defaultBranch?: string;
+  vcsType?: "git";
+  useLocal?: boolean;
 }
 
-export interface CodeReviewHandle {
-  reviewId: PlannotatorReviewId;
-  implementationRef: ArtifactRef<"implementation">;
-  implementationRevision: number;
+export interface CodeReviewResult {
+  approved: boolean;
+  feedback?: string;
+  annotations?: unknown[];
 }
-
-export type CodeReviewStatus =
-  | (CodeReviewHandle & { status: "pending" })
-  | (CodeReviewHandle & { status: "approved" })
-  | (CodeReviewHandle & { status: "feedback"; feedback: string })
-  | {
-      reviewId: PlannotatorReviewId;
-      status: "unknown";
-      reason?: string;
-    };
 
 export interface PlannotatorGate {
   openPlanReview(input: PlanReviewRequest): Promise<PlanReviewHandle>;
@@ -48,9 +44,5 @@ export interface PlannotatorGate {
     reviewId: PlannotatorReviewId,
     persistedBinding?: PlanReviewHandle,
   ): Promise<PlanReviewStatus>;
-  openCodeReview(input: CodeReviewRequest): Promise<CodeReviewHandle>;
-  getCodeReview(
-    reviewId: PlannotatorReviewId,
-    persistedBinding?: CodeReviewHandle,
-  ): Promise<CodeReviewStatus>;
+  openCodeReview(input: CodeReviewRequest): Promise<CodeReviewResult>;
 }

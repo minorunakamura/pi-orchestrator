@@ -433,12 +433,15 @@ test("post-code advice cannot bypass deterministic validation, typed decisions o
     f.deps,
   );
   const waiting = await f.h.drive({ subagentExecutor: f.executor });
-  expect(waiting.state.phase).toBe("awaiting-code-review");
+  expect(waiting.state.phase).toBe("completed");
   expect(waiting.state.coding.validationRef).toEqual(
     source.coding.validationRef,
   );
   expect(waiting.state.coding.roundDecisionRef).toBeDefined();
-  expect(waiting.state.coding.latestCodeReviewRef).toBeUndefined();
+  expect(waiting.state.coding.latestCodeReviewRef).toBeDefined();
+  expect(
+    f.h.gates.filter((gate) => gate.action === "code-review"),
+  ).toHaveLength(1);
   expect(f.h.validations).toHaveLength(1);
   expect(f.oracle.calls.run).toHaveLength(1);
 });
