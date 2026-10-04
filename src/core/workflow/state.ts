@@ -220,6 +220,9 @@ function isJevUsage(value: unknown): value is JevUsageState {
 export interface WorkflowState {
   /** Missing legacy scope/accounting is diagnosable, never permission to send. */
   projectRoot?: string;
+  /** Host-bound ownership; legacy workflows cannot be silently adopted. */
+  ownershipRef?: ArtifactRef<"reconciliation">;
+  workspaceCheckpointRef?: ArtifactRef<"reconciliation">;
   jevUsage?: JevUsageState;
   oracle?: OracleState;
   schemaVersion: 1;
@@ -600,6 +603,8 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
       "workflowId",
       "stateRevision",
       "projectRoot",
+      "ownershipRef",
+      "workspaceCheckpointRef",
       "jevUsage",
       "oracle",
       "playbook",
@@ -618,6 +623,12 @@ export function isWorkflowState(value: unknown): value is WorkflowState {
     isWorkflowId(value.workflowId) &&
     isNonNegativeInteger(value.stateRevision) &&
     optional(value, "projectRoot", isNonEmptyString) &&
+    optional(value, "ownershipRef", (ref) =>
+      isArtifactOfKind(ref, "reconciliation"),
+    ) &&
+    optional(value, "workspaceCheckpointRef", (ref) =>
+      isArtifactOfKind(ref, "reconciliation"),
+    ) &&
     optional(value, "jevUsage", isJevUsage) &&
     optional(value, "oracle", isOracleState) &&
     isPlaybookKind(value.playbook) &&

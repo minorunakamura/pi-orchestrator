@@ -1,3 +1,4 @@
+import { registerWorkflowOwnership } from "./runtime/integrations/workflow-ownership.ts";
 import { registerClarificationBridge } from "./runtime/integrations/clarification.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { physicalModelSnapshot } from "./runtime/integrations/subagent-launch.ts";
@@ -52,11 +53,13 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async () =>
     disposeWorkflowContinuations(pi.events),
   );
-  const clarificationPort = registerClarificationBridge(pi);
+  const ownership = registerWorkflowOwnership(pi);
+  const clarificationPort = registerClarificationBridge(pi, ownership);
   registerWorkflowCommands(pi, {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
         projectTrusted: context.isProjectTrusted(),
+        ownership: ownership(context),
         clarificationPort: clarificationPort(context),
         modelRegistry: context.modelRegistry,
         onContinuationError: (error) =>

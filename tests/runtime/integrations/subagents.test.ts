@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { startWorkflow } from "../../fakes/planning.ts";
+import { WorkflowOwnership } from "../../../src/runtime/orchestrator/workflow-ownership.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { createWorkflowCommandRuntime } from "../../../src/commands/index.ts";
 import {
@@ -109,11 +110,12 @@ describe("SubagentsIntegration", () => {
     "workflow composition passes host trust to children (%s)",
     async (projectTrusted) => {
       const events = new FakeEventBus();
-      const runtime = createWorkflowCommandRuntime(
-        events,
-        await temporaryRoot(),
-        { projectTrusted, launchResolver: fakeLaunchResolver },
-      );
+      const cwd = await temporaryRoot();
+      const runtime = createWorkflowCommandRuntime(events, cwd, {
+        ownership: new WorkflowOwnership(cwd, "root-1"),
+        projectTrusted,
+        launchResolver: fakeLaunchResolver,
+      });
       await runtime.start({
         task: "Read-only scout probe",
         playbook: "feature",
@@ -370,15 +372,15 @@ describe("SubagentsIntegration", () => {
   });
 
   test("new-project commands isolate workflows and stop after Scout without workflow-scoped classifier consent", async () => {
-    const root = await temporaryRoot();
     const events = new FakeEventBus();
-    const runtime = createWorkflowCommandRuntime(events, root, {
-      launchResolver: fakeLaunchResolver,
-    });
     const tasks = ["ブラウザで遊べるリバーシゲーム", "別のプロジェクトの時計"];
+    const workspaces = await Promise.all(tasks.map(() => temporaryRoot()));
     const started = await Promise.all(
-      tasks.map((task) =>
-        runtime.start({
+      tasks.map((task, index) =>
+        createWorkflowCommandRuntime(events, workspaces[index], {
+          ownership: new WorkflowOwnership(workspaces[index], "root-1"),
+          launchResolver: fakeLaunchResolver,
+        }).start({
           task,
           playbook: "new-project",
           context: { requiresClarification: true },
@@ -397,7 +399,7 @@ describe("SubagentsIntegration", () => {
         "workflow-scout",
       ]);
       for (const child of children) {
-        expect(child.cwd).toBe(root);
+        expect(child.cwd).toBe(workspaces[index]);
         expect(child.context).toBe("fresh");
         expect(child.task).toContain(JSON.stringify(tasks[index]));
         expect(child.task).not.toContain(tasks[1 - index]);

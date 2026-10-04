@@ -1,5 +1,7 @@
 // Disposable fixtures are prepared sequentially to preserve observation order.
 // oxlint-disable eslint/no-await-in-loop
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   link,
   cp,
@@ -35,6 +37,8 @@ import {
   verifyClarificationDocuments,
 } from "../../../src/runtime/orchestrator/clarification.ts";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
+import { registerWorkflowOwnership } from "../../../src/runtime/integrations/workflow-ownership.ts";
+import { WorkflowOwnership } from "../../../src/runtime/orchestrator/workflow-ownership.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import type { WorkflowArtifactWriter } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { PlanningRouting } from "../../../src/runtime/orchestrator/planning-routing.ts";
@@ -109,12 +113,17 @@ const question = {
   options: [{ label: "Keep existing" }],
   allowOther: false,
 };
-async function setup(mode: "GRILL_ME" | "GRILL_WITH_DOCS" = "GRILL_ME") {
+async function setup(
+  mode: "GRILL_ME" | "GRILL_WITH_DOCS" = "GRILL_ME",
+  owned = false,
+  git = false,
+) {
   const root = await mkdtemp(join(tmpdir(), "pi-orchestrator-clarification-"));
   roots.push(root);
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   await writeFile(join(cwd, "source.ts"), "export const untouched = true;\n");
+  if (git) await promisify(execFile)("git", ["init", "-q", cwd]);
   const skills: {
     name: string;
     baseDir: string;
@@ -150,6 +159,7 @@ async function setup(mode: "GRILL_ME" | "GRILL_WITH_DOCS" = "GRILL_ME") {
   const sendMessage = vi.fn();
   const pi = makeExtensionApiFixture({
     events: bus,
+    appendEntry: vi.fn(),
     getAllTools: () =>
       [
         "ask_user_question",
@@ -171,11 +181,21 @@ async function setup(mode: "GRILL_ME" | "GRILL_WITH_DOCS" = "GRILL_ME") {
   const context = makeExtensionCommandContextFixture({
     cwd,
     mode: "tui",
-    sessionManager: { getSessionId: () => "root-1" },
+    sessionManager: {
+      getSessionId: (): string => "root-1",
+      getEntries: () => [],
+    },
     getSystemPromptOptions: () => ({ skills }),
     ui: { notify: vi.fn() },
   });
-  const port = registerClarificationBridge(pi)(context);
+  const ownership = owned ? new WorkflowOwnership(cwd, "root-1") : undefined;
+  const port = registerClarificationBridge(
+    pi,
+    ownership
+      ? (ctx) =>
+          new WorkflowOwnership(ctx.cwd, ctx.sessionManager.getSessionId())
+      : undefined,
+  )(context);
   const executor = new FakeSubagentExecutor({
     run: {
       type: "result",
@@ -214,8 +234,11 @@ async function setup(mode: "GRILL_ME" | "GRILL_WITH_DOCS" = "GRILL_ME") {
     subagentExecutor: executor,
     clarificationPort: port,
   };
+  const initial = ownership
+    ? await ownership.initialize(h.state, deps.stateStore)
+    : h.state;
   const result = await new PlanningOrchestrator(deps).requestClarification({
-    state: h.state,
+    state: initial,
   });
   const state = result.state;
   const identity = {
@@ -245,6 +268,7 @@ async function setup(mode: "GRILL_ME" | "GRILL_WITH_DOCS" = "GRILL_ME") {
       );
   return {
     ...deps,
+    ownership,
     root,
     cwd,
     bus,
@@ -350,6 +374,127 @@ test("GRILL_WITH_DOCS exact CONTEXT/ADR grant and before/intent/answer/after evi
   );
 });
 
+test.each([false, true])(
+  "owned GRILL_WITH_DOCS Git/non-Git (%s) advances only through exact full-workspace evidence without implementation authority",
+  async (git) => {
+    const h = await setup("GRILL_WITH_DOCS", true, git);
+    registerWorkflowOwnership(h.pi);
+    expect(
+      await h.handlers.get("tool_call")!(
+        {
+          toolName: "wf_clarification_complete",
+          input: { documents: [{ path: "CONTEXT.md" }] },
+        },
+        h.context,
+      ),
+    ).toBeUndefined();
+    // Later hook input mutation cannot turn this name allowance into source authority.
+    await expect(
+      h.call("wf_clarification_complete", {
+        summary: "Changed effective inputs",
+        documents: [{ path: "source.ts", content: "Denied" }],
+      }),
+    ).rejects.toThrow(/Unauthorized/iu);
+    h.autoAnswer();
+    await h.call("wf_clarification_complete", {
+      summary: "Order ownership stays local.",
+      documents: [
+        {
+          path: "billing/docs/adr/0001-boundary.md",
+          content: "# Boundary\nOrders own requests.\n",
+        },
+      ],
+    });
+    const done = await h.stateStore.loadState();
+    expect(done.phase).toBe("planning");
+    expect(done.workspaceCheckpointRef).toBeDefined();
+    expect(
+      await h.handlers.get("tool_call")!(
+        { toolName: "write", input: { path: "CONTEXT.md" } },
+        h.context,
+      ),
+    ).toMatchObject({ block: true });
+    expect(done.planning.approvedPlanRef).toBeUndefined();
+    expect(done.coding.implementationRef).toBeUndefined();
+    const doc = JSON.parse(
+      await h.artifactStore.readText!(done.planning.domainDocumentWriteRef!),
+    );
+    const intent = JSON.parse(await h.artifactStore.readText!(doc.intentRef));
+    expect(doc.workspaceBeforeRef).toEqual(intent.workspaceBeforeRef);
+    expect(doc.scopeBeforeRef).toEqual(intent.scopeBeforeRef);
+    expect(doc.workspaceBeforeRef.kind).toBe("reconciliation");
+    expect(doc.workspaceAfterRef.kind).toBe("reconciliation");
+    expect(JSON.stringify(doc)).not.toContain("export const untouched");
+    expect(doc.workspaceBefore).toBeUndefined();
+    expect(await h.ownership!.validate(done, h.stateStore)).toEqual(done);
+    h.configuration.jev.runtimePolicy!.grant.evidenceCategories = [
+      ...h.configuration.jev.runtimePolicy!.grant.evidenceCategories,
+      "design",
+    ];
+    const routed = await new PlanningRouting(h).stage(done, "architecture");
+    expect(
+      JSON.stringify(h.jevDecisionClient.calls.routeStage.at(-1)),
+    ).not.toContain("export const untouched");
+    await writeFile(join(h.cwd, "source.ts"), "unauthorized");
+    expect(
+      (await h.ownership!.validate(routed.state, h.stateStore)).phase,
+    ).toBe("blocked");
+    expect(await readFile(join(h.cwd, "source.ts"), "utf8")).toBe(
+      "unauthorized",
+    );
+  },
+);
+
+test("Human-wait workspace drift denies documentation before any document side effect", async () => {
+  const h = await setup("GRILL_WITH_DOCS", true);
+  h.bus.on(QUESTION_REQUEST_EVENT, (value) => {
+    void (async () => {
+      const q = makeInvalidPayload<{
+        requestId: string;
+        questions: HumanQuestion[];
+      }>(value);
+      await writeFile(
+        join(h.cwd, "source.ts"),
+        "out-of-band during Human wait",
+      );
+      h.bus.emit(
+        `pi-ask-user-question:reply:${q.requestId}`,
+        reply(q.requestId, q.questions, "Confirm"),
+      );
+    })();
+  });
+  await h.call("wf_clarification_complete", {
+    summary: "Settled",
+    documents: [{ path: "CONTEXT.md", content: "# Orders\n" }],
+  });
+  const blocked = await h.stateStore.loadState();
+  expect(blocked.phase).toBe("blocked");
+  expect(blocked.planning.domainDocumentWriteRef).toBeUndefined();
+  expect(await readdir(h.cwd)).not.toContain("CONTEXT.md");
+  expect(
+    h.bus.calls.filter((c) => c.event === CLARIFICATION_COMPLETE_EVENT),
+  ).toHaveLength(0);
+});
+
+test("owned GRILL_ME rejects docs and a different root session cannot adopt its authority", async () => {
+  const h = await setup("GRILL_ME", true);
+  h.autoAnswer();
+  await expect(
+    h.call("wf_clarification_complete", {
+      summary: "Settled",
+      documents: [{ path: "CONTEXT.md", content: "# Denied" }],
+    }),
+  ).rejects.toThrow(/Mode/iu);
+  h.context.sessionManager.getSessionId = () => "other-root";
+  await expect(
+    h.call("wf_clarification_round", { questions: [question] }),
+  ).rejects.toThrow(/ownership/iu);
+  expect(
+    h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+  ).toHaveLength(0);
+  expect((await h.stateStore.loadState()).phase).toBe("blocked");
+});
+
 test("Architecture consumes exact domain evidence under explicit design consent; lost intent rejects cached routing", async () => {
   const h = await setup("GRILL_WITH_DOCS");
   h.configuration.jev.runtimePolicy!.grant.evidenceCategories = [
@@ -388,6 +533,7 @@ test.each([
   "/tmp/CONTEXT.md",
   "a/../../CONTEXT.md",
   "a\\CONTEXT.md",
+  "docs/adr/bad\n.md",
   "src/source.ts",
   "package.json",
   "docs/config.md",

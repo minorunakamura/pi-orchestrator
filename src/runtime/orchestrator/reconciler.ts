@@ -1,3 +1,4 @@
+import type { OwnershipBoundary } from "./workflow-ownership.ts";
 import { workerDeviation } from "../../core/coding/plan-deviation.ts";
 import {
   publishPlanDeviation,
@@ -127,6 +128,7 @@ export interface ReconciliationResult {
 }
 
 export interface ResumeReconcilerDependencies {
+  ownership?: OwnershipBoundary;
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
   loadState?: () => Promise<WorkflowState>;

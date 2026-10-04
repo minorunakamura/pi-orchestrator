@@ -98,6 +98,7 @@ interface WorkflowState {
   coding: CodingState;
   counters: RetryCounters;
   ownershipRef: ArtifactRef<"reconciliation">;
+  workspaceCheckpointRef?: ArtifactRef<"reconciliation">;
   jevUsage: {
     authorizationRef?: ArtifactRef<"jev-request">;
     attemptsReserved: number;
@@ -114,7 +115,7 @@ interface WorkflowState {
 }
 ```
 
-Ownership projection binds active canonical workspace + root session + workflow identity and narrowly scoped write authority。A reconciliation-kind ownership record is lifecycle evidence, never a Human approval。Classifier authorization captures workflow-scoped grant/consent after workflowId creation; API credentials stay outside domain data。#11 stores the immutable `recordType: authorization` as `jevUsage.authorizationRef` before its first reservation; reservation/usage records bind that ref and grant/consent IDs. Missing legacy binding/accounting does not default into permission or reset spent attempts. See [configuration](../basic-design/configuration.md#6-operatorproject-grant-vs-workflow-consent-11).
+Ownership projection binds active canonical workspace + root session + workflow identity and narrowly scoped write authority。A reconciliation-kind ownership record is lifecycle evidence, never a Human approval。#5 の immutable initial `ownershipRef` と append-only `workspaceCheckpointRef` は canonical root/root session/workflow と accepted workspace evidence を bindする。Missing legacy refsは自動adoption/rebaselineせず停止する。Classifier authorization captures workflow-scoped grant/consent after workflowId creation; API credentials stay outside domain data。#11 stores the immutable `recordType: authorization` as `jevUsage.authorizationRef` before its first reservation; reservation/usage records bind that ref and grant/consent IDs. Missing legacy binding/accounting does not default into permission or reset spent attempts. See [configuration](../basic-design/configuration.md#6-operatorproject-grant-vs-workflow-consent-11).
 
 ## 6. Planning State
 

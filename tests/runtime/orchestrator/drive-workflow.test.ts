@@ -5,6 +5,7 @@ import {
   type PhaseCWorkflow,
   type WorkflowScript,
 } from "../../fakes/phase-c-workflow.ts";
+import { WorkflowOwnership } from "../../../src/runtime/orchestrator/workflow-ownership.ts";
 import { WorkflowReconciler } from "../../../src/runtime/orchestrator/reconciler.ts";
 import { PlannotatorIntegration } from "../../../src/runtime/integrations/plannotator.ts";
 import type { CodeReviewResult } from "../../../src/runtime/ports/index.ts";
@@ -32,6 +33,32 @@ async function planGate(h: PhaseCWorkflow) {
 }
 
 describe("normal lifecycle driver over existing runners (not full v1)", () => {
+  test.each([false, true])(
+    "owned Git/non-Git (%s) Worker/fix evidence advances checkpoints without granting Main authority",
+    async (nonGit) => {
+      const h = await setup({
+        nonGit,
+        validations: ["failed", "passed"],
+        rounds: [{ action: "RETRY" }],
+      });
+      const ownership = new WorkflowOwnership(h.repositoryCwd, "root-session");
+      await ownership.initialize(await h.load(), h.stateStore);
+      const gate = await h.drive({ ownership });
+      expect(gate.state.phase).toBe("awaiting-plan-review");
+      expect(
+        h.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(0);
+      const done = await h.drive({ ownership });
+      expect(done.state.phase).toBe("completed");
+      expect(done.state.workspaceCheckpointRef).toBeDefined();
+      expect(
+        h.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(2);
+      expect(h.validations).toHaveLength(2);
+    },
+    20000,
+  );
+
   test("drives accepted Plan approval to Code Gate and accepted Code approval to completion without reconciliation", async () => {
     const h = await setup();
     const reconcile = vi.spyOn(WorkflowReconciler.prototype, "reconcile");

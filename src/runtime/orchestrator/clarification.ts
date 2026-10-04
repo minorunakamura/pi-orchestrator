@@ -1,6 +1,13 @@
 // Every durable intent, file observation and mutation is deliberately sequential.
 // oxlint-disable eslint/no-await-in-loop
 import { RuntimePortError } from "../ports/errors.ts";
+import { artifactRelativePath } from "../persistence/artifact-paths.ts";
+import {
+  captureWorkspace,
+  unchangedDocumentScope,
+} from "../worker/workspace-evidence.ts";
+import type { OwnershipBoundary } from "./workflow-ownership.ts";
+import { isWorkspaceSnapshot } from "../worker/attempt-evidence.ts";
 import { realpath, lstat, readFile, mkdir, open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { resolve, join, posix } from "node:path";
@@ -47,6 +54,7 @@ export interface ClarificationDependencies {
     loadState?: () => Promise<WorkflowState>;
   };
   clarificationPort?: ClarificationPort;
+  ownership?: OwnershipBoundary;
 }
 export interface DurableClarificationRequest extends ClarificationRequest {
   schemaVersion: 1;
@@ -87,6 +95,7 @@ function sourceDigest(state: WorkflowState): string {
   delete copy.planning.clarificationRequestRef;
   delete copy.planning.clarificationProgressRef;
   delete copy.planning.domainDocumentWriteRef;
+  delete copy.workspaceCheckpointRef;
   return calculateSha256(JSON.stringify(copy));
 }
 
@@ -98,7 +107,11 @@ async function publish<K extends ArtifactKind>(
 ): Promise<ArtifactRef<K>> {
   const content = JSON.stringify(value, null, 2) + "\n";
   const name = `${label}-${calculateSha256(content)}.md`;
-  const ref = createArtifactRef(kind, `context/${name}`, content);
+  const ref = createArtifactRef(
+    kind,
+    artifactRelativePath(kind, name),
+    content,
+  );
   try {
     const written = await deps.artifactStore.writeText(kind, name, content);
     if (!sameArtifactRef(written, ref))
@@ -219,6 +232,10 @@ interface DocumentEvidence {
   requestRef: ArtifactRef<"clarification">;
   projectRoot: string;
   operations: DocumentSnapshot[];
+  workspaceBeforeRef?: ArtifactRef<"reconciliation">;
+  workspaceAfterRef?: ArtifactRef<"reconciliation">;
+  scopeBeforeRef?: ArtifactRef<"reconciliation">;
+  scopeAfterRef?: ArtifactRef<"reconciliation">;
 }
 function isDocumentEvidence(value: unknown): value is DocumentEvidence {
   return (
@@ -237,6 +254,18 @@ function isDocumentEvidence(value: unknown): value is DocumentEvidence {
     isArtifactRef(value.requestRef) &&
     value.requestRef.kind === "clarification" &&
     isNonEmptyString(value.projectRoot) &&
+    [
+      "workspaceBeforeRef",
+      "workspaceAfterRef",
+      "scopeBeforeRef",
+      "scopeAfterRef",
+    ].every((key) =>
+      optional(
+        value,
+        key,
+        (ref) => isArtifactRef(ref) && ref.kind === "reconciliation",
+      ),
+    ) &&
     Array.isArray(value.operations) &&
     value.operations.length > 0 &&
     value.operations.length <= 4 &&
@@ -561,6 +590,10 @@ export async function runClarificationRound(
       },
       deps.stateStore,
     );
+  if (deps.ownership) {
+    state = await deps.ownership.validate(state, deps.stateStore);
+    if (state.phase === "blocked") return state;
+  }
   if (!final) return state;
   try {
     await loadClarification(state, deps, input.rootSessionId);
@@ -609,6 +642,9 @@ export async function runClarificationRound(
 function validateDocumentPath(path: string): void {
   if (
     !path ||
+    // Reject control bytes before any filesystem operation or Human authorization.
+    // oxlint-disable-next-line eslint/no-control-regex
+    /[\x00-\x1f\x7f]/u.test(path) ||
     path.includes("\\") ||
     posix.isAbsolute(path) ||
     posix.normalize(path) !== path ||
@@ -713,6 +749,34 @@ async function writeDocuments(
   canonicalRoot: string,
 ): Promise<WorkflowState> {
   if (!snapshots.length) return state;
+  const paths = snapshots.map((snapshot) => snapshot.path);
+  const workspaceBefore = state.ownershipRef
+    ? await captureWorkspace(canonicalRoot, deps.artifactStore.rootDirectory)
+    : undefined;
+  const scopeBefore = state.ownershipRef
+    ? await captureWorkspace(
+        canonicalRoot,
+        deps.artifactStore.rootDirectory,
+        undefined,
+        paths,
+      )
+    : undefined;
+  const workspaceBeforeRef = workspaceBefore
+    ? await publish(
+        deps,
+        "reconciliation",
+        "document-workspace-before",
+        workspaceBefore,
+      )
+    : undefined;
+  const scopeBeforeRef = scopeBefore
+    ? await publish(
+        deps,
+        "reconciliation",
+        "document-scope-before",
+        scopeBefore,
+      )
+    : undefined;
   const intent = {
     schemaVersion: 1,
     status: "intent",
@@ -722,6 +786,7 @@ async function writeDocuments(
     answerRef,
     projectRoot: canonicalRoot,
     operations: snapshots,
+    ...(workspaceBeforeRef ? { workspaceBeforeRef, scopeBeforeRef } : {}),
   };
   const intentRef = await publish(
     deps,
@@ -745,7 +810,7 @@ async function writeDocuments(
       constants.O_RDWR |
         constants.O_NOFOLLOW |
         (snapshot.before === null ? constants.O_CREAT | constants.O_EXCL : 0),
-      0o600,
+      0o644,
     );
     try {
       // oxlint-disable-next-line eslint/no-await-in-loop
@@ -779,11 +844,44 @@ async function writeDocuments(
     )
       throw Error("Document after identity mismatch");
   }
+  const scopeAfter = state.ownershipRef
+    ? await captureWorkspace(
+        canonicalRoot,
+        deps.artifactStore.rootDirectory,
+        undefined,
+        paths,
+      )
+    : undefined;
+  if (
+    scopeBefore &&
+    scopeAfter &&
+    !unchangedDocumentScope(scopeBefore, scopeAfter, paths)
+  )
+    throw Error("Out-of-band mutation during documentation write");
+  const workspaceAfter = state.ownershipRef
+    ? await captureWorkspace(canonicalRoot, deps.artifactStore.rootDirectory)
+    : undefined;
+  const workspaceAfterRef = workspaceAfter
+    ? await publish(
+        deps,
+        "reconciliation",
+        "document-workspace-after",
+        workspaceAfter,
+      )
+    : undefined;
+  const scopeAfterRef = scopeAfter
+    ? await publish(deps, "reconciliation", "document-scope-after", scopeAfter)
+    : undefined;
   const resultRef = await publish(
     deps,
     "domain-document-write",
     "domain-document-result",
-    { ...intent, status: "completed", intentRef },
+    {
+      ...intent,
+      status: "completed",
+      intentRef,
+      ...(workspaceAfterRef ? { workspaceAfterRef, scopeAfterRef } : {}),
+    },
   );
   return saveRef(state, deps, "domainDocumentWriteRef", resultRef);
 }
@@ -849,6 +947,27 @@ export async function verifyClarificationDocuments(
     JSON.stringify(intent.operations) !== JSON.stringify(result.operations)
   )
     throw Error("Domain-document intent/answer binding mismatch");
+  if (state.ownershipRef || result.workspaceBeforeRef) {
+    if (
+      !sameArtifactRef(result.workspaceBeforeRef, intent.workspaceBeforeRef) ||
+      !sameArtifactRef(result.scopeBeforeRef, intent.scopeBeforeRef)
+    )
+      throw Error("Document workspace intent binding mismatch");
+    for (const ref of [
+      result.workspaceBeforeRef,
+      result.scopeBeforeRef,
+      result.workspaceAfterRef,
+      result.scopeAfterRef,
+    ]) {
+      if (!ref) throw Error("Missing document workspace evidence");
+      const snapshot = await read(deps, ref, isWorkspaceSnapshot);
+      if (
+        snapshot.root !== result.projectRoot ||
+        snapshot.cwd !== result.projectRoot
+      )
+        throw Error("Document workspace identity mismatch");
+    }
+  }
   for (const operation of result.operations) {
     // oxlint-disable-next-line eslint/no-await-in-loop
     if (

@@ -50,7 +50,7 @@ Paths below are naming patterns, created on demand; N/attempt identity must be u
 | round-decision | reviews/round-decision-*.json | classifier + hard policy → routing; action/reason confidence + history |
 | code-review-attempt | code-reviews/attempt-*.json | Orchestrator BEFORE synchronous request → Human Code Gate/recovery; local attempt + exact implementation/review source |
 | code-review | code-reviews/result-*.json | synchronous Plannotator + Human → Orchestrator; exact local attempt/source/result |
-| reconciliation | reconciliation-*.json | Orchestrator recovery → normal driver; exact evidence, never guessed approval |
+| reconciliation | reconciliation-*.json / ownership-*.md / ownership-denied-*.md / document-workspace-*.md / document-scope-*.md | Orchestrator recovery / initial ownership / accepted workspace checkpoints / durable denial → normal driver; exact evidence, never guessed approval |
 
 A static review patch is a durable file under `code-reviews/patch-*.diff`; its path/hash and before/after workspace refs are bound by code-review-attempt。It is not an extra authority kind。`.pi/orchestrator` runtime data is excluded from workload observation; exclusions themselves are part of workspace policy identity。
 

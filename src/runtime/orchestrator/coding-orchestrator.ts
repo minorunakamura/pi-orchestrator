@@ -82,6 +82,7 @@ import {
   type WorkflowStateWriter,
 } from "./advance-workflow.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
+import type { OwnershipBoundary } from "./workflow-ownership.ts";
 
 import { decisionFreshness } from "./coding-evidence.ts";
 import { parsePlan } from "../planning/plan-parser.ts";
@@ -308,6 +309,7 @@ export interface CodingEntryInput {
 }
 
 export interface CodingOrchestratorDependencies {
+  ownership?: OwnershipBoundary;
   repositoryCwd?: string;
   workerTimeoutMs?: number;
   artifactStore: WorkflowArtifactWriter;
@@ -1760,6 +1762,16 @@ export class CodingOrchestrator {
       ...(acceptedFindingsRef ? { acceptedFindingsRef } : {}),
       ...(humanCodeFeedbackRef ? { humanCodeFeedbackRef } : {}),
     };
+    if (this.dependencies.ownership) {
+      routedState = await this.dependencies.ownership.validate(
+        routedState,
+        this.dependencies.stateStore,
+      );
+      if (routedState.phase === "blocked")
+        throw new CodingOrchestrationError(
+          "Workspace ownership changed before Worker authority",
+        );
+    }
     let before: WorkspaceSnapshot;
     try {
       if (!store.rootDirectory)
@@ -1794,7 +1806,8 @@ export class CodingOrchestrator {
         assertWorkspaceIdentity(previousAttempt.before, before);
         if (
           previousAttempt.after?.status !== "observed" ||
-          !isDeepStrictEqual(previousAttempt.after.snapshot, before)
+          (!this.dependencies.ownership &&
+            !isDeepStrictEqual(previousAttempt.after.snapshot, before))
         )
           throw Error(
             "Workspace changed since previous Worker; reconcile before new mutation",
@@ -1803,7 +1816,8 @@ export class CodingOrchestrator {
       if (
         previousAttempt?.status === "deviated" &&
         (previousAttempt.after?.status !== "observed" ||
-          !isDeepStrictEqual(previousAttempt.after.snapshot, before))
+          (!this.dependencies.ownership &&
+            !isDeepStrictEqual(previousAttempt.after.snapshot, before)))
       )
         throw new Error(
           "Workspace changed since stopped Worker; reconcile before new mutation",
