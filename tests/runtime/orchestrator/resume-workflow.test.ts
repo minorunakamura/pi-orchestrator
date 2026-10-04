@@ -183,6 +183,8 @@ describe("ORCH-018 resumeWorkflow", () => {
       indexDigest: "a".repeat(64),
       worktreeDigest: "b".repeat(64),
       untracked: [],
+      kind: "git",
+      policy: { version: 1, exclusions: [".pi/orchestrator"] },
     };
     const after = { ...before, worktreeDigest: "c".repeat(64) };
     const implementation = {
@@ -318,6 +320,8 @@ describe("ORCH-018 resumeWorkflow", () => {
       indexDigest: "a".repeat(64),
       worktreeDigest: "b".repeat(64),
       untracked: [],
+      kind: "git",
+      policy: { version: 1, exclusions: [".pi/orchestrator"] },
     };
     const attempt = {
       schemaVersion: 1,

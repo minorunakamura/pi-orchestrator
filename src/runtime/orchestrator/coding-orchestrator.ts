@@ -13,9 +13,11 @@ import { readFile, realpath } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { JevAuthorization, jevBlockedReason } from "./jev-authorization.ts";
 import {
-  captureRepository,
-  type RepositorySnapshot,
-} from "../worker/repository-evidence.ts";
+  captureWorkspace,
+  workspaceReviewPatch,
+  assertWorkspaceIdentity,
+  type WorkspaceSnapshot,
+} from "../worker/workspace-evidence.ts";
 import {
   parseWorkerAttempt,
   type WorkerAttemptEvidence,
@@ -98,8 +100,8 @@ import {
   type CodeReviewSource,
 } from "../../core/coding/code-review.ts";
 import {
-  gitReviewPatch,
   verifyCodeReviewSource,
+  readWorkspaceBaseline,
 } from "../worker/code-review-source.ts";
 
 export const CODING_ENTRY_EVIDENCE_LIMITS = {
@@ -1041,13 +1043,6 @@ export class CodingOrchestrator {
       throw new StaleCodeReviewError(
         "Code Review requires the implementation workspace",
       );
-    const snapshot = await captureRepository(cwd, store.rootDirectory).catch(
-      () => {
-        throw new CodeReviewSourceError(
-          "Code Review workspace observation is unavailable",
-        );
-      },
-    );
     if (!implementation.workerAttemptRef || !inputState.coding.workerAttemptRef)
       throw new StaleCodeReviewError(
         "Code Review requires durable Worker workspace evidence",
@@ -1061,6 +1056,15 @@ export class CodingOrchestrator {
         ),
       ),
     );
+    const snapshot = await captureWorkspace(
+      cwd,
+      store.rootDirectory,
+      worker.before,
+    ).catch(() => {
+      throw new CodeReviewSourceError(
+        "Code Review workspace/provider observation is unavailable",
+      );
+    });
     if (
       worker.workflowId !== inputState.workflowId ||
       worker.status !== "succeeded" ||
@@ -1074,20 +1078,37 @@ export class CodingOrchestrator {
       throw new CodeReviewSourceError(
         "Implementation workspace changed before Code Review",
       );
-    const patch = await gitReviewPatch(snapshot, store.rootDirectory).catch(
-      () => {
-        throw new CodeReviewSourceError(
-          "Code Review patch source is unsupported or unavailable",
-        );
-      },
+    const baseline = await readWorkspaceBaseline(
+      store,
+      inputState.coding.workerAttemptRef,
+      worker,
     );
+    if (!sameArtifactRef(baseline.ref, inputState.coding.workspaceBaselineRef))
+      throw new CodeReviewSourceError(
+        "Missing or changed original workspace baseline",
+      );
+    const patch = await workspaceReviewPatch(
+      baseline.snapshot,
+      snapshot,
+      store.rootDirectory,
+    ).catch(() => {
+      throw new CodeReviewSourceError(
+        "Code Review patch source is unsupported or unavailable",
+      );
+    });
     const patchRef = await store.writeText(
       "code-review",
       `patch-r${authority.implementationRevision}.diff`,
       patch,
     );
     const source: CodeReviewSource = {
-      type: "git-patch",
+      ...(snapshot.kind === "git"
+        ? { type: "git-patch" as const }
+        : {
+            type: "filesystem-patch" as const,
+            baselineRef: baseline.ref,
+            workerAttemptRef: inputState.coding.workerAttemptRef,
+          }),
       cwd: snapshot.cwd,
       patchFile: await realpath(join(store.rootDirectory, patchRef.path)),
       patchSha256: patchRef.sha256,
@@ -1179,6 +1200,20 @@ export class CodingOrchestrator {
       );
     if (!store.rootDirectory)
       throw new StaleCodeReviewError("Missing durable Code Review storage");
+    if (
+      attempt.source.type === "filesystem-patch" &&
+      (!sameArtifactRef(
+        attempt.source.workerAttemptRef,
+        state.coding.workerAttemptRef,
+      ) ||
+        !sameArtifactRef(
+          attempt.source.baselineRef,
+          state.coding.workspaceBaselineRef,
+        ))
+    )
+      throw new CodeReviewSourceError(
+        "Code Review belongs to a different Worker snapshot",
+      );
     try {
       await verifyCodeReviewSource(attempt.source, store.rootDirectory);
     } catch (error) {
@@ -1348,6 +1383,29 @@ export class CodingOrchestrator {
     const store = requireArtifactStore(this.dependencies.artifactStore);
     const approvedPlanRef = requireApprovedPlan(input.state);
     const previousAttemptRef = input.state.coding.workerAttemptRef;
+    const baselineRef = input.state.coding.workspaceBaselineRef;
+    const initialBaseline = baselineRef
+      ? parseWorkerAttempt(
+          JSON.parse(
+            await readAuthoritativeText(
+              store,
+              baselineRef,
+              "original workspace baseline",
+            ),
+          ),
+        )
+      : undefined;
+    if (
+      (previousAttemptRef && !initialBaseline) ||
+      (initialBaseline &&
+        (initialBaseline.workflowId !== input.state.workflowId ||
+          initialBaseline.inputRevision !== 0 ||
+          initialBaseline.status !== "intent" ||
+          initialBaseline.previousRef))
+    )
+      throw new CodingOrchestrationError(
+        "Missing or invalid original workspace baseline",
+      );
     let previousAttempt: WorkerAttemptEvidence | undefined;
     if (previousAttemptRef) {
       let completed: boolean;
@@ -1702,18 +1760,19 @@ export class CodingOrchestrator {
       ...(acceptedFindingsRef ? { acceptedFindingsRef } : {}),
       ...(humanCodeFeedbackRef ? { humanCodeFeedbackRef } : {}),
     };
-    let before: RepositorySnapshot;
+    let before: WorkspaceSnapshot;
     try {
       if (!store.rootDirectory)
         throw new CodingOrchestrationError(
           "Worker evidence requires a rooted ArtifactStore",
         );
-      before = await captureRepository(
+      before = await captureWorkspace(
         input.cwd ??
           this.dependencies.repositoryCwd ??
           input.state.projectRoot ??
           process.cwd(),
         store.rootDirectory,
+        initialBaseline?.before,
       );
       if (input.state.projectRoot) {
         const scoped = relative(
@@ -1723,8 +1782,24 @@ export class CodingOrchestrator {
         if (scoped.startsWith("..") || isAbsolute(scoped))
           throw Error("Worker cwd is outside workflow project scope");
       }
-      if (previousAttempt && previousAttempt.before.root !== before.root)
-        throw new Error("Worker repository identity changed");
+      if (
+        initialBaseline &&
+        !previousAttempt &&
+        !isDeepStrictEqual(initialBaseline.before, before)
+      )
+        throw Error(
+          "Workspace changed since proven non-dispatch; reconcile before new mutation",
+        );
+      if (previousAttempt) {
+        assertWorkspaceIdentity(previousAttempt.before, before);
+        if (
+          previousAttempt.after?.status !== "observed" ||
+          !isDeepStrictEqual(previousAttempt.after.snapshot, before)
+        )
+          throw Error(
+            "Workspace changed since previous Worker; reconcile before new mutation",
+          );
+      }
       if (
         previousAttempt?.status === "deviated" &&
         (previousAttempt.after?.status !== "observed" ||
@@ -1785,7 +1860,9 @@ export class CodingOrchestrator {
       status: "intent",
       launchStatus: "unknown",
       before,
-      ...(previousAttemptRef ? { previousRef: previousAttemptRef } : {}),
+      ...(previousAttemptRef || baselineRef
+        ? { previousRef: previousAttemptRef ?? baselineRef }
+        : {}),
       ...(routedState.coding.implementationRef
         ? { inputImplementationRef: routedState.coding.implementationRef }
         : {}),
@@ -1800,13 +1877,24 @@ export class CodingOrchestrator {
     routedState = await this.dependencies.stateStore.saveState(
       {
         ...routedState,
-        coding: { ...routedState.coding, workerAttemptRef: intentRef },
+        coding: {
+          ...routedState.coding,
+          workerAttemptRef: intentRef,
+          workspaceBaselineRef: baselineRef ?? intentRef,
+        },
       },
       routedState.stateRevision,
     );
     let workerResult: AgentRunResult;
     try {
       workerRequest.onPrepared = async (launch) => {
+        const current = await captureWorkspace(
+          before.cwd,
+          store.rootDirectory,
+          before,
+        );
+        if (!isDeepStrictEqual(current, before))
+          throw Error("Workspace changed before Worker dispatch");
         intent.launch = launch;
         const ref = await persistJson(
           store,
@@ -1917,7 +2005,11 @@ export class CodingOrchestrator {
     // Capture the exposed identity before any post-run subprocess or file scan.
     await recordObservation("ambiguous", undefined, "received");
     try {
-      const snapshot = await captureRepository(before.cwd, store.rootDirectory);
+      const snapshot = await captureWorkspace(
+        before.cwd,
+        store.rootDirectory,
+        before,
+      );
       if (snapshot.root !== before.root) throw Error("Repository root changed");
       after = { status: "observed", snapshot };
     } catch {
@@ -2021,7 +2113,7 @@ export class CodingOrchestrator {
       ...(acceptedFindingsRef ? { acceptedFindingsRef } : {}),
       executionProfile: resolvedProfile,
       repository: {
-        ...(input.cwd ? { cwd: input.cwd } : {}),
+        cwd: before.cwd,
         outputSha256: calculateSha256(workerResult.output),
       },
       ...(workerResult.runId ? { runId: workerResult.runId } : {}),

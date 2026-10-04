@@ -1,14 +1,23 @@
 import { isCodingAuthority, type CodingAuthority } from "./authority.ts";
 import { hasOnlyKeys, isNonEmptyString, isRecord } from "../schema.ts";
+import { isArtifactRef, type ArtifactRef } from "../artifacts/references.ts";
 
 /** Orchestrator identity; never an external Plannotator reviewId. */
-export interface CodeReviewSource {
-  type: "git-patch";
+interface PatchSource {
   cwd: string;
   patchFile: string;
   patchSha256: string;
   workspaceDigest: string;
 }
+export type CodeReviewSource = PatchSource &
+  (
+    | { type: "git-patch" }
+    | {
+        type: "filesystem-patch";
+        baselineRef: ArtifactRef<"implementation">;
+        workerAttemptRef: ArtifactRef<"implementation">;
+      }
+  );
 export interface CodeReviewAttempt {
   schemaVersion: 1;
   recordType: "code-review-attempt";
@@ -28,8 +37,16 @@ export function isCodeReviewSource(value: unknown): value is CodeReviewSource {
       "patchFile",
       "patchSha256",
       "workspaceDigest",
+      ...(value.type === "filesystem-patch"
+        ? ["baselineRef", "workerAttemptRef"]
+        : []),
     ]) &&
-    value.type === "git-patch" &&
+    (value.type === "git-patch" ||
+      (value.type === "filesystem-patch" &&
+        isArtifactRef(value.baselineRef) &&
+        value.baselineRef.kind === "implementation" &&
+        isArtifactRef(value.workerAttemptRef) &&
+        value.workerAttemptRef.kind === "implementation")) &&
     isNonEmptyString(value.cwd) &&
     isNonEmptyString(value.patchFile) &&
     [value.patchSha256, value.workspaceDigest].every(

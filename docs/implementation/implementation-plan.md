@@ -27,7 +27,7 @@ Inspected sources before design revision:
 | parser/Planner require Implementation Plan, no method/seams/simplicity | #16 then #14 approved strategy/readiness contract |
 | AgentRunRequest lacks full explicit launch policy/preflight projection | #21 all child roles bind model/thinking/skills/tools/definition/digest |
 | direct Jev library adapter, exact future workflowId consent config | #19 native classifier / #11 project grant -> generated workflow consent |
-| Worker evidence uses Git-only repository observer | #10 filesystem baseline/patch review |
+| Worker evidence uses explicit Git/filesystem providers and retained original baseline | #10 [implementation / limits / validation](./workspace-evidence.md); full production lifecycle remains #12 |
 | Plannotator adapter assumes async pending/reviewId/status for Code and five-second timeout | #9 actual synchronous Code result + local attempt |
 | no material deviation protocol / bounded builtin Oracle / active Main guard / read-only Codemode policy | #15 / #17 / #5 / #20 |
 

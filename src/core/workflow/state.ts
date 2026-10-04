@@ -150,6 +150,8 @@ export function isCodeReviewBinding(
 export interface CodingState {
   latestDeviationRef?: ArtifactRef<"plan-deviation">;
   workerAttemptRef?: ArtifactRef<"implementation">;
+  /** Original immutable Worker intent/baseline; survives proven non-dispatch and replanning. */
+  workspaceBaselineRef?: ArtifactRef<"implementation">;
   codeReview?: CodeReviewBinding;
   codeReviewAttemptRef?: ArtifactRef<"code-review">;
   previousRoundDecisionRef?: ArtifactRef<"round-decision">;
@@ -524,6 +526,7 @@ function isCodingState(value: unknown): value is CodingState {
       "codeReview",
       "codeReviewAttemptRef",
       "workerAttemptRef",
+      "workspaceBaselineRef",
       "latestDeviationRef",
       "previousRoundDecisionRef",
     ]) ||
@@ -538,6 +541,7 @@ function isCodingState(value: unknown): value is CodingState {
     ["executionRoutingRef", "execution-routing"],
     ["implementationRef", "implementation"],
     ["workerAttemptRef", "implementation"],
+    ["workspaceBaselineRef", "implementation"],
     ["latestDeviationRef", "plan-deviation"],
     ["validationRef", "validation"],
     ["correctnessReviewRef", "correctness-review"],

@@ -93,6 +93,8 @@ Filesystem manifests bind normalized relative path/type/mode/content hash or sym
 
 Human Code Gate source is `git` (pinned review mode/base + workspace content identity) or `patch` (exact static patch path/hash + before/after snapshot refs)。Check source before/after synchronous Human review; changed implementation/source invalidates result。
 
+#10 implementation retains snapshots/baseline bytes inside immutable Worker attempt records rather than duplicating a separate snapshot Artifact. `coding.workspaceBaselineRef` pins the original intent across Fix, replan and proven non-dispatch; `coding.workerAttemptRef` binds the current after snapshot. `filesystem-patch` source binds both refs plus the patch/workspace digests; recovery regenerates from those exact bytes, never rebaselines from live files. See [Workspace evidence implementation](../implementation/workspace-evidence.md).
+
 ## 6. Decision headers / launch freshness
 
 All decision evidence records schema/decision schema、family、classifier identity when used、exact input refs/input digest、policy/version/configuration digest、relevant Plan/revision、raw probabilities and effective policy outcome。Pre-plan decisions record absent Plan authority, not fictional approval。

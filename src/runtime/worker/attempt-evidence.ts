@@ -20,7 +20,11 @@ import {
 import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
 import { isSubagentRunId, type SubagentRunId } from "../../types.ts";
 import type { AgentDispatch } from "../ports/subagent-executor.ts";
-import type { RepositorySnapshot } from "./repository-evidence.ts";
+import {
+  assertWorkspaceIdentity,
+  isFilesystemSnapshot,
+  type WorkspaceSnapshot,
+} from "./workspace-evidence.ts";
 
 export interface WorkerAttemptEvidence {
   schemaVersion: 1;
@@ -49,10 +53,10 @@ export interface WorkerAttemptEvidence {
     | "ambiguous";
   runId?: SubagentRunId;
   launchStatus: "unknown" | "observed" | "not-started";
-  before: RepositorySnapshot;
+  before: WorkspaceSnapshot;
   after?:
     | { status: "pending" }
-    | { status: "observed"; snapshot: RepositorySnapshot }
+    | { status: "observed"; snapshot: WorkspaceSnapshot }
     | { status: "unavailable"; reason: "observation-failed" };
   implementationRef?: ArtifactRef<"implementation">;
   resultDigest?: string;
@@ -61,10 +65,13 @@ const digest = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 const date = (value: unknown) =>
   isNonEmptyString(value) && Number.isFinite(Date.parse(value));
-function snapshot(value: unknown): value is RepositorySnapshot {
+function snapshot(value: unknown): value is WorkspaceSnapshot {
+  if (isFilesystemSnapshot(value)) return true;
   return (
     isRecord(value) &&
     hasOnlyKeys(value, [
+      "kind",
+      "policy",
       "cwd",
       "root",
       "head",
@@ -72,6 +79,12 @@ function snapshot(value: unknown): value is RepositorySnapshot {
       "worktreeDigest",
       "untracked",
     ]) &&
+    value.kind === "git" &&
+    isRecord(value.policy) &&
+    hasOnlyKeys(value.policy, ["version", "exclusions"]) &&
+    value.policy.version === 1 &&
+    Array.isArray(value.policy.exclusions) &&
+    value.policy.exclusions.every(isNonEmptyString) &&
     isNonEmptyString(value.cwd) &&
     isNonEmptyString(value.root) &&
     (value.head === null ||
@@ -212,6 +225,12 @@ function assertWorkerAttempt(
     )
   )
     throw Error("Missing Worker post-run observation");
+  if (
+    isRecord(value.after) &&
+    value.after.status === "observed" &&
+    snapshot(value.after.snapshot)
+  )
+    assertWorkspaceIdentity(value.before, value.after.snapshot);
   if (
     value.status === "deviated" &&
     (!value.runId ||

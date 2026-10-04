@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { calculateSha256 } from "../persistence/artifact-store.ts";
 
 const exec = promisify(execFile);
 export interface RepositorySnapshot {
+  kind: "git";
+  policy: { version: 1; exclusions: string[] };
   cwd: string;
   root: string;
   head: string | null;
@@ -133,7 +135,16 @@ async function observe(
       kind: metadata.isSymbolicLink() ? "symlink" : "file",
     });
   }
-  return { cwd, root, head, indexDigest, worktreeDigest, untracked };
+  return {
+    kind: "git",
+    policy: { version: 1, exclusions: [...new Set(exclusions)].toSorted() },
+    cwd,
+    root,
+    head,
+    indexDigest,
+    worktreeDigest,
+    untracked,
+  };
 }
 /** Observable content identity, not a claim of an atomic filesystem snapshot. */
 export async function captureRepository(
@@ -149,4 +160,81 @@ export async function captureRepository(
   if (JSON.stringify(before) !== JSON.stringify(after))
     throw Error("Repository changed during observation");
   return after;
+}
+
+/** Pin Git's exact review representation; never invoke external diff/textconv drivers. */
+export async function gitReviewPatch(
+  snapshot: RepositorySnapshot,
+  excludedDirectory: string,
+): Promise<string> {
+  const exclude = relative(snapshot.root, await realpath(excludedDirectory));
+  if (!exclude) throw Error("Invalid Artifact root");
+  const paths = [
+    "--",
+    ".",
+    ":(exclude,literal).pi/orchestrator",
+    ...(exclude && !exclude.startsWith("..") && !isAbsolute(exclude)
+      ? [`:(exclude,literal)${exclude}`]
+      : []),
+  ];
+  const diff = async (args: string[], added = false) => {
+    try {
+      const { stdout } = await exec("git", ["--no-optional-locks", ...args], {
+        cwd: snapshot.root,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        timeout: 15_000,
+      });
+      return stdout;
+    } catch (error) {
+      if (
+        added &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === 1 &&
+        "stdout" in error &&
+        typeof error.stdout === "string"
+      )
+        return error.stdout;
+      throw error;
+    }
+  };
+  const options = [
+    "--binary",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+  ];
+  let patch = snapshot.head
+    ? await diff(["diff", ...options, "--no-renames", snapshot.head, ...paths])
+    : "";
+  const added = snapshot.head
+    ? []
+    : (await git(snapshot.root, ["ls-files", "--cached", "-z", ...paths]))
+        .split("\0")
+        .filter(Boolean);
+  for (const path of [
+    ...new Set([...added, ...snapshot.untracked.map((entry) => entry.path)]),
+  ].toSorted()) {
+    // Sequential reads preserve deterministic patch order.
+    // oxlint-disable-next-line eslint/no-await-in-loop
+    const metadata = await lstat(join(snapshot.root, path));
+    if (!metadata.isFile()) throw Error("Unsupported Code Review file type");
+    // oxlint-disable-next-line eslint/no-await-in-loop
+    patch += await diff(
+      ["diff", "--no-index", ...options, "--", "/dev/null", path],
+      true,
+    );
+  }
+  if (
+    Buffer.byteLength(patch) > 1024 * 1024 ||
+    /GIT binary patch|^.*(?:old|new|deleted file|new file) mode (?:120000|160000)/mu.test(
+      patch,
+    )
+  )
+    throw Error("Unsupported binary/link or oversized Code Review patch");
+  return patch;
 }

@@ -135,7 +135,7 @@ Approved Plan の Validation Contract が sole WHAT authority。exit code/test/b
 
 Plan Gate は async external reviewId + exact review-ready Plan binding。Code Gate は synchronous public approved/feedback result で、external reviewId/status polling を仮定しません。**local attempt + exact implementation/revision + review source を request 前に**保存し、Human settlement 時も source が unchanged であることを確認します。Human duration を五秒 timeout にしません。
 
-Git と filesystem non-Git は first-class workspace。before/after manifests/content/baseline を durable に記録し、non-Git Code Review は generated static patch を Plannotator patchFile に渡します。Worker prose hash は workspace identity ではありません。
+Git と filesystem non-Git は first-class workspace。before/after manifests/content/baseline を durable に記録し、non-Git Code Review は generated static patch を Plannotator patchFile に渡します。Worker prose hash は workspace identity ではありません。[Workspace evidence implementation / limits / validation](docs/implementation/workspace-evidence.md) に provider pinning、retained baseline、unsupported-entry policy を記録しています。Filesystem は UTF-8 text のみ、256 KiB/file・8 MiB total・10,000 entries・depth 64、patch は 1 MiB まで。Symlink/hardlink/binary/unsupported modes は省略せず block します。
 
 ## Configuration / consent / persistence
 
@@ -153,7 +153,7 @@ Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/met
 
 v1 は single active Workflow / single Worker。Multiple Coding Orchestrations/Work Package DAG/worktree parallelism、generic Context Routing、arbitrary Jev escalation target、semantic Validation failure classifier、Virtual Models execution authority は Future Scope。
 
-Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11)、Development Method / TDD (#16) は実装・検証済みです。Read-only Codemode は Plan Simplicity Reviewer のみ実装・検証済み（[#20 implementation / isolation / real smoke](docs/implementation/readonly-codemode.md)）。Simplicity/Oracle escalation/deviation/ownership/non-Git/synchronous Code corrections は後続 child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
+Normal driver foundation (#4)、sequential conditional routing (#6)、required Diagnosis (#7)、production root clarification / docs (#8)、native classifier transport (#19)、共通 launch policy (#21)、generated-workflow consent (#11)、Development Method / TDD (#16) は実装・検証済みです。Read-only Codemode は Plan Simplicity Reviewer のみ実装・検証済み（[#20 implementation / isolation / real smoke](docs/implementation/readonly-codemode.md)）。Non-Git workspace evidence (#10) の実装と検証状況は上記記録を参照してください。Simplicity/Oracle escalation/deviation/ownership/synchronous Code corrections はそれぞれの child work であり、foundation はその実装・production lifecycle verification の代替ではありません。過去の smoke だけでは v1 integration 完了としません。real Pi integration/smoke は **new Herdr tab**、tmux 禁止。#12 が actual Human Gates と Git/non-Git production paths を最終確認します。
 
 ## Further reading
 

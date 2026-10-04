@@ -140,6 +140,8 @@ describe.each(["execute", "resume"] as const)(
             attempt.after.snapshot.root = "/another-repository";
             break;
           case "baseline":
+            if (attempt.before.kind !== "git")
+              throw Error("Expected Git fixture");
             attempt.before.worktreeDigest = "a".repeat(64);
             break;
           case "input-implementation":
