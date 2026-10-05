@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
 import {
   DEFAULT_RETRY_LIMITS,
+  defaultStageProfiles,
+  resolveStageProfile,
   isOrchestratorConfiguration,
   parseConfiguration,
   resolveExecutionProfile,
@@ -49,6 +51,65 @@ test("validates the v1 configuration and resolves logical tiers", () => {
     model: "model-medium",
     thinking: "high",
   });
+});
+
+test.each([
+  "scout",
+  "diagnosis",
+  "research",
+  "planning",
+  "plan-simplicity",
+  "correctness-review",
+  "ponytail-review",
+  "oracle",
+] as const)(
+  "%s resolves its default tiers through the existing mappings",
+  (stage) => {
+    const configuration = validConfiguration();
+    const { modelTier, reasoningTier } = defaultStageProfiles[stage];
+    expect(resolveStageProfile(configuration, stage)).toEqual(
+      resolveExecutionProfile(configuration, modelTier, reasoningTier),
+    );
+  },
+);
+
+test("partial stage overrides preserve other defaults and safe serialization", () => {
+  const configuration = parseConfiguration({
+    ...validConfiguration(),
+    stageProfiles: { scout: { modelTier: "STRONG", reasoningTier: "MEDIUM" } },
+  });
+  expect(resolveStageProfile(configuration, "scout")).toEqual({
+    provider: "provider-b",
+    model: "model-large",
+    thinking: "medium",
+  });
+  expect(resolveStageProfile(configuration, "diagnosis")).toEqual({
+    provider: "provider-a",
+    model: "model-medium",
+    thinking: "high",
+  });
+  expect(JSON.parse(serializeConfiguration(configuration))).toEqual(
+    configuration,
+  );
+  Object.assign(configuration.stageProfiles!.scout!, {
+    apiKey: "runtime-secret",
+  });
+  expect(serializeConfiguration(configuration)).not.toContain("runtime-secret");
+});
+
+test.each([
+  null,
+  [],
+  { worker: { modelTier: "STANDARD", reasoningTier: "HIGH" } },
+  { scout: {} },
+  { scout: { modelTier: "ECONOMY" } },
+  { scout: { modelTier: "UNKNOWN", reasoningTier: "LOW" } },
+  { scout: { modelTier: "ECONOMY", reasoningTier: "max" } },
+  { scout: { modelTier: "ECONOMY", reasoningTier: "LOW", thinking: "low" } },
+])("rejects malformed or unknown stage profiles: %j", (stageProfiles) => {
+  expect(() =>
+    parseConfiguration({ ...validConfiguration(), stageProfiles }),
+  ).toThrow(SchemaValidationError);
 });
 
 test.each([

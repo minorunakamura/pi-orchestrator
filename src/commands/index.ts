@@ -305,6 +305,7 @@ export function createWorkflowCommandRuntime(
       stateStore,
       loadState: () => stateStore.loadState(),
       subagentExecutor: new SubagentsIntegration(events, {
+        configuration,
         cwd,
         projectTrusted: options.projectTrusted,
         launchHost: options.launchHost,

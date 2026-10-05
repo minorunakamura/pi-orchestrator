@@ -344,6 +344,11 @@ describe("ORCH-019 workflow commands", () => {
           "planner",
           "plan-simplicity-reviewer",
         ]);
+        expect(h.children.map((child) => child.model)).toEqual([
+          "fake/economy:low",
+          "fake/standard:high",
+          "fake/standard:high",
+        ]);
         h.events.deliver("plannotator:review-result", {
           reviewId: "wrong-plan",
           approved: true,
@@ -366,6 +371,13 @@ describe("ORCH-019 workflow commands", () => {
           h.children.filter((child) => child.agent === "worker"),
         ).toHaveLength(1);
         expect(h.validations).toHaveLength(1);
+        expect(
+          h.children.find((child) => child.agent === "reviewer")?.model,
+        ).toBe("fake/standard:high");
+        expect(
+          h.children.find((child) => child.agent === "ponytail-reviewer")
+            ?.model,
+        ).toBe("fake/standard:medium");
         expect(
           h.gates.filter((gate) => gate.action === "code-review"),
         ).toHaveLength(1);

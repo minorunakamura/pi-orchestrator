@@ -20,7 +20,8 @@ import { driveWorkflow } from "../../src/runtime/orchestrator/drive-workflow.ts"
 import { resumeWorkflow } from "../../src/runtime/orchestrator/resume-workflow.ts";
 import { diagnosisEvidence } from "../../src/runtime/orchestrator/diagnosis.ts";
 import { FakeJevDecisionClient } from "../fakes/index.ts";
-import { configuration } from "../fakes/coding-scenario.ts";
+import { loadProductionConfiguration } from "../../src/runtime/configuration/load-configuration.ts";
+import { diagnosisRequest } from "../../src/runtime/orchestrator/diagnosis.ts";
 import { jevPolicy } from "../fakes/jev-policy.ts";
 
 /** Explicit opt-in; only real read-only Scout/Diagnosis, no Worker or classifier network calls. */
@@ -74,7 +75,11 @@ export default function (pi: ExtensionAPI) {
           ),
           runtimeSnapshotHost: pi,
         };
+        const configuration = loadProductionConfiguration(cwd, {
+          projectTrusted: ctx.isProjectTrusted(),
+        });
         const adapter = new SubagentsIntegration(events, {
+          configuration,
           cwd,
           launchHost: host,
           artifactReader: store,
@@ -129,8 +134,57 @@ export default function (pi: ExtensionAPI) {
           evidence.workspaceEvidence.some((item) => item.includes("cache.ts")),
         );
         assert.equal(evidence.expectedBehavior?.includes("0"), true);
+        const scoutAttempt = result.state.planning.agentAttempts!.scout;
         const attempt = result.state.planning.agentAttempts!.diagnosis;
-        assert(attempt.receipt && attempt.launch);
+        assert(attempt.receipt && attempt.launch && scoutAttempt.launch);
+        assert.equal(
+          scoutAttempt.launch.thinking,
+          configuration.reasoningMapping.LOW,
+        );
+        assert.equal(
+          attempt.launch.thinking,
+          configuration.reasoningMapping.HIGH,
+        );
+        assert.equal(
+          scoutAttempt.launch.model,
+          `${configuration.executionProfiles.ECONOMY.provider}/${configuration.executionProfiles.ECONOMY.model}`,
+        );
+        assert.equal(
+          attempt.launch.model,
+          `${configuration.executionProfiles.STANDARD.provider}/${configuration.executionProfiles.STANDARD.model}`,
+        );
+        const overridden = new SubagentsIntegration(events, {
+          configuration: {
+            ...configuration,
+            stageProfiles: {
+              diagnosis: { modelTier: "STRONG", reasoningTier: "MEDIUM" },
+            },
+          },
+          cwd,
+          launchHost: host,
+          artifactReader: store,
+        });
+        const overrideLaunch = await overridden.preflight({
+          ...diagnosisRequest(result.state),
+          dispatch: attempt.dispatch,
+          onStarted: async () => {},
+        });
+        assert.equal(
+          overrideLaunch.thinking,
+          configuration.reasoningMapping.MEDIUM,
+        );
+        assert.notEqual(
+          overrideLaunch.launchContractDigest,
+          attempt.launch.launchContractDigest,
+        );
+        await assert.rejects(
+          diagnosisEvidence(result.state, {
+            ...deps,
+            subagentExecutor: overridden,
+          }),
+          /stale|changed|invalid/iu,
+        );
+        assert.deepEqual(spawns, ["workflow-scout", "workflow-scout"]);
         assert.deepEqual(attempt.launch.tools, ["find", "grep", "ls", "read"]);
         const recovered = await new SubagentsIntegration(events, {
           cwd,
@@ -203,6 +257,13 @@ export default function (pi: ExtensionAPI) {
           evidence,
           receipt: attempt.receipt,
           launch: attempt.launch,
+          stageProfiles: {
+            scout: scoutAttempt.launch.policy.executionProfile,
+            diagnosis: attempt.launch.policy.executionProfile,
+            override: overrideLaunch.policy.executionProfile,
+          },
+          profileDrift:
+            "historical Diagnosis evidence rejected without redispatch",
           toolCalls: tools,
           subagents: attempt.launch.packageVersion,
           recovery:

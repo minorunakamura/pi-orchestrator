@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { parseWorkflowState } from "../../../src/core/workflow/state.ts";
+import {
+  projectWorkflowStatus,
+  renderWorkflowStatus,
+} from "../../../src/ui/workflow-status.ts";
+import { SubagentNotDispatchedError } from "../../../src/runtime/ports/subagent-executor.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import type { WorkflowStateWriter } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { failure, FakeSubagentExecutor } from "../../../tests/fakes/index.ts";
@@ -176,6 +181,40 @@ describe("startWorkflow", () => {
       reason: "agent-infrastructure-unavailable",
     });
     expect(result.state.failure).toBeUndefined();
+  });
+
+  test("persists and displays only a safe Scout preflight code before dispatch", async () => {
+    const runsDirectory = await makeRoot();
+    const executor = new FakeSubagentExecutor();
+    executor.run = async (input) => {
+      executor.calls.run.push(input);
+      throw new SubagentNotDispatchedError("secret provider error", {
+        cause: Error("Bearer sk-secret-value"),
+        diagnosticCode: "missing_agent",
+      });
+    };
+    const result = await startWorkflow(
+      { task: "Gather context", playbook: "feature", cwd: runsDirectory },
+      {
+        runsDirectory,
+        subagentExecutor: executor,
+        workflowIdFactory: () => "workflow-1",
+      },
+    );
+    const persisted = await new StateStore(result.runDirectory).loadState();
+    expect(persisted.phase).toBe("blocked");
+    expect(persisted.planning.agentAttempts?.scout).toMatchObject({
+      notDispatched: true,
+      diagnosticCode: "missing_agent",
+    });
+    expect(persisted.planning.agentAttempts?.scout?.receipt).toBeUndefined();
+    expect(JSON.stringify(persisted)).not.toMatch(/secret|Bearer|sk-secret/iu);
+    const status = renderWorkflowStatus(projectWorkflowStatus(persisted));
+    expect(status).toContain("launch=not-started diagnostic=missing_agent");
+    expect(status).not.toContain("secret");
+    const injected = JSON.parse(JSON.stringify(persisted));
+    injected.planning.agentAttempts.scout.diagnosticCode = "Bearer sk-secret";
+    expect(() => parseWorkflowState(injected)).toThrow();
   });
 
   test("does not publish context authority when State persistence fails after the scout artifact", async () => {

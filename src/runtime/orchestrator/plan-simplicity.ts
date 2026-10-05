@@ -96,6 +96,7 @@ export function simplicityRequest(state: WorkflowState): AgentRunRequest {
   );
   return {
     agent: "plan-simplicity-reviewer",
+    profileStage: "plan-simplicity",
     launchPolicy: agentLaunchPolicy("plan-simplicity-reviewer"),
     cwd: state.projectRoot,
     inputRefs: refs,

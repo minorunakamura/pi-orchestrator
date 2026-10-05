@@ -6,6 +6,7 @@ import type {
   WorkflowState,
 } from "../core/workflow/state.ts";
 import type { WorkflowPhase } from "../core/workflow/phase.ts";
+import type { PlanningAgentDiagnosticCode } from "../core/planning/agent-attempt.ts";
 
 export type WorkflowLifecycleStatus =
   | "active"
@@ -75,7 +76,11 @@ export interface WorkflowStatusProjection {
   retryCounters: WorkflowState["counters"];
   humanGate: HumanGateProjection;
   worker: WorkerProjection;
-  planningAgent?: { stage: string; identity: WorkerIdentityProjection };
+  planningAgent?: {
+    stage: string;
+    identity: WorkerIdentityProjection;
+    diagnosticCode?: PlanningAgentDiagnosticCode;
+  };
   externalIdentities: Readonly<Record<string, string>>;
   authoritativeRefs: WorkflowStatusRefs;
   reconciliationRef?: ArtifactRef<"reconciliation">;
@@ -338,7 +343,15 @@ export function projectWorkflowStatus(
       ...(workerIdentity ? { identity: workerIdentity } : {}),
     },
     ...(stage && planningIdentity
-      ? { planningAgent: { stage, identity: planningIdentity } }
+      ? {
+          planningAgent: {
+            stage,
+            identity: planningIdentity,
+            ...(attempt?.notDispatched && attempt.diagnosticCode
+              ? { diagnosticCode: attempt.diagnosticCode }
+              : {}),
+          },
+        }
       : {}),
     externalIdentities: visibleExternalIdentities(state.external),
     authoritativeRefs: refs,
@@ -414,7 +427,7 @@ export function renderWorkflowStatus(
     `worker: ${projection.worker.status} attempt=${formatRef(projection.worker.attemptRef)}${projection.worker.identity?.runId ? ` run=${projection.worker.identity.runId}` : ""}${projection.worker.identity?.requestId ? ` request=${projection.worker.identity.requestId}` : ""}${projection.worker.identity?.ownerRunId ? ` owner=${projection.worker.identity.ownerRunId}` : ""}${projection.worker.identity?.nodeId ? ` node=${projection.worker.identity.nodeId}` : ""}${projection.worker.identity?.launchStatus ? ` launch=${projection.worker.identity.launchStatus}` : ""}`,
     ...(projection.planningAgent
       ? [
-          `planning agent: ${projection.planningAgent.stage} request=${projection.planningAgent.identity.requestId ?? "-"} run=${projection.planningAgent.identity.runId ?? "-"} launch=${projection.planningAgent.identity.launchStatus}`,
+          `planning agent: ${projection.planningAgent.stage} request=${projection.planningAgent.identity.requestId ?? "-"} run=${projection.planningAgent.identity.runId ?? "-"} launch=${projection.planningAgent.identity.launchStatus}${projection.planningAgent.diagnosticCode ? ` diagnostic=${projection.planningAgent.diagnosticCode}` : ""}`,
         ]
       : []),
     `external: ${external || "-"}`,

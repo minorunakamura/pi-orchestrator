@@ -6,6 +6,7 @@ import {
   loadConfiguration,
   loadProductionConfiguration,
 } from "../../../src/runtime/configuration/load-configuration.ts";
+import { resolveStageProfile } from "../../../src/core/configuration.ts";
 
 const settings = {
   decision: {
@@ -60,7 +61,15 @@ test("loads the production configuration through Pi global then project settings
     await mkdir(agentDir, { recursive: true });
     await writeFile(
       join(agentDir, "settings.json"),
-      JSON.stringify({ piOrchestrator: settings }),
+      JSON.stringify({
+        piOrchestrator: {
+          ...settings,
+          stageProfiles: {
+            scout: { modelTier: "STANDARD", reasoningTier: "MEDIUM" },
+            diagnosis: { modelTier: "STRONG", reasoningTier: "HIGH" },
+          },
+        },
+      }),
     );
     await mkdir(join(root, ".pi"), { recursive: true });
     await writeFile(
@@ -70,6 +79,7 @@ test("loads the production configuration through Pi global then project settings
           executionProfiles: {
             STANDARD: { model: "project-model" },
           },
+          stageProfiles: { scout: { reasoningTier: "LOW" } },
         },
       }),
     );
@@ -86,6 +96,16 @@ test("loads the production configuration through Pi global then project settings
     expect(configuration.executionProfiles.ECONOMY).toEqual(
       settings.executionProfiles.ECONOMY,
     );
+    expect(resolveStageProfile(configuration, "scout")).toEqual({
+      provider: "provider-a",
+      model: "project-model",
+      thinking: "low",
+    });
+    expect(resolveStageProfile(configuration, "diagnosis")).toEqual({
+      provider: "provider-b",
+      model: "model-large",
+      thinking: "high",
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

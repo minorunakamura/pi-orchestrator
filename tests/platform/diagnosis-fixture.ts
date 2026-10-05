@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { configuration } from "../fakes/coding-scenario.ts";
 
 /** Disposable product resources; does not edit operator settings or dependencies. */
 export async function diagnosisFixture(authFile: string, model: string) {
@@ -11,6 +12,13 @@ export async function diagnosisFixture(authFile: string, model: string) {
   const cwd = join(root, "project");
   await Promise.all([agentDir, cwd].map((path) => mkdir(path)));
   await symlink(resolve(authFile), join(agentDir, "auth.json"));
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1)
+    throw Error("A concrete provider/model is required");
+  const profile = {
+    provider: model.slice(0, separator),
+    model: model.slice(separator + 1),
+  };
   await writeFile(
     join(agentDir, "settings.json"),
     JSON.stringify({
@@ -22,10 +30,18 @@ export async function diagnosisFixture(authFile: string, model: string) {
           prompts: [],
         },
       ],
+      // Stage defaults must work without subagent thinking and despite an unavailable ambient model.
       subagents: {
-        defaultModel: model,
-        defaultThinking: "medium",
+        defaultModel: "unavailable/ambient-model",
         intercomBridge: { mode: "off" },
+      },
+      piOrchestrator: {
+        ...configuration,
+        executionProfiles: {
+          ECONOMY: profile,
+          STANDARD: profile,
+          STRONG: profile,
+        },
       },
     }),
   );

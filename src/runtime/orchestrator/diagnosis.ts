@@ -42,6 +42,7 @@ export function diagnosisRequest(state: WorkflowState): AgentRunRequest {
     );
   return {
     agent: "workflow-scout",
+    profileStage: "diagnosis",
     launchPolicy: agentLaunchPolicy("workflow-scout"),
     cwd: state.projectRoot,
     inputRefs: [state.taskRef, state.planning.context.scoutRef],

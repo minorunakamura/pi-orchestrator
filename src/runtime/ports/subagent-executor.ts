@@ -1,15 +1,25 @@
 import { RuntimePortError } from "./errors.ts";
+import type { PlanningAgentDiagnosticCode } from "../../core/planning/agent-attempt.ts";
 
 /** Only the adapter may assert this after proving no request was emitted. */
 export class SubagentNotDispatchedError extends RuntimePortError {
-  constructor(message: string, options?: { cause?: unknown }) {
+  readonly diagnosticCode?: PlanningAgentDiagnosticCode;
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; diagnosticCode?: PlanningAgentDiagnosticCode },
+  ) {
     super("infrastructure", message, options);
     this.name = "SubagentNotDispatchedError";
+    this.diagnosticCode = options?.diagnosticCode;
   }
 }
 
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
-import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
+import type {
+  ProfileStage,
+  ResolvedExecutionProfile,
+} from "../../core/configuration.ts";
 import type { SubagentRunId } from "../../types.ts";
 import type {
   AgentLaunchEvidence,
@@ -34,6 +44,8 @@ export interface AgentRunRequest {
   launchPolicy?: AgentLaunchPolicy;
   launch?: AgentLaunchEvidence;
   agent: string;
+  /** Logical execution policy; distinct from versioned dispatch node IDs. */
+  profileStage?: ProfileStage;
   task: string;
   cwd?: string;
   inputRefs?: readonly ArtifactRef[];

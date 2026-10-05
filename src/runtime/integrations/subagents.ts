@@ -17,7 +17,11 @@ import {
   type LaunchResolver,
 } from "./subagent-launch.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
-import type { ResolvedExecutionProfile } from "../../core/configuration.ts";
+import {
+  resolveStageProfile,
+  type OrchestratorConfiguration,
+  type ResolvedExecutionProfile,
+} from "../../core/configuration.ts";
 import { isRecord } from "../../core/schema.ts";
 import { subagentRunId, type SubagentRunId } from "../../types.ts";
 import type { ArtifactStore } from "../persistence/artifact-store.ts";
@@ -103,6 +107,7 @@ export interface EventBus {
 }
 
 export interface SubagentsIntegrationOptions {
+  configuration?: OrchestratorConfiguration;
   artifactReader?: ArtifactReader;
   ownerRunId?: string;
   cwd?: string;
@@ -177,8 +182,10 @@ export class SubagentsIntegration implements SubagentExecutor {
         host: this.options.launchHost,
       });
     } catch (cause) {
+      if (cause instanceof SubagentNotDispatchedError) throw cause;
       throw new SubagentNotDispatchedError("Agent launch preflight rejected", {
         cause,
+        diagnosticCode: "preflight-exception",
       });
     }
   }
@@ -189,12 +196,46 @@ export class SubagentsIntegration implements SubagentExecutor {
     } catch (cause) {
       throw new SubagentNotDispatchedError(
         "Invalid Agent launch policy/ceiling",
-        { cause },
+        { cause, diagnosticCode: "invalid-launch-policy" },
       );
     }
   }
 
+  private stageRequest(input: AgentRunRequest): AgentRunRequest {
+    const configuration = this.options.configuration;
+    // Worker profiles are bound to approved dynamic routing, never stage defaults.
+    if (!configuration || input.agent === "worker") return input;
+    const agents = {
+      scout: "workflow-scout",
+      diagnosis: "workflow-scout",
+      research: "pi-ketch.researcher",
+      planning: "planner",
+      "plan-simplicity": "plan-simplicity-reviewer",
+      "correctness-review": "reviewer",
+      "ponytail-review": "ponytail-reviewer",
+      oracle: "oracle",
+    } as const;
+    const stage = input.profileStage;
+    if (!stage || agents[stage] !== input.agent)
+      throw new SubagentNotDispatchedError(
+        "Explicit matching stage profile required",
+        {
+          diagnosticCode: "invalid-launch-policy",
+        },
+      );
+    const executionProfile = resolveStageProfile(configuration, stage);
+    return {
+      ...input,
+      executionProfile,
+      launchPolicy: {
+        ...(input.launchPolicy ?? agentLaunchPolicy(input.agent)),
+        executionProfile,
+      },
+    };
+  }
+
   async preflight(input: AgentRunRequest): Promise<AgentLaunchEvidence> {
+    input = this.stageRequest(input);
     const restriction = this.restrict(input);
     try {
       return await this.resolveLaunch(input);
@@ -204,6 +245,7 @@ export class SubagentsIntegration implements SubagentExecutor {
   }
 
   async run(input: AgentRunRequest): Promise<AgentRunResult> {
+    input = this.stageRequest(input);
     const restriction = this.restrict(input);
     try {
       return await this.runRestricted(input);

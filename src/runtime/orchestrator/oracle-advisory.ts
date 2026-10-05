@@ -27,7 +27,10 @@ import {
   ArtifactImmutableError,
   calculateSha256,
 } from "../persistence/artifact-store.ts";
-import type { SubagentExecutor } from "../ports/subagent-executor.ts";
+import type {
+  AgentRunRequest,
+  SubagentExecutor,
+} from "../ports/subagent-executor.ts";
 import type { WorkflowStateWriter } from "./advance-workflow.ts";
 import { advanceWorkflow } from "./advance-workflow.ts";
 import type { WorkflowArtifactWriter } from "./planning-orchestrator.ts";
@@ -156,9 +159,13 @@ function parseAdvice(value: unknown): OracleAdvice {
     throw Error("Oracle advice has no exact builtin run identity");
   return advice;
 }
-function agentRequest(request: OracleRequest, state: WorkflowState) {
+function agentRequest(
+  request: OracleRequest,
+  state: WorkflowState,
+): AgentRunRequest {
   return {
     agent: "oracle",
+    profileStage: "oracle",
     launchPolicy: agentLaunchPolicy("oracle"),
     cwd: state.projectRoot,
     inputRefs: request.inputRefs,

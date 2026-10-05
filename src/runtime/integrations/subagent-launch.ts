@@ -15,7 +15,10 @@ import {
   parseAgentLaunchEvidence,
   type AgentLaunchEvidence,
 } from "../../core/agent-launch.ts";
-import type { AgentRunRequest } from "../ports/subagent-executor.ts";
+import {
+  SubagentNotDispatchedError,
+  type AgentRunRequest,
+} from "../ports/subagent-executor.ts";
 import { calculateSha256 } from "../persistence/artifact-store.ts";
 
 const physicalApis: readonly KnownApi[] = [
@@ -76,7 +79,10 @@ export async function resolveAgentLaunch(
 ): Promise<AgentLaunchEvidence> {
   const { host } = binding;
   if (!host?.sessionId || !host.availableModels.length)
-    throw Error("Public launch host/model snapshot required");
+    throw new SubagentNotDispatchedError(
+      "Public launch host/model snapshot required",
+      { diagnosticCode: "host-model-unavailable" },
+    );
   const policy =
     input.launchPolicy ??
     agentLaunchPolicy(input.agent, input.executionProfile);
@@ -85,7 +91,9 @@ export async function resolveAgentLaunch(
     JSON.stringify(policy.executionProfile) !==
       JSON.stringify(input.executionProfile)
   )
-    throw Error("Launch policy/profile mismatch");
+    throw new SubagentNotDispatchedError("Launch policy/profile mismatch", {
+      diagnosticCode: "invalid-launch-policy",
+    });
   const profile = policy.executionProfile;
   const model = profile
     ? `${profile.provider}/${profile.model}:${profile.thinking}`
@@ -111,7 +119,10 @@ export async function resolveAgentLaunch(
     capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(host.sessionId),
   };
   const result = await resolveSubagentLaunchContract(launchInput);
-  if (!result.ok) throw Error(`Agent preflight failed: ${result.code}`);
+  if (!result.ok)
+    throw new SubagentNotDispatchedError("Agent preflight failed", {
+      diagnosticCode: result.code,
+    });
   let c = result.contract;
   // RPC pins thinking in the model suffix. Resolve that exact transport too,
   // rather than compare an ambient candidate list to a physical dispatch.
@@ -121,7 +132,9 @@ export async function resolveAgentLaunch(
       model: `${c.model.replace(/:(off|minimal|low|medium|high|xhigh|max)$/u, "")}:${c.thinking}`,
     });
     if (!pinned.ok)
-      throw Error(`Pinned Agent preflight failed: ${pinned.code}`);
+      throw new SubagentNotDispatchedError("Pinned Agent preflight failed", {
+        diagnosticCode: pinned.code,
+      });
     c = pinned.contract;
   }
   const tools = [
@@ -165,8 +178,17 @@ export async function resolveAgentLaunch(
       (d) => d.severity === "error" || d.severity === "host-required",
     )
   )
-    throw Error(
+    throw new SubagentNotDispatchedError(
       "Resolved Agent launch violates policy or has unresolved host capability",
+      {
+        diagnosticCode: !physicalModel?.api
+          ? "host-model-unavailable"
+          : policy.denyExtensions && !c.tools.capabilityCeiling?.denyExtensions
+            ? "extension-ceiling-unverified"
+            : c.diagnostics.some((d) => d.severity === "host-required")
+              ? "host-capability-unavailable"
+              : "launch-policy-rejected",
+      },
     );
   let codemodeDigest: string | undefined;
   if (

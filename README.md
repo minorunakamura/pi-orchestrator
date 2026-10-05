@@ -145,11 +145,156 @@ Git と filesystem non-Git は first-class workspace。before/after manifests/co
 
 ## Configuration / consent / persistence
 
-Pi trusted settings の piOrchestrator を読みます。global settings を trusted project settings が host precedence で override; untrusted project injection を独自実装で許可しません。Child trust は Pi/pi-subagents の public contract を継承します。Agent discovery は host の `isProjectTrusted()` に基づき trusted → public `agentScope: "both"`、untrusted/unknown → `"user"` とし、project Agent definitions/overrides の混入も除外します。Orchestrator は trust loader を再実装しません。
+### settings.json の配置
 
-`jev.runtimePolicy: { maxRequests, grant: { id, policyVersion, active, projectRoot, destination, evidenceCategories } }` を workflow 開始前に設定できます（[設定例](./docs/basic-design/configuration.md#6-operatorproject-grant-vs-workflow-consent-11)）。最初の classifier request 前に `decisions/jev-authorization.json` と `jevUsage.authorizationRef` を保存し、generated workflowId に bind した consent を確立します。Current grant と captured consent の両 ceiling を適用し、Classifier/project/destination/evidence scope と finite budget を検証し、毎 outbound attempt/per-finding/retry を **reservation → State persist → request** で計上します。API credentials/model availability、typesafe enable、Plan approval は consent ではありません。Timeout stays charged、restart で budget を resetしません。
+Pi の `settings.json` のトップレベルに **`piOrchestrator`** を追加します。pi-orchestrator 専用の別ファイルではありません。既存の `packages`、`subagents` などの設定は残してください。
 
-Default coding retry は automated fix 3 / stronger retry 1、Human feedback は別 counter。詳しい target config は [Configuration](./docs/basic-design/configuration.md)。現行 JSON schemaとの差分は後続 Issue が実装し、未対応 settings を先行追加しません。
+| 配置先 | 適用範囲 |
+| --- | --- |
+| `<agent-dir>/settings.json`（標準: `~/.pi/agent/settings.json`） | ユーザー共通設定 |
+| `<projectRoot>/.pi/settings.json` | Pi が trusted と判定した project の設定 |
+
+global → trusted project の順で nested object を merge します。同じ項目は project 側が優先され、未指定の項目は global 側の値を使います。untrusted project の設定は読み込みません。Project 固有の classifier grant は project 側に置くと、共通の model 設定と分離できます。
+
+### 完全な設定例
+
+以下は classifier への evidence 送信を許可する場合の例です。`stageProfiles` は省略しているため、後述の default tier が適用されます。
+
+**使用前に必ず次の項目を変更・確認してください。**
+
+- `executionProfiles` の provider/model は、自分の Pi で利用できる physical model に置き換えます。`provider` と `model` は別フィールドで、`model` に `provider/` や `:thinking` は付けません。この例では3 tier を同じ model にしていますが、別々の model に設定できます。
+- **`grant.projectRoot` の `/absolute/path/to/project` は、そのまま使えません。** Workflow を開始する project root の実際の絶対パスに置き換えてください。Git project は repository root で開始し、そこで `pwd -P` を実行すると物理パスを確認できます。
+- `active: true` は列挙した evidence を classifier に送る許可です。`evidenceCategories` と `maxRequests` を確認し、許可する範囲・予算だけを設定してください。
+- API credentials は Pi 側で設定します。`piOrchestrator` に API key を書きません。model の利用可能性や認証と、classifier 送信の grant は別の要件です。
+
+```json
+{
+  "piOrchestrator": {
+    "decision": {
+      "autoDecisionThreshold": 0.8,
+      "escalationThreshold": 0.5
+    },
+    "executionProfiles": {
+      "ECONOMY": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna"
+      },
+      "STANDARD": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna"
+      },
+      "STRONG": {
+        "provider": "openai",
+        "model": "gpt-5.6-luna"
+      }
+    },
+    "reasoningMapping": {
+      "LOW": "low",
+      "MEDIUM": "medium",
+      "HIGH": "high"
+    },
+    "retries": {
+      "maxAutomatedFixRounds": 3,
+      "maxStrongerRetries": 1
+    },
+    "validation": {
+      "stopOnInfrastructureFailure": true
+    },
+    "jev": {
+      "classifier": {
+        "provider": "typesafe",
+        "model": "jev-latest"
+      },
+      "timeoutMs": 15000,
+      "maxTransportRetries": 0,
+      "runtimePolicy": {
+        "maxRequests": 20,
+        "grant": {
+          "id": "project-classifier-grant",
+          "policyVersion": "1",
+          "active": true,
+          "projectRoot": "/absolute/path/to/project",
+          "destination": "typesafe/jev-latest",
+          "evidenceCategories": [
+            "task",
+            "scout",
+            "diagnosis",
+            "research",
+            "clarification",
+            "design",
+            "history",
+            "plan",
+            "context",
+            "implementation",
+            "review",
+            "validation"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+上記は現在の runtime が受理する設定です。設定全体として `decision`、全3 tier の `executionProfiles`、全3 tier の `reasoningMapping` が必要です。`reasoningMapping` の値には、選択した model が対応する thinking level を指定してください。
+
+| 項目 | 役割・省略時の動作 |
+| --- | --- |
+| `decision` | Orchestrator の confidence policy に使う閾値。両値とも 0〜1 |
+| `executionProfiles` | `ECONOMY` / `STANDARD` / `STRONG` を concrete provider/model に変換 |
+| `reasoningMapping` | 選択された `LOW` / `MEDIUM` / `HIGH` を concrete thinking に変換。tier を選ぶ設定ではなく変換表 |
+| `stageProfiles` | 任意。指定した Stage だけ default tier を上書き |
+| `retries` | 省略時は automated fix 3回 / stronger retry 1回。Human feedback は別 counter |
+| `validation` | 省略時は `stopOnInfrastructureFailure: true`。Validation の内容は Approved Plan が決める |
+| `jev.classifier` | 省略時は `typesafe/jev-latest`。`grant.destination` は同じ `provider/model` に一致させる |
+| `jev.timeoutMs` / `maxTransportRetries` | 省略時は 15000 ms / 0回。transport retry も request budget を消費 |
+| `jev.runtimePolicy` | classifier を利用するには有効な grant と budget が必要。未設定・scope 不一致・予算不足なら送信せず停止 |
+
+`maxRequests` は workflow ごとの outbound classifier request の上限です。per-finding request、retry、timeout も計上するため、workflow の規模に応じて設定してください。`0` は送信不可です。まだ存在しない Workflow ID を grant に記載する必要はありません。
+
+### Stage ごとの model / thinking
+
+Evidence/review/advisory child は、`stageProfiles` の指定または以下の Orchestrator-owned default tier を使います。**Root の現在の model/thinking や pi-subagents の `defaultModel` / `defaultThinking` には戻りません。** 選択した model/thinking が利用できなければ、preflight で停止します。
+
+| Stage key | Default modelTier | Default reasoningTier |
+| --- | --- | --- |
+| `scout` | `ECONOMY` | `LOW` |
+| `diagnosis` | `STANDARD` | `HIGH` |
+| `research` | `STANDARD` | `MEDIUM` |
+| `planning` | `STANDARD` | `HIGH` |
+| `plan-simplicity` | `STANDARD` | `HIGH` |
+| `correctness-review` | `STANDARD` | `HIGH` |
+| `ponytail-review` | `STANDARD` | `MEDIUM` |
+| `oracle` | `STRONG` | `HIGH` |
+
+変更したい Stage だけ `piOrchestrator.stageProfiles` に追加します。以下は**追記・override 用の抜粋**です。完全な設定例の他の項目を消さずに追加してください。
+
+```json
+{
+  "piOrchestrator": {
+    "stageProfiles": {
+      "scout": {
+        "modelTier": "STANDARD",
+        "reasoningTier": "MEDIUM"
+      },
+      "diagnosis": {
+        "modelTier": "STRONG",
+        "reasoningTier": "HIGH"
+      }
+    }
+  }
+}
+```
+
+Effective merged settings の各 override には `modelTier` と `reasoningTier` の両方が必要です。未知の Stage/tier/追加フィールドは拒否されます。例えば default の Diagnosis は `STANDARD/HIGH` → 上の完全な設定例では `openai/gpt-5.6-luna:high` に解決されます。
+
+Scout と Diagnosis は同じ `workflow-scout` Agent definition を使いますが、実行 profile は独立しています。Architecture、Plan refinement、replanning は `planning` を共有します。**Worker/Fix Worker は Jev Execution Routing の判定結果を使い、`stageProfiles` では設定しません。** Root clarification、Jev classifier、deterministic Validation、Human Gates もこの設定の対象外です。詳しい契約は [Configuration](./docs/basic-design/configuration.md) を参照してください。
+
+### 設定変更と consent / persistence
+
+設定は新しい Workflow を開始する前に用意してください。Extension の更新を読み込むには `/reload` を使います。設定変更は次の command runtime 作成時に読み込まれますが、保存済み attempt の実行条件や approval を自動的に置き換えるものではありません。Active Workflow 中に project の `settings.json` を変更すると workspace drift として停止する場合があります。
+
+`jev.runtimePolicy` の grant から、最初の classifier request 前に `decisions/jev-authorization.json` と `jevUsage.authorizationRef` を保存し、generated workflowId に bind した consent を確立します。Current grant と captured consent の両 ceiling を適用し、Classifier/project/destination/evidence scope と finite budget を検証し、毎 outbound attempt/per-finding/retry を **reservation → State persist → request** で計上します。API credentials/model availability、typesafe enable、Plan approval は consent ではありません。Timeout stays charged、restart で budget を resetしません。設定を広げても、既存 Workflow の captured consent は自動的に広がりません。旧 `jev.endpoint` / `runtimePolicy.consent` は使用できません。
 
 Workflow data は `.pi/orchestrator/runs/<workflow-id>/`。State stores refs/metadata、Artifacts are immutable/content-bound。Required intent/authority/evidence と State 保存後だけ next side effect を開始します。
 

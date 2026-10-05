@@ -31,6 +31,7 @@ These groups define ownership, not an already-implemented JSON schema。Child Is
 | classifier | explicit provider/model, default typesafe/jev-latest; Pi native transport (#19) |
 | executionProfiles | ECONOMY / STANDARD / STRONG → concrete provider/model |
 | reasoningMapping | LOW / MEDIUM / HIGH → supported thinking |
+| stageProfiles | optional per-stage modelTier/reasoningTier overrides; Orchestrator-owned defaults below |
 | agentLaunch | evidence/review/advisory role-profile policy, explicit skills/tools/forbidden ceiling/inheritance; public preflight (#21) |
 | stage policy | canonical required/conditional/skip matrix; sequential evidence-driven conditional evaluation |
 | development method | explicit Human TDD precedence; deterministic behavior-free STANDARD; bounded eligible routing |
@@ -58,6 +59,38 @@ Jev STANDARD + HIGH
 All child roles have explicit execution-relevant policy。Ambient default model change (including Pi's Codex default), selected skills/tools or Agent definition drift invalidates equivalent-attempt reuse even if task/refs are unchanged。Only resolved non-secret projection is durable; no credential or unbounded prompt dump。
 
 Worker uses current approved Execution Profile; stronger retries cannot be downgraded。TDD Worker explicitly selects tdd through public skill selection with inheritSkills:false; optional codebase-design must be explicitly selected if required, never assumed inherited。
+
+### Stage profiles
+
+Evidence/review/advisory launches resolve their logical stage profile through the existing `executionProfiles` and `reasoningMapping` before public preflight. `stageProfiles` is optional; omitted stages use these Orchestrator-owned defaults, not Pi Root or pi-subagents ambient model/thinking defaults:
+
+| Stage key | Agent | Default modelTier | Default reasoningTier |
+| --- | --- | --- | --- |
+| scout | workflow-scout | ECONOMY | LOW |
+| diagnosis | workflow-scout | STANDARD | HIGH |
+| research | pi-ketch.researcher | STANDARD | MEDIUM |
+| planning | planner | STANDARD | HIGH |
+| plan-simplicity | plan-simplicity-reviewer | STANDARD | HIGH |
+| correctness-review | builtin reviewer | STANDARD | HIGH |
+| ponytail-review | ponytail-reviewer | STANDARD | MEDIUM |
+| oracle | builtin oracle | STRONG | HIGH |
+
+Override only the stages that need different tiers:
+
+```json
+{
+  "stageProfiles": {
+    "scout": { "modelTier": "STANDARD", "reasoningTier": "MEDIUM" },
+    "diagnosis": { "modelTier": "STRONG", "reasoningTier": "HIGH" }
+  }
+}
+```
+
+Each override in the effective merged settings must have both tier fields; unknown stage/tier/extra fields are rejected. Trusted project settings use the existing deep override boundary. A selected model or thinking level that cannot pass public preflight blocks before dispatch; there is no ambient fallback. Stage profiles do not change Agent prompts, skills, tools, context/trust ceilings or authority.
+
+Architecture, refinement and replanning share `planning`; versioned dispatch IDs remain separate from logical profile keys. Scout/Diagnosis share an Agent definition but have independent profiles. Worker/Fix Worker retain approved dynamic Execution Routing and cannot be configured via `stageProfiles`. Root clarification, classifier models, deterministic Validation and Human Gates are not child-stage profile targets.
+
+Resolved provider/model/thinking is persisted in the existing launch evidence before dispatch and pinned in RPC. Recovery reconstructs the current stage policy and compares it with historical launch evidence; profile/mapping drift does not replace historical evidence, infer approval or redispatch an unresolved child. Existing histories are not migrated or automatically rebound.
 
 ## 5. Budgets / confidence
 
