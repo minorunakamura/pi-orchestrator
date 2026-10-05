@@ -214,6 +214,7 @@ function createReviewRequest(
 ): AgentRunRequest {
   return {
     agent: reviewer.agent,
+    profileStage: reviewer.kind,
     launchPolicy: agentLaunchPolicy(reviewer.agent),
     task: reviewTask(reviewer.source, state.coding.reviewRound),
     inputRefs: refs,

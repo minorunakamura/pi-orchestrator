@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { RuntimePortError } from "../ports/errors.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
-import type { PlanningAgentAttempt } from "../../core/planning/agent-attempt.ts";
+import {
+  isPlanningAgentDiagnosticCode,
+  type PlanningAgentAttempt,
+} from "../../core/planning/agent-attempt.ts";
 import { calculateSha256 } from "../persistence/artifact-store.ts";
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from "../integrations/subagents.ts";
 import {
@@ -162,7 +165,13 @@ export async function runPlanningAgent(
     });
   } catch (error) {
     if (error instanceof SubagentNotDispatchedError) {
-      await save({ ...attempt, notDispatched: true });
+      await save({
+        ...attempt,
+        notDispatched: true,
+        diagnosticCode: isPlanningAgentDiagnosticCode(error.diagnosticCode)
+          ? error.diagnosticCode
+          : "not-dispatched",
+      });
       return {
         state,
         result: { status: "failed", notDispatched: true, error: error.message },
@@ -174,7 +183,11 @@ export async function runPlanningAgent(
     return unknown("Planning dispatch may have started; no automatic retry");
   }
   if (result.status === "failed" && result.notDispatched)
-    await save({ ...attempt, notDispatched: true });
+    await save({
+      ...attempt,
+      notDispatched: true,
+      diagnosticCode: "not-dispatched",
+    });
   const receipt = state.planning.agentAttempts?.[stage]?.receipt;
   if (receipt && result.runId !== receipt.runId)
     return unknown("Planning completion identity mismatch");

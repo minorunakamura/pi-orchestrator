@@ -29,6 +29,35 @@ export interface AgentRunReceipt {
   agent: string;
 }
 
+// Stable, non-secret reason codes only; never persist provider/host error messages.
+export const planningAgentDiagnosticCodes = [
+  "missing_agent",
+  "ambiguous_agent",
+  "missing_skill",
+  "denied_required_tool",
+  "invalid_artifact_dir",
+  "invalid_cwd",
+  "unsupported_mode",
+  "restricted_agent",
+  "thinking_ceiling",
+  "invalid_extension_bindings",
+  "invalid_intercom_bridge",
+  "host-model-unavailable",
+  "host-capability-unavailable",
+  "extension-ceiling-unverified",
+  "launch-policy-rejected",
+  "preflight-exception",
+  "invalid-launch-policy",
+  "not-dispatched",
+] as const;
+export type PlanningAgentDiagnosticCode =
+  (typeof planningAgentDiagnosticCodes)[number];
+export const isPlanningAgentDiagnosticCode = (
+  value: unknown,
+): value is PlanningAgentDiagnosticCode =>
+  typeof value === "string" &&
+  planningAgentDiagnosticCodes.some((code) => code === value);
+
 export interface PlanningAgentAttempt {
   dispatch: AgentDispatch;
   inputRefs: readonly ArtifactRef[];
@@ -36,6 +65,7 @@ export interface PlanningAgentAttempt {
   launch?: AgentLaunchEvidence;
   receipt?: AgentRunReceipt;
   notDispatched?: true;
+  diagnosticCode?: PlanningAgentDiagnosticCode;
 }
 
 export function isAgentRunReceipt(value: unknown): value is AgentRunReceipt {
@@ -74,6 +104,7 @@ export function isPlanningAgentAttempts(
           "launch",
           "receipt",
           "notDispatched",
+          "diagnosticCode",
         ])
       )
         return false;
@@ -101,6 +132,8 @@ export function isPlanningAgentAttempts(
         optional(attempt, "launch", isAgentLaunchEvidence) &&
         optional(attempt, "receipt", isAgentRunReceipt) &&
         optional(attempt, "notDispatched", (candidate) => candidate === true) &&
+        optional(attempt, "diagnosticCode", isPlanningAgentDiagnosticCode) &&
+        (!attempt.diagnosticCode || attempt.notDispatched === true) &&
         !(attempt.receipt && attempt.notDispatched)
       );
     })

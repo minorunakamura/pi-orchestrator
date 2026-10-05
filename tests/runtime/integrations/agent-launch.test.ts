@@ -12,6 +12,12 @@ import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.t
 import type { AgentRunRequest } from "../../../src/runtime/ports/subagent-executor.ts";
 import type { AgentLaunchHost } from "../../../src/runtime/integrations/subagent-launch.ts";
 import { FakeSubagentRpc, childRequest } from "../../fakes/subagent-rpc.ts";
+import { configuration as baseConfiguration } from "../../fakes/coding-scenario.ts";
+import { fakeLaunchResolver } from "../../fakes/agent-launch.ts";
+import {
+  resolveStageProfile,
+  type OrchestratorConfiguration,
+} from "../../../src/core/configuration.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -85,6 +91,162 @@ async function fixture() {
   return { root, definition, host, events, store, adapter, request };
 }
 
+test.each([
+  ["scout", "workflow-scout"],
+  ["diagnosis", "workflow-scout"],
+  ["research", "pi-ketch.researcher"],
+  ["planning", "planner"],
+  ["plan-simplicity", "plan-simplicity-reviewer"],
+  ["correctness-review", "reviewer"],
+  ["ponytail-review", "ponytail-reviewer"],
+  ["oracle", "oracle"],
+] as const)(
+  "%s applies the configured stage policy without weakening the role ceiling",
+  async (stage, agent) => {
+    const f = await fixture();
+    const resolver = vi.fn(fakeLaunchResolver);
+    const adapter = new SubagentsIntegration(f.events, {
+      cwd: f.root,
+      artifactReader: f.store,
+      configuration: baseConfiguration,
+      launchResolver: resolver,
+    });
+    const policy = agentLaunchPolicy(agent);
+    const request = {
+      ...f.request,
+      agent,
+      profileStage: stage,
+      launchPolicy: policy,
+    };
+    const launch = await adapter.preflight(request);
+    expect(launch.policy).toEqual({
+      ...policy,
+      executionProfile: resolveStageProfile(baseConfiguration, stage),
+    });
+    expect(resolver.mock.calls[0][0].executionProfile).toEqual(
+      launch.policy.executionProfile,
+    );
+    expect(f.events.emitted).toHaveLength(0);
+  },
+);
+
+async function stageFixture() {
+  const f = await fixture();
+  f.host.availableModels = f.host.availableModels.map((model) => ({
+    ...model,
+    reasoning: true,
+  }));
+  // Reproduce the product Scout: neither definition nor subagents.defaultThinking pins thinking.
+  await writeFile(
+    f.definition,
+    `---\nname: workflow-scout\ndescription: Stage profile probe\ntools: read\ninheritSkills: false\ninheritProjectContext: true\n---\nEvidence only.\n`,
+  );
+  await writeFile(
+    join(f.root, "agent/settings.json"),
+    JSON.stringify({ subagents: { defaultModel: "test/other" } }),
+  );
+  const configuration: OrchestratorConfiguration = {
+    ...structuredClone(baseConfiguration),
+    executionProfiles: {
+      ECONOMY: { provider: "test", model: "model" },
+      STANDARD: { provider: "test", model: "other" },
+      STRONG: { provider: "test", model: "other" },
+    },
+  };
+  const adapter = (config = configuration) =>
+    new SubagentsIntegration(f.events, {
+      cwd: f.root,
+      artifactReader: f.store,
+      launchHost: f.host,
+      configuration: config,
+    });
+  const request = { ...f.request, profileStage: "scout" as const };
+  return { ...f, configuration, adapter, request };
+}
+
+test("released preflight resolves Scout and Diagnosis independently without ambient thinking defaults", async () => {
+  const f = await stageFixture();
+  expect(await f.adapter().preflight(f.request)).toMatchObject({
+    model: "test/model",
+    thinking: "low",
+  });
+  expect(
+    await f.adapter().preflight({ ...f.request, profileStage: "diagnosis" }),
+  ).toMatchObject({ model: "test/other", thinking: "high" });
+  f.configuration.stageProfiles = {
+    scout: { modelTier: "STRONG", reasoningTier: "MEDIUM" },
+  };
+  const launch = await f.adapter().preflight(f.request);
+  expect(launch).toMatchObject({ model: "test/other", thinking: "medium" });
+  const prepared = vi.fn(async () => {});
+  await f.adapter().run({ ...f.request, launch, onPrepared: prepared });
+  expect(prepared).toHaveBeenCalledWith(launch);
+  expect(childRequest(f.events.emitted[0].payload)).toMatchObject({
+    model: "test/other:medium",
+  });
+});
+
+test.each(["stage-override", "model-mapping", "reasoning-mapping"])(
+  "%s drift cannot replace a historical stage launch",
+  async (dimension) => {
+    const f = await stageFixture();
+    const launch = await f.adapter().preflight(f.request);
+    if (dimension === "stage-override")
+      f.configuration.stageProfiles = {
+        scout: { modelTier: "STANDARD", reasoningTier: "HIGH" },
+      };
+    if (dimension === "model-mapping")
+      f.configuration.executionProfiles.ECONOMY.model = "other";
+    if (dimension === "reasoning-mapping")
+      f.configuration.reasoningMapping.LOW = "medium";
+    const prepared = vi.fn(async () => {});
+    await expect(
+      f.adapter().run({ ...f.request, launch, onPrepared: prepared }),
+    ).rejects.toThrow("changed after durable preflight");
+    expect(prepared).not.toHaveBeenCalled();
+    expect(f.events.emitted).toHaveLength(0);
+  },
+);
+
+test("configured stage failures never fall back to an ambient model", async () => {
+  const f = await stageFixture();
+  f.configuration.executionProfiles.ECONOMY.model = "missing-model";
+  await expect(
+    f.adapter().run({ ...f.request, onPrepared: async () => {} }),
+  ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
+  expect(f.events.emitted).toHaveLength(0);
+});
+
+test.each([undefined, "research"] as const)(
+  "missing or mismatched stage %s is rejected before resolution",
+  async (profileStage) => {
+    const f = await stageFixture();
+    await expect(
+      f
+        .adapter()
+        .run({ ...f.request, profileStage, onPrepared: async () => {} }),
+    ).rejects.toMatchObject({ diagnosticCode: "invalid-launch-policy" });
+    expect(f.events.emitted).toHaveLength(0);
+  },
+);
+
+test("stage defaults and overrides never replace a Worker's routed profile", async () => {
+  const f = await stageFixture();
+  const executionProfile = {
+    provider: "test",
+    model: "model",
+    thinking: "off",
+  };
+  const launch = await f.adapter().preflight({
+    ...f.request,
+    agent: "worker",
+    executionProfile,
+    launchPolicy: agentLaunchPolicy("worker", executionProfile),
+  });
+  expect(launch.policy.executionProfile).toEqual(executionProfile);
+  expect(launch).toMatchObject({ model: "test/model", thinking: "off" });
+});
+
 test("released preflight proves a read-only ceiling, physical identity and bounded secret-free projection", async () => {
   const f = await fixture();
   const launch = await f.adapter.preflight(f.request);
@@ -99,6 +261,16 @@ test("released preflight proves a read-only ceiling, physical identity and bound
   expect(JSON.stringify(launch)).not.toContain(f.request.task);
   expect(JSON.stringify(launch)).not.toContain(f.root);
   expect(parseAgentLaunchEvidence(launch)).toEqual(launch);
+  expect(f.events.emitted).toHaveLength(0);
+});
+
+test("released preflight rejection exposes only its stable reason code", async () => {
+  const f = await fixture();
+  await rm(f.definition);
+  await expect(f.adapter.run(f.request)).rejects.toMatchObject({
+    name: "SubagentNotDispatchedError",
+    diagnosticCode: "missing_agent",
+  });
   expect(f.events.emitted).toHaveLength(0);
 });
 

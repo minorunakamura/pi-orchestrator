@@ -200,6 +200,12 @@ function request(
 ): AgentRunRequest {
   return {
     agent,
+    profileStage:
+      agent === "workflow-scout"
+        ? "scout"
+        : agent === "pi-ketch.researcher"
+          ? "research"
+          : "planning",
     launchPolicy: agentLaunchPolicy(agent),
     task,
     inputRefs,

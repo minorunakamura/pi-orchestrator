@@ -16,7 +16,10 @@ import {
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import type { WorkflowStateWriter } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { FakeSubagentRpc, childRequest } from "../../fakes/subagent-rpc.ts";
-import { plan } from "../../fakes/coding-scenario.ts";
+import {
+  plan,
+  configuration as stageConfiguration,
+} from "../../fakes/coding-scenario.ts";
 import { planningDependencies } from "../../fakes/planning.ts";
 import { workflowId } from "../../../src/types.ts";
 import { subagentRunId } from "../../../src/types.ts";
@@ -35,6 +38,7 @@ afterEach(async () => {
 async function setup(
   options: {
     pause?: string;
+    stageProfiles?: boolean;
     noReceipt?: boolean;
     failReceipt?: boolean;
     failContextSave?: boolean;
@@ -73,6 +77,7 @@ async function setup(
     },
   };
   const executor = new SubagentsIntegration(events, {
+    configuration: options.stageProfiles ? stageConfiguration : undefined,
     cwd: root,
     artifactReader: store,
     timeoutMs: 150,
@@ -99,13 +104,17 @@ async function setup(
   }
   const freshEvents = new FakeSubagentRpc();
   // Isolate exact historical child recovery; normal continuation is tested separately.
-  const resume = (launchResolver = fakeLaunchResolver) =>
+  const resume = (
+    launchResolver = fakeLaunchResolver,
+    configuration = options.stageProfiles ? stageConfiguration : undefined,
+  ) =>
     reconcileWorkflow("recovery", {
       ...routing,
       runDirectory,
       cwd: root,
       repositoryCwd: root,
       subagentExecutor: new SubagentsIntegration(freshEvents, {
+        configuration,
         cwd: root,
         launchResolver,
         artifactReader: new ArtifactStore(runDirectory),
@@ -162,6 +171,40 @@ test("recreated runtime observes the same research run, then recovers its result
   ).toBe("recovered research");
   expect(h.freshEvents.emitted).toHaveLength(0);
 });
+
+test.each(["stage-override", "model-mapping", "reasoning-mapping"])(
+  "reconciliation blocks %s drift without changing historical launch evidence or redispatching",
+  async (dimension) => {
+    const h = await setup({ pause: "workflow-scout", stageProfiles: true });
+    const before = await h.states.loadState();
+    const historical = before.planning.agentAttempts!.scout;
+    expect(historical.launch).toMatchObject({
+      model: "fake/economy",
+      thinking: "low",
+    });
+    expect((await h.resume()).status).toBe("pending");
+    h.events.complete(
+      h.requests[0],
+      historical.receipt!.runId,
+      "complete",
+      "historical Scout output",
+    );
+    const configuration = structuredClone(stageConfiguration);
+    if (dimension === "stage-override")
+      configuration.stageProfiles = {
+        scout: { modelTier: "STRONG", reasoningTier: "HIGH" },
+      };
+    if (dimension === "model-mapping")
+      configuration.executionProfiles.ECONOMY.model = "changed";
+    if (dimension === "reasoning-mapping")
+      configuration.reasoningMapping.LOW = "medium";
+    const result = await h.resume(fakeLaunchResolver, configuration);
+    expect(result.status).toBe("blocked");
+    expect(result.state.planning.agentAttempts!.scout).toEqual(historical);
+    expect(h.freshEvents.emitted).toHaveLength(0);
+    expect(h.requests).toHaveLength(1);
+  },
+);
 
 test("recovers an interrupted planner without creating another plan version or dispatch", async () => {
   const h = await setup({ pause: "planner" });

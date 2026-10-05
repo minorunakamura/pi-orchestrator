@@ -11,6 +11,8 @@ import {
   reasoningTiers,
   type ModelTier,
   type ReasoningTier,
+  isModelTier,
+  isReasoningTier,
 } from "./decisions/types.ts";
 
 export interface ExecutionProfile {
@@ -19,6 +21,23 @@ export interface ExecutionProfile {
 }
 
 export type ReasoningMapping = Record<ReasoningTier, string>;
+
+export interface StageProfile {
+  modelTier: ModelTier;
+  reasoningTier: ReasoningTier;
+}
+
+export const defaultStageProfiles = {
+  scout: { modelTier: "ECONOMY", reasoningTier: "LOW" },
+  diagnosis: { modelTier: "STANDARD", reasoningTier: "HIGH" },
+  research: { modelTier: "STANDARD", reasoningTier: "MEDIUM" },
+  planning: { modelTier: "STANDARD", reasoningTier: "HIGH" },
+  "plan-simplicity": { modelTier: "STANDARD", reasoningTier: "HIGH" },
+  "correctness-review": { modelTier: "STANDARD", reasoningTier: "HIGH" },
+  "ponytail-review": { modelTier: "STANDARD", reasoningTier: "MEDIUM" },
+  oracle: { modelTier: "STRONG", reasoningTier: "HIGH" },
+} as const satisfies Readonly<Record<string, StageProfile>>;
+export type ProfileStage = keyof typeof defaultStageProfiles;
 
 export interface RetryConfiguration {
   maxAutomatedFixRounds: number;
@@ -148,6 +167,7 @@ export interface OrchestratorConfiguration {
   };
   executionProfiles: Record<ModelTier, ExecutionProfile>;
   reasoningMapping: ReasoningMapping;
+  stageProfiles?: Partial<Record<ProfileStage, StageProfile>>;
   retries: RetryConfiguration;
   validation: ValidationConfiguration;
   jev: JevConfiguration;
@@ -189,6 +209,22 @@ function isReasoningMapping(value: unknown): value is ReasoningMapping {
     hasOnlyKeys(value, reasoningTiers) &&
     hasRequiredKeys(value, reasoningTiers) &&
     reasoningTiers.every((tier) => isNonEmptyString(value[tier]))
+  );
+}
+
+function isStageProfiles(
+  value: unknown,
+): value is OrchestratorConfiguration["stageProfiles"] {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, Object.keys(defaultStageProfiles)) &&
+    Object.values(value).every(
+      (profile) =>
+        isRecord(profile) &&
+        hasOnlyKeys(profile, ["modelTier", "reasoningTier"]) &&
+        isModelTier(profile.modelTier) &&
+        isReasoningTier(profile.reasoningTier),
+    )
   );
 }
 
@@ -261,6 +297,7 @@ export function isOrchestratorConfiguration(
       "decision",
       "executionProfiles",
       "reasoningMapping",
+      "stageProfiles",
       "retries",
       "validation",
       "jev",
@@ -275,6 +312,8 @@ export function isOrchestratorConfiguration(
     ]) ||
     !isDecisionConfiguration(value.decision) ||
     !isReasoningMapping(value.reasoningMapping) ||
+    (Object.hasOwn(value, "stageProfiles") &&
+      !isStageProfiles(value.stageProfiles)) ||
     !isRetryConfiguration(value.retries) ||
     !isValidationConfiguration(value.validation) ||
     !isJevConfiguration(value.jev)
@@ -317,6 +356,19 @@ export function resolveExecutionProfile(
   };
 }
 
+export function resolveStageProfile(
+  configuration: OrchestratorConfiguration,
+  stage: ProfileStage,
+): ResolvedExecutionProfile {
+  const profile =
+    configuration.stageProfiles?.[stage] ?? defaultStageProfiles[stage];
+  return resolveExecutionProfile(
+    configuration,
+    profile.modelTier,
+    profile.reasoningTier,
+  );
+}
+
 export function toConfigurationSnapshot(
   configuration: OrchestratorConfiguration,
 ): OrchestratorConfiguration {
@@ -344,6 +396,21 @@ export function toConfigurationSnapshot(
       MEDIUM: configuration.reasoningMapping.MEDIUM,
       HIGH: configuration.reasoningMapping.HIGH,
     },
+    ...(configuration.stageProfiles
+      ? {
+          stageProfiles: Object.fromEntries(
+            Object.entries(configuration.stageProfiles).map(
+              ([stage, profile]) => [
+                stage,
+                {
+                  modelTier: profile.modelTier,
+                  reasoningTier: profile.reasoningTier,
+                },
+              ],
+            ),
+          ),
+        }
+      : {}),
     retries: {
       maxAutomatedFixRounds: configuration.retries.maxAutomatedFixRounds,
       maxStrongerRetries: configuration.retries.maxStrongerRetries,
