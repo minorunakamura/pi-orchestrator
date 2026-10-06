@@ -264,7 +264,7 @@ export function registerClarificationBridge(
       content: [
         {
           type: "text" as const,
-          text: `Workflow ${next.workflowId}: ${next.phase}\n${evidence}`,
+          text: `Workflow ${next.workflowId}: ${next.phase}${next.phase === "planning" ? " (transition snapshot, not the latest driver status). Clarification was confirmed and persisted; normal driver continuation was scheduled. Do not infer that the Workflow has stopped or is still planning from this snapshot. Follow the latest Orchestrator context/status; Human Plan approval is still required." : ""}\n${evidence}`,
         },
       ],
       details: { phase: next.phase, progressRef },

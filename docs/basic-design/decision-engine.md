@@ -143,6 +143,8 @@ Runtime reads hash/schema-validated authoritative Artifacts and assembles bounde
 
 Finding requests include approved Scope/Design/strategy and implementation evidence。Round requests include validation/contract identity, passed/failed/infrastructure branch, accepted/rejected/escalated summaries when required, retry counters/limits/profile and previous decision evidence。Lost previous evidence must not silently become no history。Required constraints that cannot fit without unsafe truncation cause Human attention, not weakened evidence。
 
+Completed Clarificationはtransport/audit envelopeの全文ではなく、Orchestratorが検証したderived evidenceを入力にする（#49）。全confirmed roundsのquestion/options/answer、明示的Human confirmationとsummary、source refsと該当document bindingを保持し、同じ確認文の重複だけを除く。Original Artifact refs/hashは正本のidentityであり、derived contentのhashだと扱わない。Actual assembled input / projection policyをdecision freshnessへbindする。Completed Clarificationのbounded producer契約と、無関係なraw evidenceの制限を区別し、raw-envelopeの12,000/48,000 UTF-16 code-unit制限をそのままClarificationへ適用しない。Bytes/文字数はmodel token capacityの保証ではなく、公開APIでの拒否は別のfail-closed boundary。
+
 Freshness covers decision schema, classifier provider/model, exact input refs/hash/digest, policy/version/configuration digest, relevant Plan version/implementation revision and accumulated evidence。Pre-plan decisions legitimately have no approved Plan; record that absence and stage/input identity rather than synthesizing approval/version。
 
 Relevant method, clarification document evidence, Plan, implementation, counters, classifier/config or launch changes invalidate dependent decisions。Historical evidence remains advisory context, not renewed authority。

@@ -39,6 +39,7 @@ import {
   PlanningRouting,
   PlanningRoutingStoppedError,
   PLANNING_EVIDENCE_LIMITS,
+  planningInputDiagnostic,
 } from "../../../src/runtime/orchestrator/planning-routing.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
@@ -581,7 +582,13 @@ test("over-bound evidence, missing consent and exhausted budget all prevent clas
       );
     }
     // oxlint-disable-next-line eslint/no-await-in-loop
-    expect((await h.drive()).status).toBe("blocked");
+    const result = await h.drive();
+    expect(result.status).toBe("blocked");
+    if (fault === "bound")
+      expect(
+        // oxlint-disable-next-line eslint/no-await-in-loop
+        await planningInputDiagnostic(result.state, h.deps.artifactStore),
+      ).toContain("max=22000/12000");
     expect(h.inputs).toEqual([]);
   }
 });

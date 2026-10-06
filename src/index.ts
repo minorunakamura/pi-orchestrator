@@ -76,8 +76,12 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
             : undefined,
         onContinuationResult: (result) =>
           context.ui.notify(
-            `Workflow ${result.state.workflowId}: ${result.status} (${result.phase}): ${result.reason ?? "operator attention required"}`,
-            result.status === "failed" ? "error" : "warning",
+            `Workflow ${result.state.workflowId}: ${result.status} (${result.phase}): ${result.reason ?? (result.phase === "awaiting-plan-review" ? "Human Plan approval required" : result.status === "pending" ? "Human/external input pending" : result.status === "advanced" ? "Driver progress persisted" : "operator attention required")}`,
+            result.status === "failed"
+              ? "error"
+              : result.status === "blocked"
+                ? "warning"
+                : "info",
           ),
         modelRegistry: context.modelRegistry,
         onContinuationError: (error) =>

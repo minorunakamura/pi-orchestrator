@@ -1,6 +1,7 @@
 import type { HumanQuestionPort } from "../runtime/integrations/ask-user-question.ts";
 import { parsePlanningDecisionArtifact } from "../core/decisions/planning-routing.ts";
 import { researchRoutingDiagnostic } from "../runtime/orchestrator/research-selection.ts";
+import { planningInputDiagnostic } from "../runtime/orchestrator/planning-routing.ts";
 import { WorkflowOwnership } from "../runtime/orchestrator/workflow-ownership.ts";
 import { CLARIFICATION_COMPLETE_EVENT } from "../runtime/integrations/clarification.ts";
 import type { ClarificationPort } from "../runtime/ports/clarification-port.ts";
@@ -197,6 +198,11 @@ function commandRuntime(
       modelRegistry: context.modelRegistry,
       onContinuationError: (error) =>
         context.ui.notify(renderWorkflowCommandError(error), "error"),
+      onContinuationResult: (result) =>
+        context.ui.notify(
+          `Workflow ${result.state.workflowId}: ${result.status} (${result.phase})${result.reason ? `: ${result.reason}` : ""}`,
+          ["blocked", "failed"].includes(result.status) ? "warning" : "info",
+        ),
     });
   throw new Error("Workflow command runtime is not configured");
 }
@@ -309,6 +315,11 @@ export function createWorkflowCommandRuntime(
   const researchDiagnostic = async (
     state: WorkflowState,
   ): Promise<string | undefined> => {
+    const inputFailure = await planningInputDiagnostic(
+      state,
+      new ArtifactStore(join(root, state.workflowId)),
+    );
+    if (inputFailure) return inputFailure;
     const ref = state.planning.stageDecisionRefs?.research;
     if (
       state.phase !== "blocked" ||
@@ -452,8 +463,8 @@ export function createWorkflowCommandRuntime(
             signal: continuation.signal,
           }),
         );
-        if (result.status === "blocked" || result.status === "failed")
-          options.onContinuationResult?.(result);
+        // Report genuine waits/completion as well as errors; Main snapshots may be older.
+        options.onContinuationResult?.(result);
         return result;
       });
       void queue.catch((error) => {

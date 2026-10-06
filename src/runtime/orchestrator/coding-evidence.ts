@@ -74,7 +74,7 @@ export const CODING_EVIDENCE_LIMITS = {
 } as const;
 
 export async function authoritativeText(
-  store: WorkflowArtifactWriter,
+  store: Pick<WorkflowArtifactWriter, "readText">,
   ref: ArtifactRef,
 ): Promise<string> {
   validateArtifactRef(ref);
