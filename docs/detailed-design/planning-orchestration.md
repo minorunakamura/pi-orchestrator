@@ -113,7 +113,11 @@ Human approvalはimmutable Plan ref/version/hash全体（method/seams/Validation
 
 Inputs: task、Scout、Diagnosis when required、Research when RUN、clarification/authorized document evidence、resolved Architecture/method decisions、previous Plan/feedback/simplicity/deviation/advisory refs when relevant、target version/cycle/refinement budget。
 
-Runtime passes hash-validated bodies/refs with provenance; Planner does not mutate source or State。Optional Oracle advice for hard Architecture/strategy disagreement is read-only evidence, not a design approval。
+Runtime passes hash-validated bodies/refs with provenance; Planner does not mutate source or State。
+
+Completed Clarificationのconsumer（Architecture/Method/Planner）は、exact completion/request/confirmed historyを検証した`completed-clarification-v1` derived inputを使う（#49）。各question/options/confirmed answerを1回、Human-confirmed summaryを1回、confirmation/source refsと該当authorized documentsを保持する。Synchronous confirmed-port evidenceはinteractive historyと区別する。原本Artifactは変更せず、projectionを原本文字列として偽装しない。Historyは128 KiB UTF-8、round/question/summary/documentsは既存producer制約を維持し、既知のhistory超過は回答をdurable保存したうえで次のUI/最終確認を開かず具体的なdiagnosticとblockを保存する。Unrelated raw evidenceの12,000/48,000 UTF-16 code-unit制限とは別に扱う。Dependent decisionのinput/policy digestとchild task/launch digestは実際のassemblyをbindし、変化していない先行routingを一括invalidateしない。
+
+公開Jev model仕様（確認時jev-latest / jev-1.13.0）は64k tokens/request、32k tokens/state＋最長question。Released public pre-request tokenizerを確認できていないため、文字数/bytesからtoken fitを推定保証しない。API failureの原因を安全に特定できない場合はclassifier failureのまま扱い、token超過と推測しない。Completion toolのplanningはtransition snapshotであり、後続driverの最新状態ではない。Main/status/continuationは最新persisted Stateとsafeなlocal診断を優先する。Optional Oracle advice for hard Architecture/strategy disagreement is read-only evidence, not a design approval。
 
 Authoritative candidate path: plans/plan-vN.md。
 

@@ -3,6 +3,9 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "../../core/schema.ts";
+import { join } from "node:path";
+import { ArtifactStore } from "../persistence/artifact-store.ts";
+import { planningInputDiagnostic } from "../orchestrator/planning-routing.ts";
 import { isWorkflowId } from "../../types.ts";
 import { isArtifactRef } from "../../core/artifacts/references.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
@@ -94,6 +97,14 @@ export function registerWorkflowOwnership(pi: ExtensionAPI) {
     const owners = await inspect(ctx);
     if (!owners.length) return undefined;
     const state = owners.length === 1 ? owners[0] : undefined;
+    const diagnostic = state
+      ? await planningInputDiagnostic(
+          state,
+          new ArtifactStore(
+            join(ctx.cwd, ".pi", "orchestrator", "runs", state.workflowId),
+          ),
+        )
+      : undefined;
     return {
       messages: [
         ...event.messages,
@@ -102,7 +113,7 @@ export function registerWorkflowOwnership(pi: ExtensionAPI) {
           customType: "orchestrator-ownership-context",
           display: false,
           timestamp: Date.now(),
-          content: `Active Workflow owns this workspace. Current controller state: ${JSON.stringify(state ? { workflowId: state.workflowId, phase: state.phase, reason: state.block?.reason } : { conflict: true })}. You are Main, not Worker. Background child completion is evidence for the controller, not a request to implement or take over. Raw tools (including read, bash, children, MCP and questions) are denied. Do not try or retry them, guess requestHash, or infer approval. Human chat remains available; report this state and stop when blocked. The Human may use /wf-status. Only during clarifying, follow the exact Orchestrator-owned request using wf_clarification_round / wf_clarification_complete. A verified request restored from durable State is the active request; a new notification is not required; without that request, do not initiate clarification or invent answers. This status grants no mutation or Human Gate authority.`,
+          content: `Active Workflow owns this workspace. Current controller state: ${JSON.stringify(state ? { workflowId: state.workflowId, phase: state.phase, reason: state.block?.reason, diagnostic } : { conflict: true })}. You are Main, not Worker. Background child completion is evidence for the controller, not a request to implement or take over. Raw tools (including read, bash, children, MCP and questions) are denied. Do not try or retry them, guess requestHash, or infer approval. Human chat remains available; this current persisted state supersedes older tool transition snapshots. When blocked, report this state and stop; include its diagnostic. While the driver is progressing, do not describe a transition snapshot as a stopped Workflow. The Human may use /wf-status. Only during clarifying, follow the exact Orchestrator-owned request using wf_clarification_round / wf_clarification_complete. A verified request restored from durable State is the active request; a new notification is not required; without that request, do not initiate clarification or invent answers. This status grants no mutation or Human Gate authority.`,
         },
       ],
     };

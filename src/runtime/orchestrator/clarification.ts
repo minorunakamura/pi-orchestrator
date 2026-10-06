@@ -1,6 +1,8 @@
 // Every durable intent, file observation and mutation is deliberately sequential.
 // oxlint-disable eslint/no-await-in-loop
 import { RuntimePortError } from "../ports/errors.ts";
+import { authoritativeText } from "./coding-evidence.ts";
+import { safeWorkflowId } from "../../types.ts";
 import { artifactRelativePath } from "../persistence/artifact-paths.ts";
 import {
   captureWorkspace,
@@ -128,13 +130,15 @@ async function publish<K extends ArtifactKind>(
 }
 
 async function read<T>(
-  deps: ClarificationDependencies,
+  deps: { artifactStore: Pick<WorkflowArtifactWriter, "readText"> },
   ref: ArtifactRef,
   schema: (value: unknown) => value is T,
 ): Promise<T> {
   if (!deps.artifactStore.readText)
     throw Error("Clarification requires an authoritative Artifact reader");
-  const value: unknown = JSON.parse(await deps.artifactStore.readText(ref));
+  const value: unknown = JSON.parse(
+    await authoritativeText(deps.artifactStore, ref),
+  );
   return parseSchema(value, schema, "Clarification evidence");
 }
 
@@ -430,24 +434,30 @@ export async function clarificationAnswerHistory(
 ) {
   if (state.planning.domainDocumentWriteRef)
     throw Error("Document attempt requires explicit reconciliation");
+  return answerHistory(
+    state.planning.clarificationProgressRef,
+    state.planning.clarificationRequestRef,
+    deps,
+  );
+}
+
+async function answerHistory(
+  ref: ArtifactRef<"clarification"> | undefined,
+  requestRef: ArtifactRef<"clarification"> | undefined,
+  deps: { artifactStore: Pick<WorkflowArtifactWriter, "readText"> },
+) {
   const answers: {
     ref: ArtifactRef<"clarification">;
     round: number;
     questions: HumanQuestion[];
     answers: HumanReply["answers"];
   }[] = [];
-  let ref = state.planning.clarificationProgressRef;
   let expectedRound: number | undefined;
   while (ref) {
-    const answer = await progress(
-      {
-        ...state,
-        planning: { ...state.planning, clarificationProgressRef: ref },
-      },
-      deps,
-    );
+    const answer = await read(deps, ref, isProgress);
     if (
-      !answer ||
+      !sameArtifactRef(answer.requestRef, requestRef) ||
+      answer.summary !== undefined ||
       answer.status !== "answered" ||
       !answer.reply ||
       !answer.previousRef ||
@@ -459,10 +469,8 @@ export async function clarificationAnswerHistory(
     if (
       pending.status !== "pending" ||
       pending.round !== answer.round ||
-      !sameArtifactRef(
-        pending.requestRef,
-        state.planning.clarificationRequestRef,
-      ) ||
+      !sameArtifactRef(pending.requestRef, requestRef) ||
+      pending.summary !== undefined ||
       JSON.stringify(pending.questions) !== JSON.stringify(answer.questions) ||
       (answer.round === 1
         ? pending.previousRef !== undefined
@@ -481,6 +489,126 @@ export async function clarificationAnswerHistory(
   if (Buffer.byteLength(JSON.stringify(answers)) > 131072)
     throw Error("Clarification answer history exceeds bound");
   return answers;
+}
+
+/** Derived input, never original Artifact bytes or independent authority. */
+export async function clarificationEvidence(
+  ref: ArtifactRef,
+  artifactStore: Pick<WorkflowArtifactWriter, "readText">,
+) {
+  const deps = { artifactStore };
+  const content = await authoritativeText(deps.artifactStore, ref);
+  const raw = () => ({
+    ref,
+    content,
+    projection: undefined as "completed-clarification-v1" | undefined,
+  });
+  if (ref.kind !== "clarification") return raw();
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return raw();
+  }
+  if (!isRecord(value) || value.status !== "completed") return raw();
+  const completion = parseSchema(value, isProgress, "Completed clarification");
+  const request = await read(deps, completion.requestRef, isRequest);
+  for (const input of request.evidence) {
+    // oxlint-disable-next-line eslint/no-await-in-loop
+    if (
+      (await authoritativeText(deps.artifactStore, input.ref)) !== input.content
+    )
+      throw Error("Clarification input drift");
+  }
+  if (value.confirmedByPort === true) {
+    if (Buffer.byteLength(JSON.stringify(value.answer)) > 131072)
+      throw Error("Synchronous clarification exceeds 128 KiB safety bound");
+    return {
+      ref,
+      projection: "completed-clarification-v1" as const,
+      content: JSON.stringify({
+        schemaVersion: 1,
+        workflowId: request.workflowId,
+        projectRoot: request.canonicalProjectRoot,
+        requestRef: completion.requestRef,
+        confirmation: "confirmed-by-port",
+        answer: value.answer,
+      }),
+    };
+  }
+  if (
+    !completion.previousRef ||
+    !completion.summary ||
+    completion.summary.length > 8192
+  )
+    throw Error("Invalid completed clarification summary/predecessor");
+  const answer = await read(deps, completion.previousRef, isProgress);
+  if (
+    !answer.previousRef ||
+    answer.status !== "answered" ||
+    !sameArtifactRef(answer.requestRef, completion.requestRef) ||
+    answer.round !== completion.round ||
+    answer.summary !== completion.summary ||
+    JSON.stringify(answer.questions) !== JSON.stringify(completion.questions) ||
+    JSON.stringify(answer.reply) !== JSON.stringify(completion.reply) ||
+    JSON.stringify(answer.documents) !== JSON.stringify(completion.documents)
+  )
+    throw Error("Invalid final clarification answer binding");
+  const pending = await read(deps, answer.previousRef, isProgress);
+  if (
+    pending.status !== "pending" ||
+    !sameArtifactRef(pending.requestRef, completion.requestRef) ||
+    pending.round !== answer.round ||
+    pending.summary !== answer.summary ||
+    JSON.stringify(pending.questions) !== JSON.stringify(answer.questions) ||
+    JSON.stringify(pending.documents) !== JSON.stringify(answer.documents)
+  )
+    throw Error("Invalid final clarification question binding");
+  const history = await answerHistory(
+    pending.previousRef,
+    completion.requestRef,
+    deps,
+  );
+  if (history.length !== completion.round - 1)
+    throw Error("Missing clarification rounds");
+  if ((completion.documents?.length ?? 0) > 0 && !completion.documentRef)
+    throw Error("Missing confirmed document result");
+  await verifyClarificationDocuments(
+    {
+      phase: "planning",
+      workflowId: safeWorkflowId(request.workflowId),
+      projectRoot: request.canonicalProjectRoot,
+      planning: {
+        context: { clarificationRef: { ...ref, kind: "clarification" } },
+        clarificationRequestRef: completion.requestRef,
+        domainDocumentWriteRef: completion.documentRef,
+      },
+    },
+    deps,
+  );
+  return {
+    ref,
+    projection: "completed-clarification-v1" as const,
+    content: JSON.stringify({
+      schemaVersion: 1,
+      workflowId: request.workflowId,
+      projectRoot: request.canonicalProjectRoot,
+      requestRef: completion.requestRef,
+      confirmation: "confirmed-by-human",
+      summary: completion.summary,
+      sourceRefs: [completion.previousRef, answer.previousRef],
+      rounds: history.map(({ ref: answerRef, round, questions, answers }) => ({
+        ref: answerRef,
+        round,
+        decisions: questions.map((question) => ({
+          ...question,
+          answer: answers[question.question],
+        })),
+      })),
+      documents: completion.documents ?? [],
+      documentRef: completion.documentRef,
+    }),
+  };
 }
 
 export async function recoverClarification(
@@ -527,6 +655,8 @@ export async function publishSynchronousClarification(
 ): Promise<WorkflowState> {
   if (!answer.trim()) throw Error("Clarification answer must not be empty");
   // Synchronous ports provide confirmed Human evidence; production uses explicit rounds below.
+  if (Buffer.byteLength(JSON.stringify(answer)) > 131072)
+    throw Error("Synchronous clarification exceeds 128 KiB safety bound");
   const ref = await publish(deps, "clarification", "human-answer", {
     schemaVersion: 1,
     requestRef: state.planning.clarificationRequestRef,
@@ -542,6 +672,39 @@ export async function publishSynchronousClarification(
     { type: "CLARIFICATION_COMPLETE", clarificationRef: ref },
     deps.stateStore,
   );
+}
+
+async function validatedHistory(
+  state: WorkflowState,
+  deps: ClarificationDependencies,
+): Promise<WorkflowState> {
+  try {
+    await clarificationAnswerHistory(state, deps);
+    return state;
+  } catch {
+    const diagnosticRef = await publish(
+      deps,
+      "reconciliation",
+      "clarification-input-diagnostic",
+      {
+        schemaVersion: 1,
+        recordType: "planning-input-diagnostic",
+        workflowId: state.workflowId,
+        sourceRevision: state.stateRevision,
+        stage: "clarification",
+        code: "clarification-history-invalid",
+      },
+    );
+    return advanceWorkflow(
+      state,
+      {
+        type: "BLOCK",
+        reason: "operator-attention-required",
+        evidenceRef: diagnosticRef,
+      },
+      deps.stateStore,
+    );
+  }
 }
 
 export async function runClarificationRound(
@@ -571,6 +734,9 @@ export async function runClarificationRound(
     throw Error(
       "Clarification round budget exhausted; operator attention required",
     );
+  // Before opening another/final UI, validate the complete existing answer chain and safety bound.
+  state = await validatedHistory(state, deps);
+  if (state.phase === "blocked") return state;
   const final = input.summary !== undefined;
   if (final && (!input.summary!.trim() || input.summary!.length > 8192))
     throw Error("Invalid shared-understanding summary");
@@ -659,7 +825,7 @@ export async function runClarificationRound(
     state = await deps.ownership.validate(state, deps.stateStore);
     if (state.phase === "blocked") return state;
   }
-  if (!final) return state;
+  if (!final) return validatedHistory(state, deps);
   try {
     await loadClarification(state, deps, input.rootSessionId);
     state = await writeDocuments(
@@ -952,8 +1118,22 @@ async function writeDocuments(
 }
 
 export async function verifyClarificationDocuments(
-  state: WorkflowState,
-  deps: ClarificationDependencies,
+  state: Pick<
+    WorkflowState,
+    "phase" | "workflowId" | "projectRoot" | "ownershipRef"
+  > & {
+    planning: Pick<
+      WorkflowState["planning"],
+      | "context"
+      | "clarificationRequestRef"
+      | "clarificationProgressRef"
+      | "domainDocumentWriteRef"
+    >;
+  },
+  deps: {
+    artifactStore: Pick<WorkflowArtifactWriter, "readText">;
+    stateStore?: ClarificationDependencies["stateStore"];
+  },
 ): Promise<void> {
   if (!state.planning.domainDocumentWriteRef) return;
   const completionRef =

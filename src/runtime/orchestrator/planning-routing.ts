@@ -1,5 +1,10 @@
+import { realpath } from "node:fs/promises";
+import { isRecord } from "../../core/schema.ts";
 import { humanResearchOutcome, selectResearch } from "./research-selection.ts";
-import { verifyClarificationDocuments } from "./clarification.ts";
+import {
+  verifyClarificationDocuments,
+  clarificationEvidence,
+} from "./clarification.ts";
 import {
   humanMethodOutcome,
   selectDevelopmentMethod,
@@ -122,6 +127,48 @@ function planningCategories(
   return categories;
 }
 
+/** Only typed local diagnostics are displayed; never arbitrary provider/error text. */
+export async function planningInputDiagnostic(
+  state: WorkflowState,
+  store: Pick<WorkflowArtifactWriter, "readText">,
+): Promise<string | undefined> {
+  const ref = state.block?.evidenceRef;
+  if (state.phase !== "blocked" || ref?.kind !== "reconciliation")
+    return undefined;
+  try {
+    const value: unknown = JSON.parse(await authoritativeText(store, ref));
+    if (
+      !isRecord(value) ||
+      value.schemaVersion !== 1 ||
+      value.recordType !== "planning-input-diagnostic" ||
+      value.workflowId !== state.workflowId ||
+      typeof value.stage !== "string" ||
+      ![
+        "research",
+        "clarification",
+        "architecture",
+        "development-method",
+      ].includes(value.stage)
+    )
+      return undefined;
+    if (value.code === "planning-input-invalid")
+      return `${value.stage}: authoritative planning input / clarification chain validation failed; no classifier request was sent`;
+    if (value.code === "clarification-history-invalid")
+      return "clarification: confirmed history failed validation or exceeded its 128 KiB UTF-8 safety bound; answers remain saved, no further Human UI was opened";
+    if (
+      value.code !== "planning-input-limit" ||
+      ![value.maxArtifactUnits, value.totalUnits].every(
+        (size) =>
+          typeof size === "number" && Number.isSafeInteger(size) && size >= 0,
+      )
+    )
+      return undefined;
+    return `${value.stage}: raw evidence UTF-16 code units max=${String(value.maxArtifactUnits)}/${PLANNING_EVIDENCE_LIMITS.artifact}, total=${String(value.totalUnits)}/${PLANNING_EVIDENCE_LIMITS.total}; completed Clarification and its verified document result are accounted separately; no classifier request was sent`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Sequential durable decisions; Human method selection grants no implementation authority. */
 export class PlanningRouting {
   constructor(private readonly deps: PlanningRoutingDependencies) {}
@@ -237,6 +284,14 @@ export class PlanningRouting {
   ): Promise<{ state: WorkflowState; artifact: PlanningDecisionArtifact }> {
     let state = source;
     let authorization: JevAuthorization | undefined;
+    let inputDiagnostic:
+      | {
+          code: "planning-input-invalid" | "planning-input-limit";
+          stage: PlanningDecisionStage;
+          maxArtifactUnits?: number;
+          totalUnits?: number;
+        }
+      | undefined;
     let artifact: PlanningDecisionArtifact;
     let ref:
       | ArtifactRef<
@@ -265,22 +320,57 @@ export class PlanningRouting {
       if (called && !configuration)
         attention("Planning classifier configuration is required");
       const threshold = configuration?.decision.autoDecisionThreshold ?? 1;
+      inputDiagnostic = { code: "planning-input-invalid", stage };
       const evidence = await Promise.all(
-        refs.map(async (inputRef) => ({
-          ref: inputRef,
-          content: await authoritativeText(this.deps.artifactStore, inputRef),
-        })),
+        refs.map((inputRef) =>
+          clarificationEvidence(inputRef, this.deps.artifactStore),
+        ),
+      );
+      const canonicalRoot = evidence.some((item) => item.projection)
+        ? await realpath(state.projectRoot!)
+        : undefined;
+      for (const item of evidence) {
+        if (item.projection) {
+          const projected = JSON.parse(item.content);
+          if (
+            projected.workflowId !== state.workflowId ||
+            projected.projectRoot !== canonicalRoot
+          )
+            attention(
+              "Clarification evidence belongs to another workflow/workspace",
+            );
+        }
+      }
+      // Completed Clarification and its already-verified document result use
+      // their bounded producer contracts, not unrelated raw-envelope ceilings.
+      const rawEvidence = evidence.filter(
+        (item) =>
+          !item.projection &&
+          !sameArtifactRef(item.ref, state.planning.domainDocumentWriteRef),
       );
       if (
-        evidence.some(
+        rawEvidence.some(
           ({ content }) => content.length > PLANNING_EVIDENCE_LIMITS.artifact,
         ) ||
-        evidence.reduce((size, item) => size + item.content.length, 0) >
+        rawEvidence.reduce((size, item) => size + item.content.length, 0) >
           PLANNING_EVIDENCE_LIMITS.total
-      )
+      ) {
+        inputDiagnostic = {
+          code: "planning-input-limit",
+          stage,
+          maxArtifactUnits: Math.max(
+            ...rawEvidence.map((item) => item.content.length),
+          ),
+          totalUnits: rawEvidence.reduce(
+            (size, item) => size + item.content.length,
+            0,
+          ),
+        };
         attention(
           "Decision-critical planning evidence exceeds the bounded input; do not truncate constraints",
         );
+      }
+      inputDiagnostic = undefined;
       const input: PlanningClassifierInput = {
         playbook: state.playbook,
         inputRefs: refs,
@@ -315,6 +405,9 @@ export class PlanningRouting {
           matrix: getPlaybookStagePolicy(state.playbook),
           limits: PLANNING_EVIDENCE_LIMITS,
           instructions: planningRoutingInstructions,
+          ...(evidence.some((item) => item.projection)
+            ? { clarificationProjection: "completed-clarification-v1" }
+            : {}),
         }),
         configurationDigest: digest(
           called
@@ -541,12 +634,29 @@ export class PlanningRouting {
     } catch (error) {
       if (error instanceof PlanningRoutingStoppedError) throw error;
       state = authorization?.state ?? state;
+      const diagnosticRef = inputDiagnostic
+        ? await this.deps.artifactStore.writeText(
+            "reconciliation",
+            `planning-input-${stage}-${digest({ ...inputDiagnostic, workflowId: state.workflowId, revision: state.stateRevision })}.md`,
+            JSON.stringify({
+              schemaVersion: 1,
+              recordType: "planning-input-diagnostic",
+              workflowId: state.workflowId,
+              sourceRevision: state.stateRevision,
+              ...inputDiagnostic,
+            }),
+          )
+        : undefined;
       state = await advanceWorkflow(
         state,
         {
           type: "BLOCK",
           reason: jevBlockedReason(error),
-          ...(ref ? { evidenceRef: ref } : {}),
+          ...(diagnosticRef
+            ? { evidenceRef: diagnosticRef }
+            : ref
+              ? { evidenceRef: ref }
+              : {}),
         },
         this.deps.stateStore,
       );

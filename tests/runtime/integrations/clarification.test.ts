@@ -35,13 +35,24 @@ import {
   loadClarification,
   prepareClarification,
   verifyClarificationDocuments,
+  clarificationEvidence,
 } from "../../../src/runtime/orchestrator/clarification.ts";
 import { advanceWorkflow } from "../../../src/runtime/orchestrator/advance-workflow.ts";
 import { registerWorkflowOwnership } from "../../../src/runtime/integrations/workflow-ownership.ts";
 import { WorkflowOwnership } from "../../../src/runtime/orchestrator/workflow-ownership.ts";
 import { StateStore } from "../../../src/runtime/persistence/state-store.ts";
 import type { WorkflowArtifactWriter } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
-import { PlanningRouting } from "../../../src/runtime/orchestrator/planning-routing.ts";
+import {
+  PlanningRouting,
+  planningInputDiagnostic,
+} from "../../../src/runtime/orchestrator/planning-routing.ts";
+import { driveWorkflow } from "../../../src/runtime/orchestrator/drive-workflow.ts";
+import { plan, succeeded } from "../../fakes/coding-scenario.ts";
+import {
+  SubagentsIntegration,
+  fakeLaunchResolver,
+} from "../../fakes/agent-launch.ts";
+import { ArtifactStore } from "../../../src/runtime/persistence/artifact-store.ts";
 import { PlanningOrchestrator } from "../../../src/runtime/orchestrator/planning-orchestrator.ts";
 import { startWorkflow } from "../../fakes/planning.ts";
 import {
@@ -53,7 +64,7 @@ import {
   makeExtensionCommandContextFixture,
   makeInvalidPayload,
 } from "../../fakes/typed-boundaries.ts";
-import { subagentRunId } from "../../../src/types.ts";
+import { subagentRunId, plannotatorReviewId } from "../../../src/types.ts";
 import {
   createWorkflowCommandRuntime,
   disposeWorkflowContinuations,
@@ -337,6 +348,208 @@ test("GRILL_ME root skill setup and durable rounds, final Human confirmation, no
   ).rejects.toThrow(/No active/iu);
 });
 
+test("long confirmed clarification reaches the mandatory Plan Gate without raw-envelope limits or lost answers", async () => {
+  const h = await setup();
+  h.autoAnswer("Keep existing");
+  const questions = Array.from({ length: 20 }, (_, index) => ({
+    question: `Decision ${index + 1}: ${"Preserve the existing boundary. ".repeat(80)}`,
+    options: [
+      {
+        label: "Keep existing",
+        description: `Exact constraint ${index + 1}`,
+        preview: "No new dependencies",
+      },
+    ],
+    allowOther: false,
+  }));
+  for (let round = 0; round < 5; round++)
+    await h.call("wf_clarification_round", {
+      questions: questions.slice(round * 4, round * 4 + 4),
+    });
+  h.bus.listeners.get(QUESTION_REQUEST_EVENT)!.clear();
+  h.autoAnswer();
+  const summary = "Preserve every confirmed boundary. ".repeat(180);
+  await h.call("wf_clarification_complete", { summary });
+  const completed = await h.stateStore.loadState();
+  const ref = completed.planning.context.clarificationRef!;
+  const original = await h.artifactStore.readText!(ref);
+  expect(original.length).toBeGreaterThan(12000);
+  expect((await clarificationEvidence(ref, h.artifactStore)).projection).toBe(
+    "completed-clarification-v1",
+  );
+  const executor = new FakeSubagentExecutor({ run: [succeeded(plan)] });
+  const result = await driveWorkflow(completed.workflowId, {
+    ...h,
+    subagentExecutor: executor,
+    loadState: () => h.stateStore.loadState(),
+    plannotatorGate: {
+      openPlanReview: async ({
+        planRef,
+        planVersion,
+        simplicityReviewRef,
+      }) => ({
+        planRef,
+        planVersion,
+        simplicityReviewRef,
+        reviewId: plannotatorReviewId("long-plan"),
+      }),
+      getPlanReview: async (_id, binding) => ({
+        ...binding!,
+        status: "pending",
+      }),
+      openCodeReview: async () => {
+        throw Error("No Code authority");
+      },
+    },
+  });
+  expect(result.state.phase, JSON.stringify(result.state.block)).toBe(
+    "awaiting-plan-review",
+  );
+  const input = h.jevDecisionClient.calls.routeStage.find(
+    (call) => call.stage === "architecture",
+  )!;
+  const evidence = makeInvalidPayload<
+    { ref: { kind: string }; content: string; projection?: string }[]
+  >(input.evidence.artifacts);
+  const projected = evidence.find((item) => item.ref.kind === "clarification")!;
+  expect(projected.projection).toBe("completed-clarification-v1");
+  expect(projected.content.length).toBeGreaterThan(48000);
+  const body = JSON.parse(projected.content);
+  expect(body.summary).toBe(summary);
+  const methodInputs = h.jevDecisionClient.calls.routeDevelopmentMethod;
+  expect(JSON.stringify(methodInputs)).toContain("completed-clarification-v1");
+  expect(
+    body.rounds.flatMap((round: { decisions: unknown[] }) => round.decisions),
+  ).toEqual(
+    questions.map((q, index) => ({
+      question: q.question.trim(),
+      header: `Q${(index % 4) + 1}`,
+      options: q.options,
+      multiSelect: false,
+      allowOther: false,
+      answer: "Keep existing",
+    })),
+  );
+  let childTask = "";
+  await new SubagentsIntegration(h.bus, {
+    cwd: h.cwd,
+    artifactReader: new ArtifactStore(h.runDirectory),
+    launchResolver: async (agentInput, options) => {
+      childTask = options.task;
+      return fakeLaunchResolver(agentInput, options);
+    },
+  }).preflight({
+    agent: "planner",
+    task: "Propose only",
+    cwd: h.cwd,
+    inputRefs: [ref],
+  });
+  expect(childTask).toContain("completed-clarification-v1");
+  expect(childTask).toContain("Exact constraint 20");
+  expect(childTask).not.toContain('\\"selections\\"');
+  expect(await h.artifactStore.readText!(ref)).toBe(original);
+  expect(result.state.planning.approvedPlanRef).toBeUndefined();
+  expect(result.state.coding.implementationRef).toBeUndefined();
+});
+
+test("confirmed domain-document evidence uses its producer bound rather than raw-envelope limits", async () => {
+  const h = await setup("GRILL_WITH_DOCS");
+  await writeFile(join(h.cwd, "CONTEXT.md"), "before ".repeat(2800));
+  h.autoAnswer();
+  await h.call("wf_clarification_complete", {
+    summary: "Human authorizes the exact context update",
+    documents: [
+      { path: "CONTEXT.md", content: "# Context\nConfirmed boundary" },
+    ],
+  });
+  const state = await h.stateStore.loadState();
+  expect(
+    (await h.artifactStore.readText!(state.planning.domainDocumentWriteRef!))
+      .length,
+  ).toBeGreaterThan(12000);
+  const result = await new PlanningRouting(h).stage(state, "architecture");
+  expect(result.state.phase).toBe("planning");
+});
+
+test.each(["summary", "history", "confirmation", "documents"] as const)(
+  "completed input rejects hash-valid %s corruption",
+  async (fault) => {
+    const h = await setup();
+    h.autoAnswer("Keep existing");
+    await h.call("wf_clarification_round", { questions: [question] });
+    h.bus.listeners.get(QUESTION_REQUEST_EVENT)!.clear();
+    h.autoAnswer();
+    const result = await h.call("wf_clarification_complete", {
+      summary: "All boundaries settled",
+    });
+    expect(result.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: expect.stringContaining("transition snapshot"),
+        }),
+      ]),
+    );
+    const state = await h.stateStore.loadState();
+    const original = state.planning.context.clarificationRef!;
+    const body = JSON.parse(await h.artifactStore.readText!(original));
+    if (fault === "summary") body.summary = "Unconfirmed change";
+    if (fault === "history") body.round = 4;
+    if (fault === "confirmation")
+      body.reply.answers[body.questions[0].question] = "Decline";
+    if (fault === "documents")
+      body.documents = [{ path: "CONTEXT.md", content: "Unconfirmed" }];
+    const corrupt = await h.artifactStore.writeText(
+      "clarification",
+      `corrupt-${fault}.md`,
+      JSON.stringify(body),
+    );
+    await expect(
+      clarificationEvidence(corrupt, h.artifactStore),
+    ).rejects.toThrow();
+  },
+);
+
+test("oversized custom answer stays durable and blocks further UI with a safe specific status", async () => {
+  const h = await setup();
+  const answer = "x".repeat(140000);
+  h.bus.on(QUESTION_REQUEST_EVENT, (value) => {
+    const request = makeInvalidPayload<{
+      requestId: string;
+      questions: HumanQuestion[];
+    }>(value);
+    const response = reply(request.requestId, request.questions, answer);
+    response.result.selections = response.result.selections.map(
+      (selection) => ({
+        ...selection,
+        selectedIndices: [2],
+        customText: answer,
+      }),
+    );
+    h.bus.emit(`pi-ask-user-question:reply:${request.requestId}`, response);
+  });
+  await h.call("wf_clarification_round", {
+    questions: [{ ...question, allowOther: true }],
+  });
+  const state = await h.stateStore.loadState();
+  expect(state.phase).toBe("blocked");
+  expect(
+    await h.artifactStore.readText!(state.planning.clarificationProgressRef!),
+  ).toContain(answer);
+  expect(await planningInputDiagnostic(state, h.artifactStore)).toContain(
+    "128 KiB UTF-8",
+  );
+  const runtime = createWorkflowCommandRuntime(h.bus, h.cwd);
+  expect(
+    (await runtime.readStatusEvidence!(state)).routingDiagnostic,
+  ).toContain("answers remain saved");
+  await expect(
+    h.call("wf_clarification_complete", { summary: "Cannot confirm" }),
+  ).rejects.toThrow();
+  expect(
+    h.bus.calls.filter((call) => call.event === QUESTION_REQUEST_EVENT),
+  ).toHaveLength(1);
+});
+
 test("explicit same-root resume re-presents answered clarification without replaying questions", async () => {
   const h = await setup("GRILL_ME", true);
   h.autoAnswer("Keep existing");
@@ -541,9 +754,18 @@ test("over-limit confirmed history is rejected, never silently truncated", async
     questions: [{ question: "Which name?", options: [] }],
   });
   const before = await h.stateStore.loadState();
+  // The producer now detects overflow immediately after the durable reply,
+  // before another resume/request is needed.
+  expect(before.phase).toBe("blocked");
+  expect(await planningInputDiagnostic(before, h.artifactStore)).toContain(
+    "128 KiB UTF-8",
+  );
+  expect(
+    await h.artifactStore.readText!(before.planning.clarificationProgressRef!),
+  ).toContain(text);
   await expect(
-    new PlanningOrchestrator(h).requestClarification({ state: before }),
-  ).resolves.toMatchObject({ status: "blocked" });
+    h.call("wf_clarification_complete", { summary: "No truncation" }),
+  ).rejects.toThrow(/No active/iu);
   expect(h.sendMessage).toHaveBeenCalledOnce();
   expect(
     h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),

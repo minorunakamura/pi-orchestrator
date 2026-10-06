@@ -462,8 +462,9 @@ describe("ORCH-019 workflow commands", () => {
     }
   }, 10_000);
 
-  test("production clarification completion automatically continues to the mandatory Plan Gate; wake hints cannot answer", async () => {
+  test("production clarification completion automatically continues to and reports the mandatory Plan Gate; wake hints cannot answer", async () => {
     const workflow = await phaseCWorkflow({ clarification: true });
+    const onContinuationResult = vi.fn();
     try {
       const events: EventBus = {
         on: (event, listener) => workflow.events.on(event, listener),
@@ -486,6 +487,7 @@ describe("ORCH-019 workflow commands", () => {
             setup: async () => ({ rootSessionId: "root-1", skills: [] }),
             request: async () => ({ status: "pending" }),
           },
+          onContinuationResult,
         },
       );
       const waiting = await runtime.resume("full-fake");
@@ -539,6 +541,14 @@ describe("ORCH-019 workflow commands", () => {
         async () =>
           expect((await workflow.load()).planning.planReview).toBeDefined(),
         { timeout: 10000 },
+      );
+      await vi.waitFor(() =>
+        expect(onContinuationResult).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: "pending",
+            phase: "awaiting-plan-review",
+          }),
+        ),
       );
       expect(
         workflow.children.filter((child) => child.agent === "planner"),
