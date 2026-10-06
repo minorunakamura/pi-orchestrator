@@ -51,7 +51,8 @@ The exact typed event payloads are defined once in [Domain Model §9](../detaile
 | --- | --- | --- | --- |
 | gathering-context | SCOUT_PERSISTED | valid scoutRef, launch/attempt evidence | gathering-context |
 | gathering-context | DIAGNOSIS_PERSISTED | required for bugfix/hotfix; valid diagnosisRef | gathering-context |
-| gathering-context / planning | STAGE_RESOLVED | Research/Clarification in gathering-context, Architecture in planning; required/skip deterministic, conditional decision fresh; record exact evidence/policy | same |
+| gathering-context / planning | STAGE_RESOLVED | Research/Clarification in gathering-context, Architecture in planning; required/skip deterministic, conditional decision fresh; Research-only previousDecisionRef permits exact Human-resolved replacement before later stages | same |
+| gathering-context | RESEARCH_SELECTION_PERSISTED | exact original Research decision / preceding intent, no Research output or later-stage/Plan authority; persist question intent/answer | gathering-context |
 | gathering-context / implementing / fixing / validating / reviewing | CLARIFICATION_ROUTED | fresh modeRef; initial routing or coding Human escalation; existing Human-required evidence cannot become SKIP | same |
 | gathering-context | CONTEXT_READY | Scout/Diagnosis/Research complete, clarification SKIP, no unresolved decision | planning |
 | gathering-context / implementing / fixing / validating / reviewing | CLARIFICATION_REQUIRED | Human decision; bind reason/mode; invalidate coding authority when present | clarifying |
@@ -79,7 +80,7 @@ The exact typed event payloads are defined once in [Domain Model §9](../detaile
 | blocked | BLOCK_RESOLVED | reconcile cause and exact authority/attempt identity, no guessed success | blockedFrom |
 | active phase | FAIL | authority/state/artifact safely unreconstructable | failed |
 
-`STAGE_RESOLVED` stores RUN/SKIP/ESCALATE evidence; ESCALATE stops normal progress for Human attention, not permission to execute/skip。`CLARIFICATION_ROUTED` stores SKIP/GRILL_ME/GRILL_WITH_DOCS/ESCALATE; the driver emits CONTEXT_READY, CLARIFICATION_REQUIRED, or BLOCK only after its persistence。
+`STAGE_RESOLVED` stores RUN/SKIP/ESCALATE evidence; ESCALATE stops normal progress for Human attention, not permission to execute/skip。Research-only root Human RUN/SKIP selection (#47) may resolve it through exact durable intent/answer/original-decision chain; HOLD/cancel/lost result preserves the stop。No new phase or Plan/Code approval authority is added。`CLARIFICATION_ROUTED` stores SKIP/GRILL_ME/GRILL_WITH_DOCS/ESCALATE; the driver emits CONTEXT_READY, CLARIFICATION_REQUIRED, or BLOCK only after its persistence。
 
 Stage artifacts, Oracle advice, launch receipts, write intents, request reservations, validation failures and local Code Review attempts can update refs through guarded State persistence without inventing transition authority。They are not Human approvals。
 

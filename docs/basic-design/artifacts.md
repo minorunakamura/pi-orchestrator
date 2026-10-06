@@ -27,7 +27,7 @@ Paths below are naming patterns, created on demand; N/attempt identity must be u
 | scout | context/scout-*.md | workflow-scout → Diagnosis/routing/Planner; launch + input refs |
 | diagnosis | context/diagnosis.md | read-only workflow-scout Diagnosis → Research/clarification/Architecture/Planner; structured report + exact Task/Scout refs/input hash/launch digest; [contract](../detailed-design/planning-orchestration.md#21-required-diagnosis-evidence-7) |
 | research | context/research-*.md | pi-ketch.researcher → later routing/Planner; sources + inputs |
-| conditional-stage | decisions/conditional-stage-*.json | Jev or deterministic required/skip policy → Orchestrator; stage/policy/accumulated refs |
+| conditional-stage | decisions/conditional-stage-*.json; decisions/research-{selection,human}-*.md | Jev or deterministic required/skip policy → Orchestrator; stage/policy/accumulated refs; Research-only Human intent/answer and resolved outcome retain exact original classifier decision/accounting (#47) |
 | clarification-mode | decisions/clarification-mode-*.json | bounded routing + policy → root/Main clarification; mode + input identity, no write authority |
 | clarification | context/human-{request,round,reply}-*.md / clarification-complete-*.md | root/Main + Human → Planner; content-addressed JSON request/source State/questions/confirmed answers/docs refs; #8 |
 | domain-document-write | context/domain-document-{intent,result}-*.md | Orchestrator intent/observation → clarification/ownership/recovery; JSON exact allowed paths + full before/after contents/hashes + clarification/answer binding; #8 |

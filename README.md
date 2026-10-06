@@ -101,6 +101,8 @@ required → RUN、skip → SKIP は deterministic。Jev は conditional → RUN
 
 #6 では、この逐次 routing と immutable stage/mode decision、freshness 検証、normal-driver continuation を実装しました。旧 `PlaybookContext` の hint は authority にしません。#7 では bugfix/hotfix の required Diagnosis を既存 read-only `workflow-scout` で実行し、durable evidence から routing を自動継続します。hotfix の scope/redesign 超過・不明は Human reclassification/replanning 待ちで停止し、Architecture SKIP は維持します。[Diagnosis の実装・検証・制限](./docs/implementation/diagnosis.md) を参照してください。#8 では production root clarification / exact domain-document writes と actual Human TUI の両 mode を接続・検証しました（[実装・検証・制限](./docs/implementation/clarification.md)）。#11 では生成 ID 後の durable consent capture を実装しました（[設定・検証・移行制限](./docs/implementation/classifier-authorization.md)）。[実装・acceptance coverage・production 制限](./docs/implementation/conditional-stage-routing.md) を参照してください。
 
+Research の低 confidence / explicit ESCALATE は root Human の **RUN / SKIP / HOLD** 選択で解決します（[#47](https://github.com/minorunakamura/pi-orchestrator/issues/47)）。Confidence が `autoDecisionThreshold` 未満でも Research 不要とは確定しません。質問前の intent と回答・解決結果を保存し、RUN は Research 後、SKIP は直接 Clarification 判定へ進みます。HOLD/cancel/lost reply は停止を維持し、既存 block は explicit `/wf-resume`、保存済み有効回答は再利用します。これは product clarification や Plan/Code approval ではなく、他 stage の ESCALATE は変更しません。[実装・検証・制限](docs/implementation/research-selection.md)。
+
 GRILL_ME は root/Main + grilling + ask_user_question。GRILL_WITH_DOCS はさらに domain-modeling。Jev は mode を選べても Human-facing question/answer は生成しません。Production は underlying skills の実 bytes/hash と root identity を bind し、durable question rounds と **final shared-understanding confirmation** を経て normal driver を継続します。Transient `clarificationPrompt` は不要です。
 
 ```sh

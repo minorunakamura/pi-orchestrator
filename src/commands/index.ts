@@ -1,4 +1,6 @@
 import type { HumanQuestionPort } from "../runtime/integrations/ask-user-question.ts";
+import { parsePlanningDecisionArtifact } from "../core/decisions/planning-routing.ts";
+import { researchRoutingDiagnostic } from "../runtime/orchestrator/research-selection.ts";
 import { WorkflowOwnership } from "../runtime/orchestrator/workflow-ownership.ts";
 import { CLARIFICATION_COMPLETE_EVENT } from "../runtime/integrations/clarification.ts";
 import type { ClarificationPort } from "../runtime/ports/clarification-port.ts";
@@ -221,13 +223,18 @@ function registerStartCommand(
     handler: async (args, context) =>
       runCommand(context, async () => {
         const task = parseWorkflowTask(args);
-        const result = await commandRuntime(context, options).start({
+        const runtime = commandRuntime(context, options);
+        const result = await runtime.start({
           ...task,
           playbook,
         });
+        const evidence =
+          result.state.phase === "blocked" && runtime.readStatusEvidence
+            ? await runtime.readStatusEvidence(result.state)
+            : undefined;
         context.ui.notify(
-          `Workflow ${result.workflowId} started (${result.state.phase})`,
-          "info",
+          `Workflow ${result.workflowId} started (${result.state.phase})${evidence?.routingDiagnostic ? `\n${evidence.routingDiagnostic}` : ""}`,
+          result.state.phase === "blocked" ? "warning" : "info",
         );
       }),
   });
@@ -299,6 +306,36 @@ export function createWorkflowCommandRuntime(
   // Standalone callers without an installed host boundary cannot execute a workflow.
   const ownership = options.ownership ?? new WorkflowOwnership(cwd, "");
   const configuration = options.configuration;
+  const researchDiagnostic = async (
+    state: WorkflowState,
+  ): Promise<string | undefined> => {
+    const ref = state.planning.stageDecisionRefs?.research;
+    if (
+      state.phase !== "blocked" ||
+      state.block?.blockedFrom !== "gathering-context" ||
+      !ref ||
+      !configuration
+    )
+      return undefined;
+    try {
+      const artifact = await new ArtifactStore(
+        join(root, state.workflowId),
+      ).readJson(ref, parsePlanningDecisionArtifact);
+      if (
+        artifact.workflowId === state.workflowId &&
+        artifact.family === "stage" &&
+        artifact.stage === "research" &&
+        artifact.outcome === "ESCALATE"
+      )
+        return researchRoutingDiagnostic(
+          artifact,
+          configuration.decision.autoDecisionThreshold,
+        );
+    } catch {
+      // Never invent a decision from missing/corrupt display evidence.
+    }
+    return undefined;
+  };
   const dependencies = (workflowId: string) => {
     const artifactStore = new ArtifactStore(join(root, workflowId));
     const stateStore = new StateStore(join(root, workflowId));
@@ -354,14 +391,20 @@ export function createWorkflowCommandRuntime(
       unsubscribe();
       if (listeners.get(key) === stop) listeners.delete(key);
     };
-    const settle = (value: ResumeWorkflowResult) => {
+    const settle = async (value: ResumeWorkflowResult) => {
       if (
         value.status === "blocked" ||
         value.status === "failed" ||
         value.state.phase === "completed"
       )
         stop();
-      return value;
+      const diagnostic = await researchDiagnostic(value.state);
+      return diagnostic
+        ? {
+            ...value,
+            reason: `${value.reason ?? value.state.block?.reason}: ${diagnostic}`,
+          }
+        : value;
     };
     // Notifications only wake the driver. Exact persisted binding + public status remains authority.
     const wake = (
@@ -403,7 +446,7 @@ export function createWorkflowCommandRuntime(
             ?.receipt?.runId !== identity
         )
           return previous;
-        const result = settle(
+        const result = await settle(
           await driveWorkflow(workflowId, {
             ...deps,
             signal: continuation.signal,
@@ -513,6 +556,8 @@ export function createWorkflowCommandRuntime(
     },
     readStatusEvidence: async (state) => {
       const evidence: WorkflowStatusEvidence = {};
+      const diagnostic = await researchDiagnostic(state);
+      if (diagnostic) evidence.routingDiagnostic = diagnostic;
       const workerAttemptRef = state.coding.workerAttemptRef;
       if (workerAttemptRef) {
         try {

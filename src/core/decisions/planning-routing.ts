@@ -113,6 +113,8 @@ export type PlanningDecisionArtifact = PlanningDecisionBinding &
     usageRef?: ArtifactRef<"jev-request">;
     /** Human resolution retains the original classifier decision through this evidence. */
     humanSelectionRef?: ArtifactRef<"development-method">;
+    /** Research-only Human resolution; never a classifier confidence or Plan approval. */
+    humanResearchSelectionRef?: ArtifactRef<"conditional-stage">;
   };
 
 export function stageOutcome(
@@ -193,6 +195,7 @@ export function isPlanningDecisionArtifact(
       "requestRef",
       "usageRef",
       "humanSelectionRef",
+      "humanResearchSelectionRef",
     ])
   )
     return false;
@@ -231,6 +234,16 @@ export function isPlanningDecisionArtifact(
       !isArtifactRef(value.humanSelectionRef) ||
       value.humanSelectionRef.kind !== "development-method" ||
       !isOneOf(["STANDARD", "TDD"] as const, value.outcome))
+  )
+    return false;
+  if (
+    value.humanResearchSelectionRef !== undefined &&
+    (value.family !== "stage" ||
+      value.stage !== "research" ||
+      value.policy !== "conditional" ||
+      !isArtifactRef(value.humanResearchSelectionRef) ||
+      value.humanResearchSelectionRef.kind !== "conditional-stage" ||
+      !isOneOf(["RUN", "SKIP"] as const, value.outcome))
   )
     return false;
   if (value.rawDecision === null) {

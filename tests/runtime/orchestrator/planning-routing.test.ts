@@ -6,6 +6,7 @@ import {
   type HumanReply,
 } from "../../../src/runtime/integrations/ask-user-question.ts";
 import { developmentMethodQuestions } from "../../../src/runtime/orchestrator/development-method-selection.ts";
+import { humanResearchOutcome } from "../../../src/runtime/orchestrator/research-selection.ts";
 import { FakeSubagentRpc } from "../../fakes/subagent-rpc.ts";
 import { diagnosisReport } from "../../fakes/diagnosis.ts";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
@@ -67,6 +68,8 @@ interface Script {
   task?: string;
   method?: "STANDARD" | "TDD" | "ESCALATE";
   methodConfidence?: number;
+  researchConfidence?: number;
+  researchExecution?: boolean;
   plannerOutput?: string;
   playbook?: PlaybookKind;
   stages?: Partial<Record<ConditionalStage, StageOutcome>>;
@@ -120,7 +123,9 @@ async function setup(script: Script = {}) {
           ? script.modeConfidence
           : family === "method"
             ? script.methodConfidence
-            : script.confidence) ?? 0.99;
+            : stage === "research"
+              ? (script.researchConfidence ?? script.confidence)
+              : script.confidence) ?? 0.99;
       const choices = Object.keys(input.questions.decision.criteria);
       return classification({
         decision: {
@@ -152,7 +157,7 @@ async function setup(script: Script = {}) {
             ),
           ]
         : []),
-      ...(script.stages?.research === "RUN"
+      ...((script.researchExecution ?? script.stages?.research === "RUN")
         ? [succeeded("Research: released API source and uncertainty")]
         : []),
       succeeded(
@@ -1435,3 +1440,361 @@ test.each([
   expect(h.trace).not.toContain("child:planner");
   expect((await h.load()).phase).toBe("blocked");
 });
+
+function researchReply(
+  questions: HumanReply["questions"],
+  value: "RUN" | "SKIP" | "HOLD",
+  status: HumanReply["status"] = "answered",
+): HumanReply {
+  const q = questions[0];
+  return {
+    status,
+    questions,
+    cancelled: status !== "answered",
+    answers: status === "answered" ? { [q.question]: value } : {},
+    selections:
+      status === "answered"
+        ? [
+            {
+              question: q.question,
+              header: q.header,
+              value,
+              labels: [value],
+              selectedIndices: [
+                q.options.findIndex((o) => o.label === value) + 1,
+              ],
+            },
+          ]
+        : [],
+  };
+}
+
+test.each([
+  { raw: "SKIP" as const, confidence: 0.78, human: "RUN" as const },
+  { raw: "SKIP" as const, confidence: 0.78, human: "SKIP" as const },
+  { raw: "RUN" as const, confidence: 0.78, human: "RUN" as const },
+  { raw: "RUN" as const, confidence: 0.78, human: "SKIP" as const },
+  { raw: "ESCALATE" as const, confidence: 0.99, human: "RUN" as const },
+  { raw: "ESCALATE" as const, confidence: 0.99, human: "SKIP" as const },
+])(
+  "Human Research $human resolves $raw/$confidence durably and reaches mandatory Plan Gate",
+  async ({ raw, confidence, human }) => {
+    const h = await setup({
+      stages: { research: raw },
+      researchConfidence: confidence,
+      researchExecution: human === "RUN",
+    });
+    const events = new FakeSubagentRpc();
+    const bus = new AskUserQuestionIntegration(events);
+    const emitted = events.emit.bind(events);
+    vi.spyOn(events, "emit").mockImplementation((event, payload) => {
+      emitted(event, payload);
+      if (event !== QUESTION_REQUEST_EVENT || !isRecord(payload)) return;
+      void (async () => {
+        const state = await h.load();
+        const selection = JSON.parse(
+          await h.deps.artifactStore.readText(
+            state.planning.researchSelectionRef!,
+          ),
+        );
+        expect(selection).toMatchObject({
+          status: "pending",
+          workflowId: "routing",
+          projectRoot: h.root,
+          rootSessionId: "root-method-session",
+          decisionRef: state.planning.stageDecisionRefs!.research,
+          requestId: payload.requestId,
+        });
+        expect(selection.questions).toEqual(payload.questions);
+        expect(selection.questions[0].question).toContain(
+          `confidence=${confidence}`,
+        );
+        expect(selection.questions[0].question).toContain(
+          "autoDecisionThreshold=0.8",
+        );
+        expect(h.trace).toEqual(["child:workflow-scout", "decide:research"]);
+        h.trace.push("human:research");
+        events.deliver(
+          `pi-ask-user-question:reply:${String(payload.requestId)}`,
+          {
+            version: 1,
+            requestId: payload.requestId,
+            success: true,
+            result: researchReply(selection.questions, human),
+          },
+        );
+      })();
+    });
+    h.deps.humanQuestionPort = methodPort(h, bus.ask.bind(bus));
+    const run = vi.spyOn(h.executor, "run").getMockImplementation()!;
+    vi.spyOn(h.executor, "run").mockImplementation(async (input) => {
+      if (input.agent !== "workflow-scout") {
+        const state = await h.load();
+        const resolved = await h.decision(
+          state.planning.stageDecisionRefs!.research!,
+        );
+        expect(resolved.humanResearchSelectionRef).toEqual(
+          state.planning.researchSelectionRef,
+        );
+        expect(
+          await humanResearchOutcome(
+            h.deps.artifactStore,
+            resolved,
+            state,
+            0.8,
+            "root-method-session",
+          ),
+        ).toBe(human);
+      }
+      return run(input);
+    });
+    const result = await h.drive();
+    expect(result.state.phase).toBe("awaiting-plan-review");
+    expect(result.state.planning.approvedPlanRef).toBeUndefined();
+    expect(result.state.coding.workerAttemptRef).toBeUndefined();
+    const resolved = await h.decision(
+      result.state.planning.stageDecisionRefs!.research!,
+    );
+    expect(resolved).toMatchObject({
+      outcome: human,
+      rawDecision: { value: raw, confidence },
+      humanResearchSelectionRef: result.state.planning.researchSelectionRef,
+    });
+    const answer = JSON.parse(
+      await h.deps.artifactStore.readText(resolved.humanResearchSelectionRef!),
+    );
+    expect(await h.decision(answer.decisionRef)).toMatchObject({
+      outcome: "ESCALATE",
+      rawDecision: { value: raw, confidence },
+    });
+    expect(h.trace.includes("child:pi-ketch.researcher")).toBe(human === "RUN");
+    expect(h.trace.indexOf("human:research")).toBeLessThan(
+      h.trace.indexOf("decide:clarification"),
+    );
+    const calls = h.inputs.length;
+    await new PlanningRouting(h.deps).stage(result.state, "research", true);
+    expect(h.inputs).toHaveLength(calls);
+    expect(
+      events.emitted.filter(({ event }) => event === QUESTION_REQUEST_EVENT),
+    ).toHaveLength(1);
+  },
+);
+
+test.each(["RUN", "SKIP"] as const)(
+  "Research %s at the exact threshold is accepted without Human selection",
+  async (raw) => {
+    const h = await setup({
+      stages: { research: raw },
+      researchConfidence: 0.8,
+    });
+    const ask = vi.fn(async () => {
+      throw Error("Must not ask");
+    });
+    h.deps.humanQuestionPort = methodPort(h, ask);
+    expect((await h.drive()).state.phase).toBe("awaiting-plan-review");
+    expect(ask).not.toHaveBeenCalled();
+  },
+);
+
+test("explicit resume of a saved Research ESCALATE opens selection once without Scout/classifier rerun", async () => {
+  const h = await setup({ researchConfidence: 0.78 });
+  const blocked = await h.drive();
+  expect(blocked.state.phase).toBe("blocked");
+  const source = blocked.state.planning.stageDecisionRefs!.research!;
+  const ask = vi.fn(async (_id, questions) => researchReply(questions, "SKIP"));
+  h.deps.humanQuestionPort = methodPort(h, ask);
+  const result = await resumeWorkflow("routing", h.deps);
+  expect(result.state.phase).toBe("awaiting-plan-review");
+  expect(ask).toHaveBeenCalledTimes(1);
+  expect(h.trace.filter((v) => v === "child:workflow-scout")).toHaveLength(1);
+  expect(h.trace.filter((v) => v === "decide:research")).toHaveLength(1);
+  expect(result.state.planning.context.scoutRef).toEqual(
+    blocked.state.planning.context.scoutRef,
+  );
+  expect(await h.decision(source)).toMatchObject({ outcome: "ESCALATE" });
+});
+
+test.each([
+  "HOLD",
+  "user-cancelled",
+  "caller-aborted",
+  "shutdown",
+  "unavailable",
+  "invalid",
+] as const)(
+  "Research %s preserves a single question attempt and never starts later work",
+  async (failure) => {
+    const h = await setup({ researchConfidence: 0.78 });
+    const ask = vi.fn(async (_id, questions) => {
+      if (failure === "unavailable") throw Error("Questionnaire unavailable");
+      const reply = researchReply(
+        questions,
+        failure === "HOLD" ? "HOLD" : "SKIP",
+        failure === "HOLD" || failure === "invalid" ? "answered" : failure,
+      );
+      if (failure === "invalid") reply.selections = [];
+      return reply;
+    });
+    h.deps.humanQuestionPort = methodPort(h, ask);
+    expect((await h.drive()).state.phase).toBe("blocked");
+    expect((await resumeWorkflow("routing", h.deps)).state.phase).toBe(
+      "blocked",
+    );
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(h.trace).toEqual(["child:workflow-scout", "decide:research"]);
+  },
+);
+
+test.each([
+  "intent-artifact",
+  "intent-state",
+  "answer-artifact",
+  "answer-state",
+  "resolved-artifact",
+  "resolved-state",
+] as const)(
+  "Research %s fault blocks the next side effect; only State-bound answers recover",
+  async (fault) => {
+    const h = await setup({ researchConfidence: 0.78 });
+    const ask = vi.fn(async (_id, questions) =>
+      researchReply(questions, "SKIP"),
+    );
+    h.deps.humanQuestionPort = methodPort(h, ask);
+    let injected = false;
+    const write = h.deps.artifactStore.writeText.bind(h.deps.artifactStore);
+    vi.spyOn(h.deps.artifactStore, "writeText").mockImplementation(
+      async (kind, file, content) => {
+        if (
+          !injected &&
+          ((fault === "intent-artifact" &&
+            file.startsWith("research-selection-") &&
+            JSON.parse(content).status === "pending") ||
+            (fault === "answer-artifact" &&
+              file.startsWith("research-selection-") &&
+              JSON.parse(content).status === "answered") ||
+            (fault === "resolved-artifact" &&
+              file.startsWith("research-human-")))
+        ) {
+          injected = true;
+          throw Error("Artifact persistence fault");
+        }
+        return write(kind, file, content);
+      },
+    );
+    const save = h.deps.stateStore.saveState.bind(h.deps.stateStore);
+    vi.spyOn(h.deps.stateStore, "saveState").mockImplementation(
+      async (state, revision, options) => {
+        if (!injected && state.phase === "gathering-context") {
+          const ref = state.planning.researchSelectionRef;
+          const selection =
+            ref && JSON.parse(await h.deps.artifactStore.readText(ref));
+          const decisionRef = state.planning.stageDecisionRefs?.research;
+          const decision = decisionRef && (await h.decision(decisionRef));
+          if (
+            (fault === "intent-state" && selection?.status === "pending") ||
+            (fault === "answer-state" && selection?.status === "answered") ||
+            (fault === "resolved-state" && decision?.humanResearchSelectionRef)
+          ) {
+            injected = true;
+            throw Error("State persistence fault");
+          }
+        }
+        return save(state, revision, options);
+      },
+    );
+    expect((await h.drive()).state.phase).toBe("blocked");
+    expect(h.trace).toEqual(["child:workflow-scout", "decide:research"]);
+    expect(ask).toHaveBeenCalledTimes(fault.startsWith("intent-") ? 0 : 1);
+    const recovered = await resumeWorkflow("routing", h.deps);
+    expect(recovered.state.phase).toBe(
+      fault.startsWith("answer-") ? "blocked" : "awaiting-plan-review",
+    );
+    expect(ask).toHaveBeenCalledTimes(1);
+  },
+);
+
+test.each([
+  "session",
+  "project",
+  "state",
+  "workspace",
+  "configuration",
+  "answer-corruption",
+  "intent-corruption",
+  "source-corruption",
+] as const)(
+  "Human Research rejects %s drift before any later side effect",
+  async (drift) => {
+    const h = await setup({ researchConfidence: 0.78 });
+    const ask = vi.fn(async (_id, questions) => {
+      const state = await h.load();
+      if (drift === "session")
+        h.deps.humanQuestionPort!.rootSessionId = "different-root";
+      if (drift === "project")
+        h.deps.humanQuestionPort!.projectRoot = "/different-project";
+      if (drift === "configuration")
+        h.deps.configuration.decision.autoDecisionThreshold = 0.9;
+      if (drift === "state")
+        await h.deps.stateStore.saveState(
+          { ...state, stateRevision: state.stateRevision + 1 },
+          state.stateRevision,
+        );
+      if (drift === "source-corruption")
+        await writeFile(
+          join(
+            h.runDirectory,
+            state.planning.stageDecisionRefs!.research!.path,
+          ),
+          "corrupt",
+        );
+      if (drift === "intent-corruption")
+        await writeFile(
+          join(h.runDirectory, state.planning.researchSelectionRef!.path),
+          "corrupt",
+        );
+      return researchReply(questions, "SKIP");
+    });
+    h.deps.humanQuestionPort = methodPort(h, ask);
+    if (drift === "answer-corruption") {
+      const write = h.deps.artifactStore.writeText.bind(h.deps.artifactStore);
+      vi.spyOn(h.deps.artifactStore, "writeText").mockImplementation(
+        async (kind, file, content) => {
+          const ref = await write(kind, file, content);
+          if (
+            file.startsWith("research-selection-") &&
+            JSON.parse(content).status === "answered"
+          )
+            await writeFile(join(h.runDirectory, ref.path), "corrupt");
+          return ref;
+        },
+      );
+    }
+    let validations = 0;
+    const deps =
+      drift === "workspace"
+        ? {
+            ...h.deps,
+            ownership: {
+              validate: async (state: Awaited<ReturnType<typeof h.load>>) => {
+                if (
+                  state.planning.researchSelectionRef &&
+                  ++validations === 2
+                ) {
+                  const { advanceWorkflow } = await import(
+                    "../../../src/runtime/orchestrator/advance-workflow.ts"
+                  );
+                  return advanceWorkflow(
+                    state,
+                    { type: "BLOCK", reason: "operator-attention-required" },
+                    h.deps.stateStore,
+                  );
+                }
+                return state;
+              },
+            },
+          }
+        : h.deps;
+    expect((await driveWorkflow("routing", deps)).state.phase).toBe("blocked");
+    expect(h.trace).toEqual(["child:workflow-scout", "decide:research"]);
+  },
+);
