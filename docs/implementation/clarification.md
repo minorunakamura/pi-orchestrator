@@ -43,6 +43,9 @@ GRILL_ME は document proposal/write を拒否する。GRILL_WITH_DOCS でも mo
 ## Recovery
 
 - Completed progress を exact hash/confirmation/document binding で確認できれば、State transition のみ recover し、質問/文書 write を繰り返さない。
+- Main turn の通信エラー/中断だけでは、保存済み request / answered rounds を失効させない。同じ root session の明示的 `/wf-resume` は初回通知済みでも verified request と全 answered history を再提示する。再提示自体は質問/文書 write の replay、completion、approval ではない。Driver の pending wait は維持し、自動 retry loop は追加しない。
+- 各 provider request の public `context` hook でも ownership/workspace/source/request/root session/skill と State-bound answer→pending→previous answer chain を再検証して復元する。Transcript の欠落/compaction/host retry に依存せず、既回答を再質問しないよう明示する。History は最大8 rounds、全 question/answer projection は128 KiBまでとし、超過/破損/不正 chain は黙って truncate せず拒否する。Tool execution 境界でも history を再検証し、context 検証後の corruption で Human interaction を開始しない。
+- Ownership context は verified durable request の継続に新しい通知を要求しない。復元できない場合は停止指示と tool deny ceiling を維持する。Request-local context は turn scheduling / Human answer / Workflow authority の代替ではない。
 - Persisted pending question / declined reply / unresolved document intent は block。UI closed/user-cancelled/caller-aborted/shutdown/timeout は completion/SKIP にしない。
 - Output-before-State failure は保存済み intent を barrier とする。Exact immutable publication は idempotent だが、orphan の存在だけで authority に昇格しない。Partial/unrecorded document outcome は明示的 operator reconciliation が必要で、root tool の直接呼び出しでも replay できない。
 - Request/source/mode/skill/root session が変われば拒否する。別 root session への自動 adoption、文書の blind retry/rollback、Human の代理回答は実装しない。Missing facts は unresolved prerequisite として止め、root の raw investigation/child launch に permission を与えない。
@@ -100,3 +103,14 @@ herdr agent prompt issue8-clarification '/clarification-smoke /tmp/issue8-clarif
 # Operator が actual questionnaire の内容を確認して回答する。Agent は回答/承認を代行しない。
 # Report と terminal proof を検証後、作成 tab と temporary auth symlink のみ cleanup。
 ```
+
+## Interrupted Main recovery (#42)
+
+Issue #42 は root/Main の中断後に State-bound request と全 Human answer history を復元する。実装は既存 bridge / ownership context / clarification schema に限定し、dependency・retry scheduler・Worker authority を追加しない。
+
+- Public context hook、owned question/confirmation tools、`WorkflowCommandRuntime.resume()` の回帰テストで、同一 root の再提示、empty transcript / bridge 再生成、全 rounds、corrupt/hash-valid-invalid history、skill/workspace drift、pending/declined、history bound、context 検証後の corruption を検証した。既存 GRILL_WITH_DOCS の文書 barrier / Human Gate tests も維持する。
+- 最終 `VITEST_MAX_WORKERS=1 pnpm check`: **PASS — typecheck / lint / format、67 files / 969 tests**、2026-10-06T04:04:14Z開始。既定並列実行と2 workers は既存 heavy Code Feedback tests の5秒 timeout を検出したため PASS と扱わず、timeout/assertion を緩めず1 workerで再検証した。
+- [Recovery smoke](../../tests/platform/clarification-recovery-smoke-extension.ts): Herdr new tab **`wF:t3R` / `wF:p43`**。Actual Main / Planner / Simplicity Reviewer は **openai/gpt-6.1-sol**。Actual Human の2 frontier answers → public `ctx.abort()` → 同じ root UUID の `/wf-resume` → final Human confirmation → actual read-only planning/review → required **awaiting-plan-review**。Main tool calls は round 2回 + complete 1回のみ。Source bytes 不変、approvedPlanRef / implementationRef なし、State refs 32件の hash一致、両 child の process-terminal observed / exit 0 を確認した。
+- 最初の `wF:t3P` は explicit `-e pi-subagents` に package `sourceInfo.baseDir` がないため preflightで停止し、full PASS ではない。再検証は isolated settings の `packages` で released pi-subagents を読み込み、`--no-extensions` は指定しない。途中の gpt-5.6-luna overload は成功と扱わず、root model を明示変更した。281-byte session path は ceiling の256-byte上限で拒否されたため、停止済みテスト session だけを `/tmp/issue42-sessions/recovery.jsonl` へコピーし、同じ UUID を `--session` で再開した。別 UUID の adoption / ceiling緩和 / possible dispatch の blind retry はない。新規再現は最初から短い `--session-dir` を指定する。
+- Raw evidence: `/tmp/issue42-recovery-final-smoke.json`、`/tmp/issue42-check-final-serial.log`（machine-local）。Transport outage は注入せず、State保存後のabortを使う。Scout/classifier と Plan Gate pending response は fixtures、actual Plan/Code approval / Worker / full lifecycle の PASS ではない。Transient restored context snapshot は fixture process restartを跨いで保存されなかったため observed snapshot と推定せず、empty-transcript restoration の直接検証は回帰テストに限定する。
+- 元の `pi-test` Workflow は revision 22 / clarifying のまま保存し、調査・修正中に回答や State を変更していない。Issue closure / release / commit はこの検証記録から推定しない。
