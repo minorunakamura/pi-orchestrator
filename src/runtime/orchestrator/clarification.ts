@@ -189,6 +189,11 @@ function isProgress(value: unknown): value is Progress {
     !Array.isArray(value.questions) ||
     !optional(
       value,
+      "previousRef",
+      (ref) => isArtifactRef(ref) && ref.kind === "clarification",
+    ) ||
+    !optional(
+      value,
       "documentRef",
       (ref) => isArtifactRef(ref) && ref.kind === "domain-document-write",
     )
@@ -416,6 +421,66 @@ async function progress(
   )
     throw Error("Invalid clarification progress binding");
   return value;
+}
+
+/** Rebuild confirmed decisions from the State-bound chain, never orphan/chat evidence. */
+export async function clarificationAnswerHistory(
+  state: WorkflowState,
+  deps: ClarificationDependencies,
+) {
+  if (state.planning.domainDocumentWriteRef)
+    throw Error("Document attempt requires explicit reconciliation");
+  const answers: {
+    ref: ArtifactRef<"clarification">;
+    round: number;
+    questions: HumanQuestion[];
+    answers: HumanReply["answers"];
+  }[] = [];
+  let ref = state.planning.clarificationProgressRef;
+  let expectedRound: number | undefined;
+  while (ref) {
+    const answer = await progress(
+      {
+        ...state,
+        planning: { ...state.planning, clarificationProgressRef: ref },
+      },
+      deps,
+    );
+    if (
+      !answer ||
+      answer.status !== "answered" ||
+      !answer.reply ||
+      !answer.previousRef ||
+      answers.length >= 8 ||
+      (expectedRound !== undefined && answer.round !== expectedRound)
+    )
+      throw Error("Clarification history is not safely resumable");
+    const pending = await read(deps, answer.previousRef, isProgress);
+    if (
+      pending.status !== "pending" ||
+      pending.round !== answer.round ||
+      !sameArtifactRef(
+        pending.requestRef,
+        state.planning.clarificationRequestRef,
+      ) ||
+      JSON.stringify(pending.questions) !== JSON.stringify(answer.questions) ||
+      (answer.round === 1
+        ? pending.previousRef !== undefined
+        : !pending.previousRef)
+    )
+      throw Error("Invalid clarification history chain");
+    answers.unshift({
+      ref,
+      round: answer.round,
+      questions: answer.questions,
+      answers: answer.reply.answers,
+    });
+    expectedRound = answer.round - 1;
+    ref = pending.previousRef;
+  }
+  if (Buffer.byteLength(JSON.stringify(answers)) > 131072)
+    throw Error("Clarification answer history exceeds bound");
+  return answers;
 }
 
 export async function recoverClarification(

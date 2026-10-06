@@ -54,6 +54,10 @@ import {
   makeInvalidPayload,
 } from "../../fakes/typed-boundaries.ts";
 import { subagentRunId } from "../../../src/types.ts";
+import {
+  createWorkflowCommandRuntime,
+  disposeWorkflowContinuations,
+} from "../../../src/commands/index.ts";
 
 const roots: string[] = [];
 class Bus implements EventBus {
@@ -332,6 +336,258 @@ test("GRILL_ME root skill setup and durable rounds, final Human confirmation, no
     h.call("wf_clarification_complete", { summary: "Duplicate" }),
   ).rejects.toThrow(/No active/iu);
 });
+
+test("explicit same-root resume re-presents answered clarification without replaying questions", async () => {
+  const h = await setup("GRILL_ME", true);
+  h.autoAnswer("Keep existing");
+  await h.call("wf_clarification_round", { questions: [question] });
+  const answered = await h.stateStore.loadState();
+  const interactionCount = h.bus.calls.filter(
+    (c) => c.event === QUESTION_REQUEST_EVENT,
+  ).length;
+  const runtime = createWorkflowCommandRuntime(h.bus, h.cwd, {
+    configuration: h.configuration,
+    jevDecisionClient: h.jevDecisionClient,
+    clarificationPort: h.clarificationPort,
+    ownership: h.ownership,
+  });
+  const outcome = await runtime.resume(answered.workflowId);
+  disposeWorkflowContinuations(h.bus);
+  expect(outcome.status).toBe("pending");
+  expect(h.sendMessage).toHaveBeenCalledTimes(2);
+  const resumed = h.sendMessage.mock.calls[1][0];
+  expect(resumed.content).toContain(h.identity.requestHash);
+  expect(resumed.content).toContain("Keep existing");
+  expect(
+    h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+  ).toHaveLength(interactionCount);
+  expect(await h.stateStore.loadState()).toEqual(answered);
+});
+
+test("every model request restores the exact owned request and all answered rounds after interruption or lost transcript", async () => {
+  const h = await setup("GRILL_ME", true);
+  h.autoAnswer("Keep existing");
+  await h.call("wf_clarification_round", { questions: [question] });
+  h.bus.listeners.get(QUESTION_REQUEST_EVENT)!.clear();
+  h.autoAnswer("Order");
+  await h.call("wf_clarification_round", {
+    questions: [{ question: "Which name?", options: [{ label: "Order" }] }],
+  });
+  const answered = await h.stateStore.loadState();
+  const contextHandlers: ((event: unknown, ctx: unknown) => unknown)[] = [];
+  h.pi.on = makeInvalidPayload(
+    (name: string, handler: (typeof contextHandlers)[number]) => {
+      if (name === "context") contextHandlers.push(handler);
+      return () => {};
+    },
+  );
+  // Production registration order; a new bridge must recover from disk, not its old memory.
+  const ownership = registerWorkflowOwnership(h.pi);
+  registerClarificationBridge(h.pi, ownership);
+  let messages: unknown[] = [];
+  for (const handler of contextHandlers) {
+    const value = makeInvalidPayload<{ messages?: unknown[] } | undefined>(
+      await handler({ messages }, h.context),
+    );
+    messages = value?.messages ?? messages;
+  }
+  const restored = makeInvalidPayload<{ content: string }>(messages.at(-1));
+  expect(restored.content).toContain(h.identity.requestHash);
+  expect(restored.content).toContain("Keep existing");
+  expect(restored.content).toContain("Which name?");
+  expect(restored.content).toContain("Order");
+  expect(restored.content).toContain("wf_clarification_complete");
+  expect(h.sendMessage).toHaveBeenCalledOnce();
+  expect(await h.stateStore.loadState()).toEqual(answered);
+  h.bus.listeners.get(QUESTION_REQUEST_EVENT)!.clear();
+  h.autoAnswer();
+  await h.call("wf_clarification_complete", {
+    summary:
+      "Keep the existing boundary. The name is Order. All decisions settled.",
+  });
+  const done = await h.stateStore.loadState();
+  expect(done.phase).toBe("planning");
+  expect(done.planning.approvedPlanRef).toBeUndefined();
+  expect(done.coding.implementationRef).toBeUndefined();
+  expect(
+    h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+  ).toHaveLength(3);
+});
+
+test.each(["skill", "workspace", "latest-answer", "earlier-answer"])(
+  "request-local restoration rejects %s drift instead of presenting resumable authority",
+  async (drift) => {
+    const h = await setup("GRILL_ME", true);
+    h.autoAnswer("Keep existing");
+    await h.call("wf_clarification_round", { questions: [question] });
+    const first = await h.stateStore.loadState();
+    await h.call("wf_clarification_round", {
+      questions: [{ ...question, question: "Which second boundary?" }],
+    });
+    const before = await h.stateStore.loadState();
+    if (drift === "skill")
+      await writeFile(
+        h.context.getSystemPromptOptions().skills![0].filePath,
+        "changed skill",
+      );
+    else if (drift === "workspace")
+      await writeFile(join(h.cwd, "source.ts"), "changed source");
+    else
+      await writeFile(
+        join(
+          h.runDirectory,
+          (drift === "latest-answer" ? before : first).planning
+            .clarificationProgressRef!.path,
+        ),
+        "corrupt answer",
+      );
+    const result = makeInvalidPayload<{ messages: { content: string }[] }>(
+      await h.handlers.get("context")!({ messages: [] }, h.context),
+    );
+    expect(result.messages.at(-1)!.content).toContain("not safely resumable");
+    expect(result.messages.at(-1)!.content).not.toContain(
+      "Continue this active",
+    );
+    expect(
+      await h.handlers.get("tool_call")!(
+        { toolName: "wf_clarification_complete" },
+        h.context,
+      ),
+    ).toMatchObject({ block: true });
+    expect(
+      h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+    ).toHaveLength(2);
+    expect(h.sendMessage).toHaveBeenCalledOnce();
+  },
+);
+
+test("history corruption after context restoration is rejected again before owned Human interaction", async () => {
+  const h = await setup("GRILL_ME", true);
+  h.autoAnswer("Keep existing");
+  await h.call("wf_clarification_round", { questions: [question] });
+  const first = await h.stateStore.loadState();
+  await h.call("wf_clarification_round", {
+    questions: [{ ...question, question: "Which second boundary?" }],
+  });
+  await h.handlers.get("context")!({ messages: [] }, h.context);
+  await writeFile(
+    join(h.runDirectory, first.planning.clarificationProgressRef!.path),
+    "corrupt past answer",
+  );
+  h.bus.listeners.get(QUESTION_REQUEST_EVENT)!.clear();
+  h.autoAnswer();
+  await expect(
+    h.call("wf_clarification_complete", { summary: "Settled" }),
+  ).rejects.toThrow(/hash/iu);
+  expect(
+    h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+  ).toHaveLength(2);
+  expect((await h.stateStore.loadState()).phase).toBe("clarifying");
+});
+
+test.each(["wrong-request", "missing-link", "round-gap"])(
+  "restoration rejects a hash-valid but invalid %s history chain",
+  async (fault) => {
+    const h = await setup("GRILL_ME", true);
+    h.autoAnswer("Keep existing");
+    await h.call("wf_clarification_round", { questions: [question] });
+    const before = await h.stateStore.loadState();
+    const answer = JSON.parse(
+      await h.artifactStore.readText!(
+        before.planning.clarificationProgressRef!,
+      ),
+    );
+    if (fault === "wrong-request") answer.requestRef.sha256 = "a".repeat(64);
+    else if (fault === "missing-link") delete answer.previousRef;
+    else answer.round = 2;
+    const ref = await h.artifactStore.writeText(
+      "clarification",
+      "invalid-history.md",
+      JSON.stringify(answer),
+    );
+    await h.stateStore.saveState(
+      {
+        ...before,
+        planning: { ...before.planning, clarificationProgressRef: ref },
+      },
+      before.stateRevision,
+    );
+    const result = makeInvalidPayload<{ messages: { content: string }[] }>(
+      await h.handlers.get("context")!({ messages: [] }, h.context),
+    );
+    expect(result.messages.at(-1)!.content).toContain("not safely resumable");
+    await expect(
+      h.call("wf_clarification_complete", { summary: "Settled" }),
+    ).rejects.toThrow(/history|binding/iu);
+    expect(
+      h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+    ).toHaveLength(1);
+  },
+);
+
+test("over-limit confirmed history is rejected, never silently truncated", async () => {
+  const h = await setup();
+  const text = "x".repeat(131073);
+  h.bus.on(QUESTION_REQUEST_EVENT, (value) => {
+    const q = makeInvalidPayload<{
+      requestId: string;
+      questions: HumanQuestion[];
+    }>(value);
+    const response = reply(q.requestId, q.questions, text);
+    Object.assign(response.result.selections[0], { customText: text });
+    h.bus.emit(`pi-ask-user-question:reply:${q.requestId}`, response);
+  });
+  await h.call("wf_clarification_round", {
+    questions: [{ question: "Which name?", options: [] }],
+  });
+  const before = await h.stateStore.loadState();
+  await expect(
+    new PlanningOrchestrator(h).requestClarification({ state: before }),
+  ).resolves.toMatchObject({ status: "blocked" });
+  expect(h.sendMessage).toHaveBeenCalledOnce();
+  expect(
+    h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+  ).toHaveLength(1);
+});
+
+test.each(["pending", "declined"])(
+  "explicit resume and request-local context never replay a %s question",
+  async (status) => {
+    const h = await setup("GRILL_ME", true);
+    if (status === "declined") {
+      h.autoAnswer("", "user-cancelled");
+      await h.call("wf_clarification_round", { questions: [question] });
+    } else {
+      await runClarificationRound(
+        h.state,
+        h,
+        { ...h.identity, rootSessionId: "root-1", questions: [question] },
+        async () => {
+          throw Error("Question UI interrupted");
+        },
+      );
+    }
+    const state = await h.stateStore.loadState();
+    const original = state.planning.clarificationProgressRef;
+    const runtime = createWorkflowCommandRuntime(h.bus, h.cwd, {
+      configuration: h.configuration,
+      jevDecisionClient: h.jevDecisionClient,
+      clarificationPort: h.clarificationPort,
+      ownership: h.ownership,
+    });
+    const result = await runtime.resume(state.workflowId);
+    disposeWorkflowContinuations(h.bus);
+    expect(result.state.phase).toBe("blocked");
+    expect(result.state.planning.clarificationProgressRef).toEqual(original);
+    expect(
+      await h.handlers.get("context")!({ messages: [] }, h.context),
+    ).toBeUndefined();
+    expect(h.sendMessage).toHaveBeenCalledOnce();
+    expect(
+      h.bus.calls.filter((c) => c.event === QUESTION_REQUEST_EVENT),
+    ).toHaveLength(status === "declined" ? 1 : 0);
+  },
+);
 
 test("GRILL_WITH_DOCS exact CONTEXT/ADR grant and before/intent/answer/after evidence, no source write", async () => {
   const h = await setup("GRILL_WITH_DOCS");
