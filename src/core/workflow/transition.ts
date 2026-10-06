@@ -99,6 +99,7 @@ function invalidateArchitecture(state: WorkflowState): void {
     delete state.planning.architectureRequired;
   }
   delete state.planning.developmentMethodRef;
+  delete state.planning.developmentMethodSelectionRef;
 }
 
 function clearCurrentRoundEvidence(state: WorkflowState): void {
@@ -199,15 +200,46 @@ function applyTransition(
       return next;
     }
 
+    case "DEVELOPMENT_METHOD_SELECTION_PERSISTED":
+      if (
+        state.phase !== "planning" ||
+        !state.planning.developmentMethodRef ||
+        state.planning.candidateCycleId === state.planning.cycleId ||
+        state.planning.approvedPlanRef ||
+        (state.planning.developmentMethodSelectionRef
+          ? !sameArtifactRef(
+              state.planning.developmentMethodSelectionRef,
+              event.previousSelectionRef,
+            )
+          : event.previousSelectionRef !== undefined)
+      )
+        fail(
+          "Method selection requires exact preceding intent and no Plan authority",
+        );
+      next.planning.developmentMethodSelectionRef = event.selectionRef;
+      return next;
+
     case "DEVELOPMENT_METHOD_RESOLVED":
       if (
         state.phase !== "planning" ||
         !state.planning.stageDecisionRefs?.architecture ||
         !state.planning.developmentIntent ||
+        (event.previousMethodRef !== undefined &&
+          (!sameArtifactRef(
+            state.planning.developmentMethodRef,
+            event.previousMethodRef,
+          ) ||
+            !state.planning.developmentMethodSelectionRef ||
+            state.planning.approvedPlanRef ||
+            state.planning.candidateCycleId === state.planning.cycleId)) ||
         (state.planning.developmentMethodRef &&
           !sameArtifactRef(
             state.planning.developmentMethodRef,
             event.methodRef,
+          ) &&
+          !sameArtifactRef(
+            state.planning.developmentMethodRef,
+            event.previousMethodRef,
           ))
       )
         fail(

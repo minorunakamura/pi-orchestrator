@@ -111,6 +111,8 @@ export type PlanningDecisionArtifact = PlanningDecisionBinding &
     /** Exact outbound reservation/usage, including probabilities, when a classifier was called. */
     requestRef?: ArtifactRef<"jev-request">;
     usageRef?: ArtifactRef<"jev-request">;
+    /** Human resolution retains the original classifier decision through this evidence. */
+    humanSelectionRef?: ArtifactRef<"development-method">;
   };
 
 export function stageOutcome(
@@ -190,6 +192,7 @@ export function isPlanningDecisionArtifact(
       "outcome",
       "requestRef",
       "usageRef",
+      "humanSelectionRef",
     ])
   )
     return false;
@@ -221,6 +224,15 @@ export function isPlanningDecisionArtifact(
     )
       return false;
   }
+  if (
+    value.humanSelectionRef !== undefined &&
+    (value.family !== "method" ||
+      value.policy !== "conditional" ||
+      !isArtifactRef(value.humanSelectionRef) ||
+      value.humanSelectionRef.kind !== "development-method" ||
+      !isOneOf(["STANDARD", "TDD"] as const, value.outcome))
+  )
+    return false;
   if (value.rawDecision === null) {
     if (
       value.classifier !== null ||

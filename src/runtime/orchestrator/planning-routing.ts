@@ -1,4 +1,10 @@
 import { verifyClarificationDocuments } from "./clarification.ts";
+import {
+  humanMethodOutcome,
+  selectDevelopmentMethod,
+} from "./development-method-selection.ts";
+import type { HumanQuestionPort } from "../integrations/ask-user-question.ts";
+import type { OwnershipBoundary } from "./workflow-ownership.ts";
 import { diagnosisEvidence } from "./diagnosis.ts";
 import type { SubagentExecutor } from "../ports/subagent-executor.ts";
 import type { ArtifactRef } from "../../core/artifacts/references.ts";
@@ -54,6 +60,10 @@ export const PLANNING_EVIDENCE_LIMITS = {
 export interface PlanningRoutingDependencies {
   artifactStore: WorkflowArtifactWriter;
   stateStore: WorkflowStateWriter;
+  loadState?: () => Promise<WorkflowState>;
+  humanQuestionPort?: HumanQuestionPort;
+  ownership?: OwnershipBoundary;
+  signal?: AbortSignal;
   subagentExecutor?: SubagentExecutor;
   configuration?: OrchestratorConfiguration;
   jevDecisionClient?: JevDecisionClient &
@@ -111,7 +121,7 @@ function planningCategories(
   return categories;
 }
 
-/** Sequential durable decisions only; no questions, domain writes, or implementation grants. */
+/** Sequential durable decisions; Human method selection grants no implementation authority. */
 export class PlanningRouting {
   constructor(private readonly deps: PlanningRoutingDependencies) {}
 
@@ -350,7 +360,7 @@ export class PlanningRouting {
           attention(
             "Stale planning decision; explicit reconciliation is required",
           );
-        const effective =
+        let effective =
           artifact.family === "method"
             ? developmentMethodOutcome(policy, artifact.rawDecision, threshold)
             : artifact.family === "stage"
@@ -360,6 +370,24 @@ export class PlanningRouting {
                   artifact.rawDecision,
                   threshold,
                 );
+        if (artifact.humanSelectionRef) {
+          if (
+            effective !== "ESCALATE" ||
+            !sameArtifactRef(
+              artifact.humanSelectionRef,
+              state.planning.developmentMethodSelectionRef,
+            )
+          )
+            attention(
+              "Human selection cannot override a deterministic or accepted classifier decision",
+            );
+          effective = await humanMethodOutcome(
+            this.deps.artifactStore,
+            artifact,
+            state,
+            this.deps.humanQuestionPort?.rootSessionId,
+          );
+        }
         if (
           effective !== artifact.outcome ||
           (family === "stage" &&
@@ -558,13 +586,33 @@ export class PlanningRouting {
         this.deps.stateStore,
       );
     }
+    if (
+      artifact.family === "method" &&
+      artifact.outcome === "ESCALATE" &&
+      !reuseOnly &&
+      this.deps.humanQuestionPort
+    ) {
+      try {
+        return await selectDevelopmentMethod(state, artifact, this.deps);
+      } catch {
+        // The question or answer may already be durable. Never block a stale snapshot or re-ask.
+        state = this.deps.loadState ? await this.deps.loadState() : state;
+        if (state.workflowId !== source.workflowId)
+          throw Error("Human method workflow identity changed");
+        if (state.phase !== "planning")
+          throw new PlanningRoutingStoppedError(state);
+      }
+    }
     if (artifact.outcome === "ESCALATE") {
       state = await advanceWorkflow(
         state,
         {
           type: "BLOCK",
           reason: "operator-attention-required",
-          evidenceRef: ref,
+          evidenceRef:
+            artifact.family === "method"
+              ? (state.planning.developmentMethodSelectionRef ?? ref)
+              : ref,
         },
         this.deps.stateStore,
       );

@@ -1,3 +1,4 @@
+import type { HumanQuestionPort } from "../runtime/integrations/ask-user-question.ts";
 import { WorkflowOwnership } from "../runtime/orchestrator/workflow-ownership.ts";
 import { CLARIFICATION_COMPLETE_EVENT } from "../runtime/integrations/clarification.ts";
 import type { ClarificationPort } from "../runtime/ports/clarification-port.ts";
@@ -96,6 +97,8 @@ export interface WorkflowCommandRuntimeOptions {
   modelRegistry?: PiClassifierRuntime;
   validationExecutor?: ValidationExecutor;
   clarificationPort?: ClarificationPort;
+  humanQuestionPort?: HumanQuestionPort;
+  onContinuationResult?: (result: ResumeWorkflowResult) => void;
   onContinuationError?: (error: unknown) => void;
 }
 
@@ -318,6 +321,7 @@ export function createWorkflowCommandRuntime(
       repositoryCwd: cwd,
       configuration,
       clarificationPort: options.clarificationPort,
+      humanQuestionPort: options.humanQuestionPort,
       jevDecisionClient:
         options.jevDecisionClient ??
         new JevIntegration({
@@ -399,12 +403,15 @@ export function createWorkflowCommandRuntime(
             ?.receipt?.runId !== identity
         )
           return previous;
-        return settle(
+        const result = settle(
           await driveWorkflow(workflowId, {
             ...deps,
             signal: continuation.signal,
           }),
         );
+        if (result.status === "blocked" || result.status === "failed")
+          options.onContinuationResult?.(result);
+        return result;
       });
       void queue.catch((error) => {
         stop();

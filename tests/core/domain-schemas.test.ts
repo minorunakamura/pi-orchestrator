@@ -245,6 +245,8 @@ test("Development Method is a durable strategy attribute, not a phase or approva
     planning: {
       ...state.planning,
       developmentIntent: "TDD",
+      cycleId: "cycle-v1",
+      automaticRefinementsUsed: 0,
       stageDecisionRefs: {
         research: stageRef,
         clarification: stageRef,
@@ -271,6 +273,52 @@ test("Development Method is a durable strategy attribute, not a phase or approva
       type: "DEVELOPMENT_METHOD_RESOLVED",
       methodRef: { ...methodRef, sha256: "b".repeat(64) },
     }).ok,
+  ).toBe(false);
+  const selectionRef = {
+    ...methodRef,
+    path: "decisions/selection.md",
+    sha256: "c".repeat(64),
+  };
+  const selected = transition(resolved.state, {
+    type: "DEVELOPMENT_METHOD_SELECTION_PERSISTED",
+    selectionRef,
+  });
+  expect(selected.ok).toBe(true);
+  if (!selected.ok) throw selected.error;
+  expect(
+    transition(selected.state, {
+      type: "DEVELOPMENT_METHOD_SELECTION_PERSISTED",
+      selectionRef: methodRef,
+    }).ok,
+  ).toBe(false);
+  expect(
+    transition(selected.state, {
+      type: "DEVELOPMENT_METHOD_RESOLVED",
+      methodRef: selectionRef,
+      previousMethodRef: { ...methodRef, sha256: "d".repeat(64) },
+    }).ok,
+  ).toBe(false);
+  const human = transition(selected.state, {
+    type: "DEVELOPMENT_METHOD_RESOLVED",
+    methodRef: selectionRef,
+    previousMethodRef: methodRef,
+  });
+  expect(human.ok).toBe(true);
+  if (!human.ok) throw human.error;
+  expect(human.state.planning.approvedPlanRef).toBeUndefined();
+  expect(human.state.phase).toBe("planning");
+  expect(
+    transition(
+      {
+        ...selected.state,
+        planning: { ...selected.state.planning, candidateCycleId: "cycle-v1" },
+      },
+      {
+        type: "DEVELOPMENT_METHOD_RESOLVED",
+        methodRef: selectionRef,
+        previousMethodRef: methodRef,
+      },
+    ).ok,
   ).toBe(false);
   expect(
     isWorkflowState({

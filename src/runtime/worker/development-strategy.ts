@@ -1,3 +1,4 @@
+import { humanMethodOutcome } from "../orchestrator/development-method-selection.ts";
 import { RuntimePortError } from "../ports/errors.ts";
 import type { WorkflowState } from "../../core/workflow/state.ts";
 import { sameArtifactRef } from "../../core/workflow/invariants.ts";
@@ -34,6 +35,7 @@ export async function validateWorkerStrategy(
     method.outcome !== plan.developmentMethod
   )
     throw Error("Worker method contradicts approved Plan");
+  if (method.humanSelectionRef) await humanMethodOutcome(store, method, state);
   const skills =
     plan.developmentMethod === "TDD" ? ["tdd", ...plan.supportingSkills] : [];
   if (

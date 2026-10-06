@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { AskUserQuestionIntegration } from "./runtime/integrations/ask-user-question.ts";
 import { registerWorkflowOwnership } from "./runtime/integrations/workflow-ownership.ts";
 import { registerClarificationBridge } from "./runtime/integrations/clarification.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -55,12 +57,28 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
   );
   const ownership = registerWorkflowOwnership(pi);
   const clarificationPort = registerClarificationBridge(pi, ownership);
+  const questionnaire = new AskUserQuestionIntegration(pi.events);
   registerWorkflowCommands(pi, {
     createRuntime: (context) =>
       createWorkflowCommandRuntime(pi.events, context.cwd, {
         projectTrusted: context.isProjectTrusted(),
         ownership: ownership(context),
         clarificationPort: clarificationPort(context),
+        humanQuestionPort:
+          context.mode === "tui" &&
+          pi.getAllTools().some((tool) => tool.name === "ask_user_question")
+            ? {
+                rootSessionId: context.sessionManager.getSessionId(),
+                projectRoot: realpathSync(context.cwd),
+                ask: (id, questions, signal) =>
+                  questionnaire.ask(id, questions, signal),
+              }
+            : undefined,
+        onContinuationResult: (result) =>
+          context.ui.notify(
+            `Workflow ${result.state.workflowId}: ${result.status} (${result.phase}): ${result.reason ?? "operator attention required"}`,
+            result.status === "failed" ? "error" : "warning",
+          ),
         modelRegistry: context.modelRegistry,
         onContinuationError: (error) =>
           context.ui.notify(renderWorkflowCommandError(error), "error"),

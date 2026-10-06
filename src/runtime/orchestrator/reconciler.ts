@@ -138,6 +138,8 @@ export interface ResumeReconcilerDependencies {
   configuration?: OrchestratorConfiguration;
   plannotatorGate?: PlannotatorGate;
   clarificationPort?: ClarificationPort;
+  humanQuestionPort?: import("../integrations/ask-user-question.ts").HumanQuestionPort;
+  signal?: AbortSignal;
   repositoryCwd?: string;
   cwd?: string;
   changeScope?: string;
