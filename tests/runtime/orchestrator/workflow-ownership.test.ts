@@ -265,6 +265,81 @@ test("public session breadcrumb precedes side effects and survives reload/whole 
   expect(h.executor.calls.run).toHaveLength(0);
 });
 
+test("Main receives current ownership/blocked context before a completion wake, with no stale restriction after terminal release", async () => {
+  const h = await fixture();
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  registerWorkflowOwnership(
+    makeExtensionApiFixture({
+      appendEntry: vi.fn(),
+      on: (
+        name: string,
+        handler: (event: unknown, ctx: unknown) => unknown,
+      ) => {
+        handlers.set(name, handler);
+        return () => {};
+      },
+    }),
+  );
+  const ctx = makeExtensionCommandContextFixture({
+    cwd: h.cwd,
+    sessionManager: { getSessionId: () => "root-1", getEntries: () => [] },
+  });
+  const message = {
+    role: "user",
+    content: "Background completion",
+    timestamp: 0,
+  };
+  const event = { messages: [message] };
+  const response = await handlers.get("context")!(event, ctx);
+  expect(response).toMatchObject({
+    messages: [
+      message,
+      {
+        role: "custom",
+        customType: "orchestrator-ownership-context",
+        content: expect.stringContaining('"phase":"gathering-context"'),
+      },
+    ],
+  });
+  expect(JSON.stringify(response)).toContain("not a request to implement");
+  expect(JSON.stringify(response)).toContain(
+    "without that request, do not initiate clarification",
+  );
+  const blocked = await advanceWorkflow(
+    h.state,
+    { type: "BLOCK", reason: "operator-attention-required" },
+    h.states,
+  );
+  const blockedContext = await handlers.get("context")!(event, ctx);
+  expect(blockedContext).toMatchObject({
+    messages: [
+      message,
+      {
+        content: expect.stringContaining('"phase":"blocked"'),
+      },
+    ],
+  });
+  expect(JSON.stringify(blockedContext)).toContain(
+    '\\"reason\\":\\"operator-attention-required\\"',
+  );
+  expect(JSON.stringify(blockedContext)).toContain(
+    "report this state and stop",
+  );
+  const active = await advanceWorkflow(
+    blocked,
+    { type: "BLOCK_RESOLVED" },
+    h.states,
+  );
+  await advanceWorkflow(
+    active,
+    { type: "FAIL", reason: "authority-inconsistent" },
+    h.states,
+  );
+  expect(await handlers.get("context")!(event, ctx)).toBeUndefined();
+  expect(event.messages).toEqual([message]);
+  expect(h.executor.calls.run).toHaveLength(0);
+});
+
 test("host denies every raw/unknown/nested mutation provider regardless of trust, hints, or modified args; Human chat is not blocked", async () => {
   const h = await fixture();
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
@@ -284,7 +359,10 @@ test("host denies every raw/unknown/nested mutation provider regardless of trust
   });
   for (const trust of [false, true]) {
     trusted = trust;
-    await handlers.get("before_agent_start")!({}, ctx);
+    await handlers.get("before_agent_start")!(
+      { systemPromptOptions: { sections: {} } },
+      ctx,
+    );
     for (const name of [
       "write",
       "edit",

@@ -65,7 +65,11 @@ export default function piOrchestrator(pi: ExtensionAPI): void {
         onContinuationError: (error) =>
           context.ui.notify(renderWorkflowCommandError(error), "error"),
         launchHost: {
-          sessionId: context.sessionManager.getSessionId(),
+          // pi-subagents RPC/ceilings use the session file when persisted.
+          // Workflow ownership and clarification retain the root UUID.
+          sessionId:
+            context.sessionManager.getSessionFile() ??
+            context.sessionManager.getSessionId(),
           projectTrusted: context.isProjectTrusted(),
           availableModels: physicalModelSnapshot(context.modelRegistry),
           parentModel: context.model,

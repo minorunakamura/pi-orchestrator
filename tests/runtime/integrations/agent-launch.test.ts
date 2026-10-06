@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
 import { registerSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
 import {
@@ -90,6 +91,132 @@ async function fixture() {
   };
   return { root, definition, host, events, store, adapter, request };
 }
+
+test("production preflight uses the loaded extension's public API instead of the dependency copy", async () => {
+  const f = await fixture();
+  const owner = join(f.root, "installed-owner");
+  await mkdir(owner);
+  await writeFile(
+    join(owner, "package.json"),
+    JSON.stringify({
+      name: "pi-subagents",
+      version: "0.74.0",
+      type: "module",
+      exports: { "./preflight": "./preflight.js" },
+    }),
+  );
+  await writeFile(join(owner, "index.js"), "export default function () {}\n");
+  await writeFile(
+    join(owner, "preflight.js"),
+    `export async function resolveSubagentLaunchContract(input) {
+    if (input.capabilityCeiling?.denyExtensions !== true || input.model !== 'test/model:off') throw Error('Lost policy binding');
+    return { ok: false, code: 'invalid_cwd', message: 'Loaded-owner probe' };
+  }`,
+  );
+  f.request.executionProfile = {
+    provider: "test",
+    model: "model",
+    thinking: "off",
+  };
+  f.request.launchPolicy = agentLaunchPolicy(
+    "workflow-scout",
+    f.request.executionProfile,
+  );
+  f.host.runtimeSnapshotHost = {
+    events: f.events,
+    getAllTools: () => [
+      {
+        name: "subagents_enable",
+        sourceInfo: { path: join(owner, "index.js"), baseDir: owner },
+      },
+    ],
+  };
+  await expect(
+    f.adapter.run({ ...f.request, onPrepared: async () => {} }),
+  ).rejects.toMatchObject({ diagnosticCode: "invalid_cwd" });
+  expect(f.events.emitted).toHaveLength(0);
+});
+
+test("Pi source metadata binds both public preflight resolutions to the loaded owner", async () => {
+  const f = await fixture();
+  const sourceInfo = {
+    path: fileURLToPath(import.meta.resolve("pi-subagents")),
+    baseDir: dirname(fileURLToPath(import.meta.resolve("pi-subagents"))),
+  };
+  f.host.runtimeSnapshotHost = {
+    events: f.events,
+    getAllTools: () =>
+      ["subagent", "subagents_enable"].map((name) => ({ name, sourceInfo })),
+  };
+  const launch = await f.adapter.preflight(f.request);
+  expect(launch).toMatchObject({
+    tools: ["read"],
+    policy: { denyExtensions: true },
+  });
+  expect(launch).toEqual(
+    await new SubagentsIntegration(f.events, {
+      cwd: f.request.cwd,
+      artifactReader: f.store,
+      launchHost: { ...f.host, runtimeSnapshotHost: undefined },
+    }).preflight(f.request),
+  );
+  expect(f.events.emitted).toHaveLength(0);
+});
+
+test.each(["missing", "synthetic", "conflicting", "missing-export"])(
+  "unverifiable loaded owner (%s) never falls back to the dependency copy",
+  async (scenario) => {
+    const f = await fixture();
+    const sourceInfo = {
+      path: fileURLToPath(import.meta.resolve("pi-subagents")),
+      baseDir: dirname(fileURLToPath(import.meta.resolve("pi-subagents"))),
+    };
+    const missing = join(f.root, "missing-export");
+    if (scenario === "missing-export") {
+      await mkdir(missing);
+      await writeFile(
+        join(missing, "package.json"),
+        JSON.stringify({
+          name: "pi-subagents",
+          version: "0.74.0",
+          exports: {},
+        }),
+      );
+    }
+    f.host.runtimeSnapshotHost = {
+      events: f.events,
+      getAllTools: () =>
+        scenario === "missing"
+          ? []
+          : [
+              {
+                name: "subagent",
+                sourceInfo:
+                  scenario === "synthetic"
+                    ? { path: "<inline:owner>", baseDir: sourceInfo.baseDir }
+                    : scenario === "missing-export"
+                      ? { path: join(missing, "index.js"), baseDir: missing }
+                      : sourceInfo,
+              },
+              ...(scenario === "conflicting"
+                ? [
+                    {
+                      name: "subagents_enable",
+                      sourceInfo: {
+                        path: join(f.root, "other/index.js"),
+                        baseDir: join(f.root, "other"),
+                      },
+                    },
+                  ]
+                : []),
+            ],
+    };
+    await expect(
+      f.adapter.run({ ...f.request, onPrepared: async () => {} }),
+    ).rejects.toMatchObject({ name: "SubagentNotDispatchedError" });
+    expect(f.events.emitted).toHaveLength(0);
+  },
+);
 
 test.each([
   ["scout", "workflow-scout"],

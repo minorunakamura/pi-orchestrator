@@ -215,22 +215,33 @@ describe("ORCH-019 workflow commands", () => {
     );
   });
 
-  test("rejects invalid resume/status arguments and unknown workflow safely", async () => {
+  test.each(["wf-resume", "wf-status"])(
+    "%s reports its own usage for missing or unsafe IDs without calling runtime",
+    async (command) => {
+      const commandRuntime = makeRuntime();
+      const commands = registration(commandRuntime);
+      await Promise.all(
+        ["", "   ", ".", "..", "../victim", "a/b", "a b"].map(async (args) => {
+          const ctx = context();
+          await commands.get(command)!.handler(args, ctx);
+          expect(notifications(ctx)).toHaveBeenCalledWith(
+            `Usage: /${command} <workflow-id>`,
+            "error",
+          );
+        }),
+      );
+      expect(commandRuntime.resume).not.toHaveBeenCalled();
+      expect(commandRuntime.loadState).not.toHaveBeenCalled();
+    },
+  );
+
+  test("reports unknown workflow safely", async () => {
     const commandRuntime = makeRuntime({
       loadState: vi.fn(async () => {
         throw new StateNotFoundError("/tmp/project/missing/state.json");
       }),
     });
     const commands = registration(commandRuntime);
-    const invalidResume = context();
-    await commands.get("wf-resume")!.handler("../victim", invalidResume);
-    const resume = commandRuntime.resume;
-    expect(resume).not.toHaveBeenCalled();
-    expect(notifications(invalidResume)).toHaveBeenCalledWith(
-      expect.stringMatching(/safe|path|workflow id/i),
-      "error",
-    );
-
     const unknown = context();
     await commands.get("wf-status")!.handler("missing", unknown);
     expect(notifications(unknown)).toHaveBeenCalledWith(

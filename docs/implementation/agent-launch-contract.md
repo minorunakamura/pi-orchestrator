@@ -12,7 +12,7 @@ Subsequent #20: verified Codemode dispatch is now enabled **only for Plan Simpli
 
 `pi-subagents` **0.74.0** を dev-only から runtime dependency に変更し、公開 `pi-subagents/preflight` / `pi-subagents/capability-ceiling` subpaths だけを import する。Pi は host peer のまま。第三者 package/private API は変更・使用しない。
 
-Host はこの dependency と同じ released extension を一つだけ load すること。development smoke は `-e ./node_modules/pi-subagents` を明示する。Preflight は package/contract/lifecycle versions を検証し、実行 receipt の canonical launch digest が一致しなければ、known run/receipt を保持して ambiguous にする。Public RPC は execution owner の npm source/version を dispatch 前に attest する API ではないため、別 installed owner の互換性を仮定しない。
+Host は supported released pi-subagents extension を一つだけ load すること。通常の `npm:pi-subagents` installation を変更する必要はない。Production preflight は Pi の公開 `getAllTools().sourceInfo` から loaded owner の package root を取得し、その `package.json` の公開 `./preflight` export を使用する。リポジトリ内 dependency と installed execution owner のコピーが同一だとは仮定しない。Standalone inspection/tests だけはローカル public API を直接使用できる。Preflight は package/contract/lifecycle versions を検証し、実行 receipt の canonical launch digest が一致しなければ、known run/receipt を保持して ambiguous にする。Public RPC 単独は source/version attestation ではなく、host provenance と exact receipt checks を保持する。
 
 ## Domain / adapter boundary
 
@@ -118,3 +118,71 @@ Focused validation: **4 files / 110 tests PASS**, plus **16 command tests PASS**
 Real Pi smoke: **PASS**, recorded **2026-10-05T18:30:58.148Z**, new Herdr tab/pane **`wF:t3G` / `wF:p3V`**, Pi **0.99.1** / pi-subagents **0.74.0**. Updated `diagnosis-fixture.ts` supplies concrete Orchestrator profiles but an unavailable ambient subagent model and no `subagents.defaultThinking`. Root was `openai/gpt-6.1-sol:max`; actual product Scout used **low**, Diagnosis used **high**, each dispatched once with matching persisted launch/receipt/full output. A Diagnosis `STRONG/MEDIUM` override resolved through public preflight and rejected historical evidence without redispatch. Both public process-terminal proofs are **observed / exit 0**, workspace bytes unchanged, and resume reused exact evidence. Raw report: `/tmp/pi-orchestrator-stage-profiles-smoke.json` (machine-local). Successful tab closed and temporary auth symlink removed.
 
 Limits: actual Scout/Diagnosis only; other stage bindings and command lifecycle are automated tests. Classifier routing was scripted; no live Jev, implementation Worker or real Human Gates were executed in this smoke. Existing histories/operator settings are not migrated or edited. Release evidence / CHANGELOG are not updated.
+
+## Persisted-session follow-up — Scout blocked by Main ownership
+
+Operator-reported `/wf-new` persisted a Scout preflight with `denyExtensions:true`, but the actual RPC launch retained ambient extensions and returned a different digest. The inherited Main ownership hook denied Scout `ls`/`find`; the workflow correctly stopped as `agent-execution-ambiguous`. The native completion wake then caused repeated denied Main tool attempts.
+
+Production composition registered the ceiling against `getSessionId()` (UUID), while pi-subagents 0.74.0 RPC uses `getSessionFile() ?? getSessionId()`. `src/index.ts` now supplies that RPC identity to the existing common preflight/ceiling adapter. **Workflow ownership / root clarification retain the UUID**. No guard relaxation, dependency patch/private import, historical evidence rebinding or blind relaunch is added. The dependency's ceiling documentation uses a UUID registration example, but its public lifecycle documentation describes the file-path-first execution identity; this compatibility correction follows the observed released RPC contract.
+
+`tests/runtime/integrations/launch-session.test.ts` first reproduced the persisted-session mismatch (1 failed / 1 passed), then passed for both persisted and ephemeral sessions. It covers production composition, unchanged ownership UUID, intersecting another owner's ceiling, and cleanup without removing that owner's policy. Focused launch/commands/ownership/package validation: **5 files / 81 tests PASS**. Final **`VITEST_MAX_WORKERS=1 pnpm check` PASS — typecheck / lint / format / 67 files / 947 tests**, 2026-10-06 04:03:02 JST test start, 590.91 seconds, exit 0. Typecheck/lint/format were rechecked after the documentation/comment updates; `git diff --check` PASS.
+
+Real Pi smoke **PASS**, recorded **2026-10-05T19:03:18.946Z**, new Herdr tab/pane **`wF:t3H` / `wF:p3W`**, Pi **0.99.1**, pi-subagents **0.74.0**. Actual production `/wf-new` in a **persisted** root session dispatched the product Scout once, read `cache.ts` / `failure.log`, persisted authoritative Scout evidence, and matched preflight/receipt/status digest `d73f038749c587b99311b881f84b7c0549ab106f2fd33aa71218a3dc30e608de`. Public launch status proved `disableAmbientExtensions:true`; terminal proof was observed / exit 0; exact receipt/full-output recovery succeeded with no redispatch. A deliberate root `read` attempt was denied exactly once, preserving Main ownership. Workspace file bytes were unchanged. No classifier grant was provided, so the subsequent `operator-attention-required` block is expected, not a launch failure. Root notification behavior was bounded by fixture instructions; general notification suppression/retry policy is not claimed. Raw report: `/tmp/pi-orchestrator-launch-ownership-smoke.json` (machine-local). Successful tab closed; temporary auth symlink removed.
+
+### Persisted-session reproduction (current harness)
+
+Use the existing `diagnosisFixture(authFile, "openai/gpt-6.1-sol")` with Node's `--experimental-transform-types`; it creates only disposable resources and an auth symlink. Set fixture root defaults to the same physical model / low thinking and disable retry/cache warming. Do not add fixture prompt workarounds, classifier consent or implementation authority. The historical run above used a deliberate Main negative probe; the current audit instead requires **zero** unsolicited Main tools after completion.
+
+```sh
+herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd <fixture-cwd> \
+  --label launch-ownership-regression --env PI_CODING_AGENT_DIR=<fixture-agentDir> --no-focus
+herdr agent start launch-ownership-regression --kind pi --pane <returned-paneId> -- \
+  --no-approve --no-extensions --no-skills --no-prompt-templates \
+  --session-dir <fixture-root>/sessions \
+  -e <repo>/node_modules/pi-subagents -e <repo>/src/index.ts \
+  -e <repo>/tests/platform/launch-ownership-smoke-extension.ts \
+  --model openai/gpt-6.1-sol --thinking low
+herdr agent prompt launch-ownership-regression \
+  '/wf-new Read-only evidence only: read cache.ts and failure.log, cite contents/lines, no writes/commands/approval, Scout under 1500 characters.'
+# Wait for Scout completion / expected classifier authorization block, then:
+herdr agent prompt launch-ownership-regression \
+  '/launch-ownership-audit /tmp/pi-orchestrator-launch-ownership-smoke.json'
+# Verify report.status and exact receipt/terminal evidence, then close only this tab.
+herdr tab close <returned-tabId>
+```
+
+Unlike earlier ephemeral smoke, **do not pass `--no-session`**: it hides this identity mismatch. This smoke covers Scout/launch/Main ownership only, not full lifecycle, live classifier, Worker, Human Gates, or recovery of the operator's previously mismatched workflow. Existing workflow State/Artifacts and operator settings are untouched; release evidence / CHANGELOG / Issue status are unchanged.
+
+## Installed execution-owner follow-up — normal npm installation
+
+A fresh operator session proved that the UUID/file-path correction worked: Scout reads succeeded with `denyExtensions:true`. It still blocked because local-dependency preflight digest `60f7db6a7b720265e201f944ac94949854c33d1f6ec9006cf8b351a9da7ca6c4` differed from installed-owner receipt `2836a5244258aa90455f676484d302664ca420eef0aeb15510551bc5e445702c`. Side-effect-free public preflight reproduced the historical digest exactly. Runtime extension bytes were identical, but path identities differed: local `sha256:9e79f1b024737c87`, installed `sha256:d7cf1cb3f6d46c4d`. The original smoke forced one local copy and therefore did not cover this normal installation condition.
+
+- `subagent-launch.ts` now uses the actual registered `subagent` / `subagents_enable` owner from public Pi `SourceInfo.path` / `baseDir`, the released package's public `./preflight` export, and its supported **0.74.0** version. Missing/conflicting/synthetic owners or unsupported exports fail before dispatch; production never silently falls back to the local copy. No private import, third-party patch, extra dependency or operator configuration change is used. Reading the declared export is necessary because the bundled Pi host's module resolver did not resolve the installed package self-reference via `createRequire`.
+- The same selected public API performs initial and model/thinking-pinned preflight. Existing policy validation, durability-before-dispatch, launch revalidation and exact receipt digest checks remain unchanged. Paths/credentials are not added to durable launch projection.
+- Main's public `context` hook now supplies transient current ownership/phase and explicit no-retry/no-takeover guidance for **every** model request, including native completion wakes. Startup checks alone did not convey this state to the wake. This explanation is not permission; `tool_call` / `user_bash` remain the enforcement boundary. Only exact owned clarification requests in `clarifying` may use the existing bridge. No stale restriction is retained after terminal release.
+- Existing operator Workflow State/Artifacts, global settings, project settings and Jev grant are untouched. Classifier workspace authorization is a separate later prerequisite, not repaired by inference or silent external-data consent.
+
+Focused validation: **6 files / 117 tests PASS**. New cases cover loaded-owner API selection with the role ceiling/profile intact, standalone inspection, missing/conflicting/synthetic owners and missing exports with zero dispatch, request-local gathering/blocked context and removal after terminal release. Final **`VITEST_MAX_WORKERS=1 pnpm check` PASS — typecheck / lint / format / 67 files / 954 tests**, 2026-10-06 10:22:48 JST test start, 622.57 seconds, exit 0. Typecheck/lint/format and `git diff --check` were also rechecked after the final documentation updates. No test deadline or safety assertion is relaxed.
+
+Real Pi **PASS**, recorded **2026-10-06T01:16:00.889Z**, new Herdr tab/pane **`wF:t3M` / `wF:p3Z`**, Pi **0.99.1** / pi-subagents **0.74.0**. Disposable user settings declared **`npm:pi-subagents`**; a fixture-only installation symlink used the operator's already-installed npm copy without modifying it or global settings. Production `/wf-new` in a persisted session dispatched the real product Scout once, read both canary files, and matched launch/receipt/status digest `aff21b268929c93858db5367aafaaf8adb7249a66e30dfc81af67a79dd27756d`. Ambient extensions were denied; terminal proof was observed / exit 0; exact full-output recovery succeeded without redispatch; workspace source/log bytes were unchanged. Main received ownership context through the native completion wake and used **zero tools**, with **no fixture prompt workaround**. The captured context was `gathering-context` at request time; the driver subsequently persisted the expected no-classifier-grant `operator-attention-required` block. The audit binds context to the exact workflow rather than incorrectly requiring its request-time phase to equal the later final phase. Raw report: `/tmp/pi-orchestrator-installed-owner-verified-smoke.json` (machine-local). Test tabs closed and temporary auth/package symlinks removed.
+
+Initial real-host attempts exposed bundled-host `createRequire` resolution failure (proven **not-dispatched**), a startup-section hint that did not reach the native wake, and an over-strict audit phase expectation. These were not reported as PASS; the final public-export lookup, per-request context and fresh smoke above validate the corrected paths. Recovery of the first disposable non-dispatched attempt used normal `/wf-resume`; no unknown Worker or operator workflow was retried. An interim all-suite run hit the existing 5-second Human Code Feedback E2E timeout (953 passed / 1 failed), followed by a cleanup `ENOTEMPTY` while its timed-out operation was still writing. That run was not counted as PASS. The exact test passed unchanged in focused revalidation (**1 passed / 41 skipped**, 5.08 seconds including startup), and the final complete check passed **954/954** above, without widening that deadline.
+
+### Installed-owner smoke reproduction
+
+Use the same disposable Diagnosis fixture, add `npm:pi-subagents` to its user `packages`, and link the existing installed npm package into `<fixture-agentDir>/npm/node_modules/pi-subagents` only for this isolated installation. Do not copy credentials or add AGENTS/prompt suppression. Keep the persisted-session, model and no-classifier-grant settings above. Start a new Herdr tab as above, but let normal package discovery load pi-subagents:
+
+```sh
+herdr agent start installed-owner-verified --kind pi --pane <returned-paneId> -- \
+  --no-approve --no-skills --no-prompt-templates --session-dir <fixture-root>/sessions \
+  -e <repo>/src/index.ts -e <repo>/tests/platform/launch-ownership-smoke-extension.ts \
+  --model openai/gpt-6.1-sol --thinking low
+# No --no-extensions and no -e <repo>/node_modules/pi-subagents.
+herdr agent prompt installed-owner-verified \
+  '/wf-new Read-only evidence only: read cache.ts and failure.log, cite contents/lines, no writes/commands/approval, Scout under 1500 characters.'
+# After native Scout completion / Main settlement:
+herdr agent prompt installed-owner-verified \
+  '/launch-ownership-audit /tmp/pi-orchestrator-installed-owner-verified-smoke.json'
+```
+
+Verify `status:passed`, matching digests, terminal proof, `ownerSource.source:npm:pi-subagents`, `mainToolCalls:0` and `fixturePromptWorkaround:false`, then close only this test tab and remove its temporary auth/package symlinks. Full classifier/Worker/Human Gate lifecycle and automatic adoption of old mismatched attempts are not claimed.
