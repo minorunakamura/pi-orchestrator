@@ -133,6 +133,7 @@ test.each(["explicit", "installed"])(
         "session_shutdown",
         "session_start",
         "before_agent_start",
+        "context",
         "tool_call",
         "user_bash",
       ]);

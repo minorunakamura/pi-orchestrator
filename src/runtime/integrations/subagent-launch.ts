@@ -1,5 +1,7 @@
 import { readFile, realpath } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { isAbsolute, join, resolve } from "node:path";
+import { isRecord } from "../../core/schema.ts";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { KnownApi } from "@earendil-works/pi-ai";
 import {
@@ -49,6 +51,7 @@ export function physicalModelSnapshot(
 
 /** Public host snapshots, never credentials or raw settings. */
 export interface AgentLaunchHost {
+  /** RPC/ceiling identity: getSessionFile() ?? getSessionId(), not Workflow ownership. */
   sessionId: string;
   projectTrusted: boolean;
   availableModels: ReadonlyArray<{
@@ -72,6 +75,73 @@ export type LaunchResolver = (
     sessionDir?: string;
   },
 ) => Promise<AgentLaunchEvidence>;
+
+/** Resolve the public API from Pi's loaded execution owner, not this package's dependency copy. */
+async function hostPreflight(host: AgentLaunchHost) {
+  // Standalone contract inspection/tests have no installed extension owner.
+  if (!host.runtimeSnapshotHost) return resolveSubagentLaunchContract;
+  const owners = (host.runtimeSnapshotHost.getAllTools?.() ?? [])
+    .filter((tool) => ["subagent", "subagents_enable"].includes(tool.name))
+    .map((tool) =>
+      "sourceInfo" in tool && isRecord(tool.sourceInfo) ? tool.sourceInfo : {},
+    );
+  const sources = new Set(owners.map((owner) => owner.path));
+  const roots = new Set(owners.map((owner) => owner.baseDir));
+  const [source] = sources;
+  const [baseDir] = roots;
+  if (
+    sources.size !== 1 ||
+    roots.size !== 1 ||
+    typeof source !== "string" ||
+    !isAbsolute(source) ||
+    typeof baseDir !== "string" ||
+    !isAbsolute(baseDir)
+  )
+    throw new SubagentNotDispatchedError(
+      "Loaded pi-subagents owner is unavailable or ambiguous",
+      {
+        diagnosticCode: "host-capability-unavailable",
+      },
+    );
+  const root = await realpath(baseDir);
+  const manifest: unknown = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
+  const entry =
+    isRecord(manifest) && isRecord(manifest.exports)
+      ? manifest.exports["./preflight"]
+      : undefined;
+  // 0.74.0 declares a default export target. Unknown export conditions are unsupported.
+  const target =
+    typeof entry === "string"
+      ? entry
+      : isRecord(entry)
+        ? entry.default
+        : undefined;
+  if (
+    !isRecord(manifest) ||
+    manifest.name !== "pi-subagents" ||
+    manifest.version !== "0.74.0" ||
+    typeof target !== "string" ||
+    !target.startsWith("./") ||
+    target.split("/").includes("..")
+  )
+    throw new SubagentNotDispatchedError(
+      "Loaded owner has no supported public preflight export",
+      { diagnosticCode: "host-capability-unavailable" },
+    );
+  const api: typeof import("pi-subagents/preflight") = await import(
+    pathToFileURL(resolve(root, target)).href
+  );
+  if (typeof api.resolveSubagentLaunchContract !== "function")
+    throw new SubagentNotDispatchedError(
+      "Loaded pi-subagents owner has no public preflight",
+      {
+        diagnosticCode: "host-capability-unavailable",
+      },
+    );
+  return api.resolveSubagentLaunchContract;
+}
 
 export async function resolveAgentLaunch(
   input: AgentRunRequest,
@@ -118,7 +188,8 @@ export async function resolveAgentLaunch(
     runtimeSnapshotHost: host.runtimeSnapshotHost,
     capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(host.sessionId),
   };
-  const result = await resolveSubagentLaunchContract(launchInput);
+  const preflight = await hostPreflight(host);
+  const result = await preflight(launchInput);
   if (!result.ok)
     throw new SubagentNotDispatchedError("Agent preflight failed", {
       diagnosticCode: result.code,
@@ -127,7 +198,7 @@ export async function resolveAgentLaunch(
   // RPC pins thinking in the model suffix. Resolve that exact transport too,
   // rather than compare an ambient candidate list to a physical dispatch.
   if (c.model && c.thinking) {
-    const pinned = await resolveSubagentLaunchContract({
+    const pinned = await preflight({
       ...launchInput,
       model: `${c.model.replace(/:(off|minimal|low|medium|high|xhigh|max)$/u, "")}:${c.thinking}`,
     });

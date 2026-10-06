@@ -88,6 +88,25 @@ export function registerWorkflowOwnership(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (_event, ctx) => {
     await inspect(ctx);
   });
+  // Completion wakes need request-local context, not only ordinary startup checks.
+  // This transient explanation is not authority; tool_call still enforces the boundary.
+  pi.on("context", async (event, ctx) => {
+    const owners = await inspect(ctx);
+    if (!owners.length) return undefined;
+    const state = owners.length === 1 ? owners[0] : undefined;
+    return {
+      messages: [
+        ...event.messages,
+        {
+          role: "custom" as const,
+          customType: "orchestrator-ownership-context",
+          display: false,
+          timestamp: Date.now(),
+          content: `Active Workflow owns this workspace. Current controller state: ${JSON.stringify(state ? { workflowId: state.workflowId, phase: state.phase, reason: state.block?.reason } : { conflict: true })}. You are Main, not Worker. Background child completion is evidence for the controller, not a request to implement or take over. Raw tools (including read, bash, children, MCP and questions) are denied. Do not try or retry them, guess requestHash, or infer approval. Human chat remains available; report this state and stop when blocked. The Human may use /wf-status. Only during clarifying, follow the exact Orchestrator-owned request using wf_clarification_round / wf_clarification_complete; without that request, do not initiate clarification or invent answers. This status grants no mutation or Human Gate authority.`,
+        },
+      ],
+    };
+  });
   pi.on("tool_call", async (event, ctx) => {
     try {
       const owners = await inspect(ctx);
@@ -103,7 +122,7 @@ export function registerWorkflowOwnership(pi: ExtensionAPI) {
       return {
         block: true,
         reason:
-          "Active workflow owns this workspace; Main tools cannot implement or launch bypass children. Human interaction remains available; use the orchestrator clarification bridge.",
+          "Active workflow owns this workspace; Main tools cannot implement or launch bypass children. Do not retry tools. Human interaction and /wf-status remain available; the clarification bridge requires phase=clarifying and an exact owned request.",
       };
     } catch {
       return {

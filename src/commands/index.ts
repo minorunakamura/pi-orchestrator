@@ -136,7 +136,10 @@ export function parseWorkflowTask(
   };
 }
 
-export function parseWorkflowId(args: string): string {
+export function parseWorkflowId(
+  args: string,
+  command: "wf-resume" | "wf-status" = "wf-resume",
+): string {
   const values = args.trim().split(/\s+/u).filter(Boolean);
   const workflowId = values[0];
   if (
@@ -144,9 +147,7 @@ export function parseWorkflowId(args: string): string {
     !workflowId ||
     !workflowIdPattern.test(workflowId)
   ) {
-    throw new WorkflowCommandInputError(
-      "Usage: /wf-resume <workflow-id> (a safe non-empty path segment)",
-    );
+    throw new WorkflowCommandInputError(`Usage: /${command} <workflow-id>`);
   }
   return workflowId;
 }
@@ -261,7 +262,7 @@ export function registerWorkflowCommands(
     description: "Show workflow status",
     handler: async (args, context) =>
       runCommand(context, async () => {
-        const workflowId = parseWorkflowId(args);
+        const workflowId = parseWorkflowId(args, "wf-status");
         const runtime = commandRuntime(context, options);
         const state = await runtime.loadState(workflowId);
         if (state.workflowId !== workflowId) {
