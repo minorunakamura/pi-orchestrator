@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
+import { KETCH_REPOSITORY, KETCH_REVISION } from "./research-fixture.ts";
 
 export const QUESTION_SOURCE_REVISION =
   "0a6ad2c5fd7f79ceccb51bc791c10554789bdbd2";
@@ -14,6 +15,7 @@ export async function clarificationFixture(
   model: string,
   checkout: string,
   skillsDirectory: string,
+  researchCheckout?: string,
 ) {
   const origin = (
     await exec("git", ["remote", "get-url", "origin"], { cwd: checkout })
@@ -49,11 +51,42 @@ export async function clarificationFixture(
   const archivePath = join(root, "question.tar");
   await writeFile(archivePath, archive.stdout);
   await exec("tar", ["-xf", archivePath, "-C", questionPackage]);
+  let researchPackage: string | undefined;
+  if (researchCheckout) {
+    const git = async (...args: string[]) =>
+      (await exec("git", args, { cwd: researchCheckout })).stdout.trim();
+    assert.equal(
+      (await git("remote", "get-url", "origin")).replace(/\.git$/u, ""),
+      KETCH_REPOSITORY,
+    );
+    assert.equal(await git("rev-parse", "HEAD"), KETCH_REVISION);
+    await git("diff", "--exit-code", KETCH_REVISION, "--", ".");
+    researchPackage = join(root, "research-package");
+    await mkdir(researchPackage);
+    const researchArchive = await exec("git", ["archive", KETCH_REVISION], {
+      cwd: researchCheckout,
+      encoding: "buffer",
+      maxBuffer: 10000000,
+    });
+    const path = join(root, "research.tar");
+    await writeFile(path, researchArchive.stdout);
+    await exec("tar", ["-xf", path, "-C", researchPackage]);
+  }
   await symlink(resolve(authFile), join(agentDir, "auth.json"));
   await writeFile(
     join(agentDir, "settings.json"),
     JSON.stringify({
       packages: [
+        ...(researchPackage
+          ? [
+              {
+                source: researchPackage,
+                extensions: [],
+                skills: [],
+                prompts: [],
+              },
+            ]
+          : []),
         {
           source: resolve(import.meta.dirname, "../.."),
           extensions: [],
@@ -81,6 +114,9 @@ export async function clarificationFixture(
     agentDir,
     cwd,
     questionPackage,
+    ...(researchPackage
+      ? { researchPackage, researchRevision: KETCH_REVISION }
+      : {}),
     questionRevision: QUESTION_SOURCE_REVISION,
   };
 }

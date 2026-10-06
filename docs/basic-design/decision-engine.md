@@ -67,6 +67,8 @@ Research → Clarification → Architecture are resolved sequentially, after pre
 
 Persist stage/policy/input identity + raw result/confidence + effective policy outcome before stage side effects。Low confidence, invalid result, missing critical evidence or contradictory policy → ESCALATE/Human attention or integration block, never silent SKIP。Jev cannot override required/skip。
 
+Research の valid low-confidence RUN/SKIP または explicit ESCALATE は、元の判定を保存してから root Human に RUN / SKIP / HOLD を確認する（#47）。Confidence が閾値と等しい場合は自動採用し、閾値未満を Research 不要と扱わない。Intent → State → public questionnaire → exact answer → State → Human-resolved decision → State の順で保存する。RUN は Research → Clarification 判定、SKIP は Clarification 判定へ継続し、HOLD/cancel/unavailable/pending result loss は停止を維持する。Product questions は後続 Clarification、Plan/Code approval は mandatory Gates の責務。Clarification/Architecture の ESCALATE はこの Research-only selection で解決しない。
+
 Architecture RUN asks Planner for Architecture / Design evidence/content; it does not dispatch an independent mandatory architect or give classifier authority to design。
 
 ## 5. Clarification mode

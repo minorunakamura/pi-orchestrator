@@ -107,6 +107,70 @@ test("Diagnosis publication requires Scout and bugfix/hotfix; cannot replace evi
     expect(transition(invalid, event).ok).toBe(false);
 });
 
+test("Research Human evidence requires exact intent/source and cannot replace other or later stage authority", () => {
+  const state = initialState();
+  state.planning.context.scoutRef = ref("scout", "context/scout.md");
+  state.planning.stageDecisionRefs = {};
+  const original = ref("conditional-stage", "decisions/research.json");
+  const intent = ref("conditional-stage", "decisions/research-intent.md");
+  const answer = ref("conditional-stage", "decisions/research-answer.md");
+  const resolved = ref("conditional-stage", "decisions/research-human.md");
+  const routed = apply(state, {
+    type: "STAGE_RESOLVED",
+    stage: "research",
+    decisionRef: original,
+    required: false,
+  });
+  const pending = apply(routed, {
+    type: "RESEARCH_SELECTION_PERSISTED",
+    selectionRef: intent,
+  });
+  const answered = apply(pending, {
+    type: "RESEARCH_SELECTION_PERSISTED",
+    selectionRef: answer,
+    previousSelectionRef: intent,
+  });
+  const event = {
+    type: "STAGE_RESOLVED",
+    stage: "research",
+    decisionRef: resolved,
+    previousDecisionRef: original,
+    required: true,
+  } as const;
+  expect(apply(answered, event).planning.researchRequired).toBe(true);
+  expect(transition(routed, event).ok).toBe(false);
+  expect(
+    transition(pending, {
+      type: "RESEARCH_SELECTION_PERSISTED",
+      selectionRef: answer,
+    }).ok,
+  ).toBe(false);
+  expect(
+    transition(answered, { ...event, previousDecisionRef: resolved }).ok,
+  ).toBe(false);
+  expect(transition(answered, { ...event, stage: "clarification" }).ok).toBe(
+    false,
+  );
+  const later = {
+    ...answered,
+    planning: {
+      ...answered.planning,
+      stageDecisionRefs: {
+        ...answered.planning.stageDecisionRefs,
+        clarification: original,
+      },
+    },
+  };
+  expect(transition(later, event).ok).toBe(false);
+  expect(
+    transition(later, {
+      type: "RESEARCH_SELECTION_PERSISTED",
+      selectionRef: intent,
+      previousSelectionRef: answer,
+    }).ok,
+  ).toBe(false);
+});
+
 const planRef = ref("plan", "plans/plan-v1.md");
 const planV2Ref = ref("plan", "plans/plan-v2.md");
 const reviewRef = ref("plan-review", "plan-reviews/review-1.md");

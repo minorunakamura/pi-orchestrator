@@ -138,6 +138,7 @@ interface PlanningState {
   stageDecisionRefs: Partial<Record<ConditionalStage, ArtifactRef<"conditional-stage">>>;
   clarificationModeRef?: ArtifactRef<"clarification-mode">;
   developmentMethodRef?: ArtifactRef<"development-method">;
+  researchSelectionRef?: ArtifactRef<"conditional-stage">; // Research-only root Human intent/answer, not Plan approval
   agentAttempts: Record<string, AgentAttemptBinding>;
   cycleId: string;
   automaticRefinementsUsed: 0 | 1;
@@ -161,6 +162,8 @@ interface PlanReviewBinding {
 #16 の Development Intent はcapture済みのHuman request / behavior-free scope declarationであり、methodのapprovalやexecution authorityではない。Absent legacy intentは自動的にAUTOに変換しない。Method decisionとapproved Test Seamsはimmutable evidence / exact Plan bindingが所有する（[実装と制限](../implementation/development-method.md)）。
 
 Stage decisions are resolved sequentially against accumulated refs, not all once at start。Required/skip outcomes are deterministic, conditional is classifier-bound。Persisted old researchRequired/clarificationRequired/architectureRequired booleans cannot substitute for this evidence-driven contract。
+
+Research ESCALATE の Human resolution (#47) は `researchSelectionRef` と resolved decision の `humanResearchSelectionRef` による exact answer → intent → original decision chain を要求する。`STAGE_RESOLVED.previousDecisionRef` は Research のみ、exact current source / Human selection / no later-stage authority を検証して差し替える。元 raw decision/confidence/accounting/digests は保持し、Human answer を synthetic confidence=1 としない。HOLD は未解決、RUN/SKIP は Research necessity のみを決定する。
 
 PLAN_CREATED updates current Plan version/ref and clears approval/current review/simplicity, but preserves same-cycle refinement consumption。PLAN_REVIEW_READY requires fresh simplicity and valid method/Test Seams; only then await Human。Plan feedback/replan/deviation starts a new cycle; history remains immutable。
 
@@ -239,7 +242,8 @@ These are the canonical names used by [State Machine §3](../basic-design/state-
 export type WorkflowEvent =
   | { type: "SCOUT_PERSISTED"; scoutRef: ArtifactRef<"scout"> }
   | { type: "DIAGNOSIS_PERSISTED"; diagnosisRef: ArtifactRef<"diagnosis"> }
-  | { type: "STAGE_RESOLVED"; stage: ConditionalStage; decisionRef: ArtifactRef<"conditional-stage"> }
+  | { type: "RESEARCH_SELECTION_PERSISTED"; selectionRef: ArtifactRef<"conditional-stage">; previousSelectionRef?: ArtifactRef<"conditional-stage"> }
+  | { type: "STAGE_RESOLVED"; stage: ConditionalStage; decisionRef: ArtifactRef<"conditional-stage">; previousDecisionRef?: ArtifactRef<"conditional-stage">; required: boolean }
   | { type: "CLARIFICATION_ROUTED"; modeRef: ArtifactRef<"clarification-mode"> }
   | { type: "CONTEXT_READY" }
   | { type: "CLARIFICATION_REQUIRED"; reasonRef?: ArtifactRef; modeRef: ArtifactRef<"clarification-mode"> }

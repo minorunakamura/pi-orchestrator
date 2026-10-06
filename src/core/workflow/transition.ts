@@ -180,10 +180,29 @@ function applyTransition(
           "STAGE_RESOLVED requires the sequential planning phase and Scout evidence",
         );
       if (
+        event.previousDecisionRef !== undefined &&
+        (event.stage !== "research" ||
+          !sameArtifactRef(
+            state.planning.stageDecisionRefs?.research,
+            event.previousDecisionRef,
+          ) ||
+          !state.planning.researchSelectionRef ||
+          state.planning.context.researchRef ||
+          state.planning.stageDecisionRefs?.clarification ||
+          state.planning.approvedPlanRef)
+      )
+        fail(
+          "Research resolution requires exact preceding decision and Human selection before later stages",
+        );
+      if (
         next.planning.stageDecisionRefs[event.stage] &&
         !sameArtifactRef(
           next.planning.stageDecisionRefs[event.stage],
           event.decisionRef,
+        ) &&
+        !sameArtifactRef(
+          next.planning.stageDecisionRefs[event.stage],
+          event.previousDecisionRef,
         )
       )
         fail(
@@ -199,6 +218,26 @@ function applyTransition(
       next.planning[`${event.stage}Required`] = event.required;
       return next;
     }
+
+    case "RESEARCH_SELECTION_PERSISTED":
+      if (
+        state.phase !== "gathering-context" ||
+        !state.planning.stageDecisionRefs?.research ||
+        state.planning.stageDecisionRefs.clarification ||
+        state.planning.context.researchRef ||
+        state.planning.approvedPlanRef ||
+        (state.planning.researchSelectionRef
+          ? !sameArtifactRef(
+              state.planning.researchSelectionRef,
+              event.previousSelectionRef,
+            )
+          : event.previousSelectionRef !== undefined)
+      )
+        fail(
+          "Research selection requires exact preceding intent and no later-stage authority",
+        );
+      next.planning.researchSelectionRef = event.selectionRef;
+      return next;
 
     case "DEVELOPMENT_METHOD_SELECTION_PERSISTED":
       if (

@@ -766,6 +766,58 @@ describe("ORCH-019 workflow commands", () => {
     }
   });
 
+  test("Research block reports raw decision, confidence and threshold in start/status/resume notifications", async () => {
+    const root = await mkdtemp(join(tmpdir(), "research-command-"));
+    const rpc = new FakeSubagentRpc((request, bus) => {
+      expect(request.agent).toBe("workflow-scout");
+      bus.receipt(request, "scout-1");
+      queueMicrotask(() =>
+        bus.complete(
+          request,
+          "scout-1",
+          "complete",
+          "Empty project; no external dependencies.",
+        ),
+      );
+    });
+    const client = new FakeJevDecisionClient();
+    const classify = client.routeStage.bind(client);
+    vi.spyOn(client, "routeStage").mockImplementation(
+      async (input, authorization) => ({
+        ...(await classify(input, authorization)),
+        confidence: 0.78,
+      }),
+    );
+    try {
+      const runtime = createWorkflowCommandRuntime(rpc, root, {
+        ownership: new WorkflowOwnership(root, "root-1"),
+        launchResolver: fakeLaunchResolver,
+        configuration: { ...defaults, jev: jevPolicy(root) },
+        jevDecisionClient: client,
+      });
+      const ctx = context(root);
+      const commands = registration(runtime);
+      await commands.get("wf-new")!.handler("Create a browser game", ctx);
+      const message = String(ctx.notify.mock.calls[0][0]);
+      expect(message).toContain(
+        "Research: Jev SKIP, confidence=0.78, autoDecisionThreshold=0.8",
+      );
+      expect(message).toContain("outcome=ESCALATE");
+      expect(ctx.notify.mock.calls[0][1]).toBe("warning");
+      const id = /Workflow ([a-f0-9-]+)/u.exec(message)![1];
+      await commands.get("wf-status")!.handler(id, ctx);
+      expect(String(ctx.notify.mock.calls[1][0])).toContain("confidence=0.78");
+      await commands.get("wf-resume")!.handler(id, ctx);
+      expect(String(ctx.notify.mock.calls[2][0])).toContain(
+        "autoDecisionThreshold=0.8",
+      );
+      expect(client.calls.routeStage).toHaveLength(1);
+      expect((await runtime.loadState(id)).playbook).toBe("new-project");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("renders runtime failures without exposing credentials", async () => {
     const commandRuntime = makeRuntime({
       resume: vi.fn(async () => {

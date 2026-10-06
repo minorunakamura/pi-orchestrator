@@ -65,6 +65,7 @@ export interface WorkflowStatusRefs {
 }
 
 export interface WorkflowStatusProjection {
+  routingDiagnostic?: string;
   workflowId: string;
   playbook: WorkflowState["playbook"];
   phase: WorkflowPhase;
@@ -254,6 +255,7 @@ function lifecycleStatus(phase: WorkflowPhase): WorkflowLifecycleStatus {
 }
 
 export interface WorkflowStatusEvidence {
+  routingDiagnostic?: string;
   worker?: WorkerIdentityProjection;
   reconciliationRef?: ArtifactRef<"reconciliation">;
 }
@@ -320,6 +322,9 @@ export function projectWorkflowStatus(
   };
 
   return {
+    ...(evidence.routingDiagnostic
+      ? { routingDiagnostic: evidence.routingDiagnostic }
+      : {}),
     workflowId: state.workflowId,
     playbook: state.playbook,
     phase: state.phase,
@@ -439,6 +444,7 @@ export function renderWorkflowStatus(
           `blocked evidence: ${formatRef(projection.blocked.evidenceRef)}`,
         ]
       : []),
+    ...(projection.routingDiagnostic ? [projection.routingDiagnostic] : []),
     ...(projection.failed
       ? [
           `failed reason: ${projection.failed.reason}`,

@@ -44,6 +44,12 @@ Diagnosis report は observed symptom、expected behavior（unknown は null）�
 
 Hotfix は `within-scope` assessment のときだけ先へ進み、Architecture は SKIP。`scope-exceeded` / `unknown` は Diagnosis を durable に残して Human/operator attention で止める。Human が明示的に reclassify/replan する必要があり、runtime が playbook/scope を自動変更しない。Diagnosis assessment は Human scope/architecture decision や Plan approval を代替しない。[実装・acceptance coverage・検証記録](../implementation/diagnosis.md)。
 
+### 2.2 Research Human resolution (#47)
+
+Research-only の valid low confidence / explicit ESCALATE は、public root `ask_user_question` による RUN / SKIP / HOLD 選択で解決できる。質問には raw value / confidence / configured auto threshold を表示する。`researchSelectionRef` は exact original decision / workflow / canonical project / root session / request ID / source revision / questions に bind した pending・answered・cancelled evidence。Intent/State は UI 前、answer/State と resolved decision/State は次 side effect 前に保存する。Original classifier decision/accounting/input/policy/config digests は immutable のまま、resolved Research の `humanResearchSelectionRef` から complete chain を検証し、current consent/configuration/freshness を再検証してから続行する。
+
+Human RUN → Research 完了 → Clarification 判定、Human SKIP → Clarification 判定。HOLD/cancel/unavailable/invalid/pending result loss は operator attention を維持し blind re-ask しない。既存 Research ESCALATE block は explicit `/wf-resume` から、保存済み有効 answer は再質問・classifier/Scout rerun なしで再利用する。新しい phase / generic stage resolution / Main raw-tool exception は追加しない。Product decisions は後続 Clarification、implementation authority は mandatory Human Plan Gate のまま。[実装・検証記録](../implementation/research-selection.md)。
+
 ## 3. Clarification production bridge
 
 | Mode | Required execution |

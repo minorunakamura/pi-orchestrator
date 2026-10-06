@@ -1,3 +1,4 @@
+import { humanResearchOutcome, selectResearch } from "./research-selection.ts";
 import { verifyClarificationDocuments } from "./clarification.ts";
 import {
   humanMethodOutcome,
@@ -388,6 +389,27 @@ export class PlanningRouting {
             this.deps.humanQuestionPort?.rootSessionId,
           );
         }
+        if (artifact.humanResearchSelectionRef) {
+          if (
+            effective !== "ESCALATE" ||
+            !sameArtifactRef(
+              artifact.humanResearchSelectionRef,
+              state.planning.researchSelectionRef,
+            ) ||
+            !this.deps.humanQuestionPort?.rootSessionId ||
+            this.deps.humanQuestionPort.projectRoot !== state.projectRoot
+          )
+            attention(
+              "Human Research selection cannot override an accepted decision or changed root identity",
+            );
+          effective = await humanResearchOutcome(
+            this.deps.artifactStore,
+            artifact,
+            state,
+            threshold,
+            this.deps.humanQuestionPort.rootSessionId,
+          );
+        }
         if (
           effective !== artifact.outcome ||
           (family === "stage" &&
@@ -585,6 +607,28 @@ export class PlanningRouting {
               },
         this.deps.stateStore,
       );
+    }
+    if (
+      artifact.family === "stage" &&
+      stage === "research" &&
+      artifact.outcome === "ESCALATE" &&
+      !reuseOnly &&
+      this.deps.humanQuestionPort
+    ) {
+      try {
+        const selected = await selectResearch(state, artifact, this.deps);
+        // Revalidate current consent/configuration and the complete Human chain before dispatch.
+        return await this.resolve(selected.state, stage, family, true);
+      } catch (error) {
+        if (error instanceof PlanningRoutingStoppedError) throw error;
+        state = this.deps.loadState ? await this.deps.loadState() : state;
+        if (state.workflowId !== source.workflowId)
+          throw Error("Human Research workflow identity changed", {
+            cause: error,
+          });
+        if (state.phase !== "gathering-context")
+          throw new PlanningRoutingStoppedError(state);
+      }
     }
     if (
       artifact.family === "method" &&
