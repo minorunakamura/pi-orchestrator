@@ -687,6 +687,85 @@ describe("ORCH-019 workflow commands", () => {
     }
   });
 
+  test("automatic clarification continuation reports a genuine persisted block, not just thrown errors", async () => {
+    const workflow = await phaseCWorkflow({ clarification: true });
+    try {
+      const owner = new WorkflowOwnership(workflow.repositoryCwd, "root-1");
+      await owner.initialize(await workflow.load(), workflow.stateStore);
+      const onContinuationResult = vi.fn();
+      const onContinuationError = vi.fn();
+      const client = new FakeJevDecisionClient({ method: "ESCALATE" });
+      const runtime = createWorkflowCommandRuntime(
+        workflow.events,
+        workflow.repositoryCwd,
+        {
+          ownership: owner,
+          launchResolver: fakeLaunchResolver,
+          configuration: workflow.configuration,
+          jevDecisionClient: client,
+          clarificationPort: {
+            setup: async () => ({ rootSessionId: "root-1", skills: [] }),
+            request: async () => ({ status: "pending" }),
+          },
+          onContinuationResult,
+          onContinuationError,
+        },
+      );
+      const waiting = await runtime.resume("full-fake");
+      const requestHash =
+        waiting.state.planning.clarificationRequestRef!.sha256;
+      await runClarificationRound(
+        waiting.state,
+        workflow,
+        {
+          requestHash,
+          rootSessionId: "root-1",
+          summary: "All requirements settled.",
+        },
+        async (_id, questions) => ({
+          status: "answered",
+          questions,
+          cancelled: false,
+          answers: { [questions[0].question]: "Confirm" },
+          selections: [
+            {
+              question: questions[0].question,
+              header: "Confirm",
+              value: "Confirm",
+              labels: ["Confirm"],
+              selectedIndices: [1],
+            },
+          ],
+        }),
+      );
+      workflow.events.deliver(CLARIFICATION_COMPLETE_EVENT, {
+        workflowId: "full-fake",
+        requestHash,
+      });
+      await vi.waitFor(
+        () => expect(onContinuationResult).toHaveBeenCalledTimes(1),
+        { timeout: 10000 },
+      );
+      expect(onContinuationResult.mock.calls[0][0]).toMatchObject({
+        status: "blocked",
+        phase: "blocked",
+        reason: "operator-attention-required",
+      });
+      expect((await workflow.load()).phase).toBe("blocked");
+      expect(onContinuationError).not.toHaveBeenCalled();
+      expect(
+        workflow.children.filter((child) => child.agent === "worker"),
+      ).toHaveLength(0);
+      workflow.events.deliver(CLARIFICATION_COMPLETE_EVENT, {
+        workflowId: "full-fake",
+        requestHash,
+      });
+      expect(onContinuationResult).toHaveBeenCalledTimes(1);
+    } finally {
+      await workflow.cleanup();
+    }
+  });
+
   test("renders runtime failures without exposing credentials", async () => {
     const commandRuntime = makeRuntime({
       resume: vi.fn(async () => {

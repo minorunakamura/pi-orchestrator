@@ -96,6 +96,7 @@ export interface PlanningState {
   /** Captured Human intent; missing legacy intent is never inferred on resume. */
   developmentIntent?: DevelopmentIntent;
   developmentMethodRef?: ArtifactRef<"development-method">;
+  developmentMethodSelectionRef?: ArtifactRef<"development-method">;
   clarificationRequestRef?: ArtifactRef<"clarification">;
   clarificationProgressRef?: ArtifactRef<"clarification">;
   domainDocumentWriteRef?: ArtifactRef<"domain-document-write">;
@@ -245,6 +246,12 @@ export type WorkflowEvent =
   | {
       type: "DEVELOPMENT_METHOD_RESOLVED";
       methodRef: ArtifactRef<"development-method">;
+      previousMethodRef?: ArtifactRef<"development-method">;
+    }
+  | {
+      type: "DEVELOPMENT_METHOD_SELECTION_PERSISTED";
+      selectionRef: ArtifactRef<"development-method">;
+      previousSelectionRef?: ArtifactRef<"development-method">;
     }
   | { type: "DIAGNOSIS_PERSISTED"; diagnosisRef: ArtifactRef<"diagnosis"> }
   | {
@@ -402,6 +409,7 @@ function isPlanningState(value: unknown): value is PlanningState {
       "refinementReviewRef",
       "developmentIntent",
       "developmentMethodRef",
+      "developmentMethodSelectionRef",
       "clarificationRequestRef",
       "clarificationProgressRef",
       "domainDocumentWriteRef",
@@ -452,6 +460,9 @@ function isPlanningState(value: unknown): value is PlanningState {
       isOneOf(developmentIntents, intent),
     ) ||
     !optional(value, "developmentMethodRef", (ref) =>
+      isArtifactOfKind(ref, "development-method"),
+    ) ||
+    !optional(value, "developmentMethodSelectionRef", (ref) =>
       isArtifactOfKind(ref, "development-method"),
     ) ||
     !optional(value, "clarificationModeRef", (ref) =>
@@ -676,8 +687,19 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
       );
     case "DEVELOPMENT_METHOD_RESOLVED":
       return (
-        isEvent(value, ["type", "methodRef"]) &&
-        isArtifactOfKind(value.methodRef, "development-method")
+        isEvent(value, ["type", "methodRef", "previousMethodRef"]) &&
+        isArtifactOfKind(value.methodRef, "development-method") &&
+        optional(value, "previousMethodRef", (ref) =>
+          isArtifactOfKind(ref, "development-method"),
+        )
+      );
+    case "DEVELOPMENT_METHOD_SELECTION_PERSISTED":
+      return (
+        isEvent(value, ["type", "selectionRef", "previousSelectionRef"]) &&
+        isArtifactOfKind(value.selectionRef, "development-method") &&
+        optional(value, "previousSelectionRef", (ref) =>
+          isArtifactOfKind(ref, "development-method"),
+        )
       );
     case "CLARIFICATION_MODE_RESOLVED":
       return (

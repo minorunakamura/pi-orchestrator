@@ -101,6 +101,10 @@ Resume / next Fixではhistorical method ref、exact Plan/seams、selected skill
 
 Initial all-suite run failed on an obsolete request ordinal and an Oracle fixture whose new method resolution legitimately invalidated exact-State advice. Updated those fixtures without weakening assertions/freshness. Initial focused failure on a behavior-free fixture producing a contradictory TDD Plan was corrected in the fixture, not by allowing the reversed Plan.
 
+## Human method escalation follow-up (#45)
+
+The original #16 implementation persisted low-confidence / ESCALATE and blocked, but did not offer the Human choice. [Durable Human selection](./development-method-selection.md) connects the existing root questionnaire to method resolution, retains original classifier evidence, safely resumes old method blocks, and preserves both Gates / TDD seams / Worker skill validation. This follow-up's validation is separate from the historical #16 evidence below.
+
 ## Real Pi / actual Human Plan Gate / TDD Worker
 
 **PASS** — Pi **0.99.1**, pi-subagents **0.74.0**, Plannotator **0.27.16**, actual builtin Worker **openai/gpt-6.1-sol**, thinking **medium**。New Herdr tab / pane / Agent: **wF:t2P / wF:p20 / issue16-tdd-final**。Start **2026-10-03T09:40:40.531Z**、completed historical audit/Validation **2026-10-03T09:49:23.514Z**。

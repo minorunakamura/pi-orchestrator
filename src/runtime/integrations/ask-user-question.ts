@@ -19,6 +19,16 @@ export interface HumanReply {
   cancelled: boolean;
 }
 
+export interface HumanQuestionPort {
+  rootSessionId: string;
+  projectRoot: string;
+  ask(
+    requestId: string,
+    questions: HumanQuestion[],
+    signal?: AbortSignal,
+  ): Promise<HumanReply>;
+}
+
 export function normalizeHumanQuestions(value: unknown): HumanQuestion[] {
   if (
     !Array.isArray(value) ||

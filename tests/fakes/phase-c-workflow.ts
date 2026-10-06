@@ -69,6 +69,7 @@ export interface WorkflowScript {
   workerChanges?: Record<string, string | null>[];
   developmentIntent?: "AUTO" | "TDD" | "BEHAVIOR_FREE";
   method?: "STANDARD" | "TDD";
+  methodConfidence?: number;
   supportingSkills?: boolean;
   clarification?: boolean;
   rounds?: RoundReply[];
@@ -444,11 +445,17 @@ export async function phaseCWorkflow(script: WorkflowScript = {}) {
         decision: {
           type: "choice",
           choice: script.method ?? "STANDARD",
-          confidence: 0.99,
+          confidence: script.methodConfidence ?? 0.99,
           probabilities: {
-            STANDARD: script.method === "TDD" ? 0.005 : 0.99,
-            TDD: script.method === "TDD" ? 0.99 : 0.005,
-            ESCALATE: 0.005,
+            STANDARD:
+              script.method === "TDD"
+                ? (1 - (script.methodConfidence ?? 0.99)) / 2
+                : (script.methodConfidence ?? 0.99),
+            TDD:
+              script.method === "TDD"
+                ? (script.methodConfidence ?? 0.99)
+                : (1 - (script.methodConfidence ?? 0.99)) / 2,
+            ESCALATE: (1 - (script.methodConfidence ?? 0.99)) / 2,
           },
         },
       });

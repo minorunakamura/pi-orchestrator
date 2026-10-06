@@ -1,4 +1,12 @@
 import { createHash } from "node:crypto";
+import {
+  AskUserQuestionIntegration,
+  QUESTION_REQUEST_EVENT,
+  type HumanQuestionPort,
+  type HumanReply,
+} from "../../../src/runtime/integrations/ask-user-question.ts";
+import { developmentMethodQuestions } from "../../../src/runtime/orchestrator/development-method-selection.ts";
+import { FakeSubagentRpc } from "../../fakes/subagent-rpc.ts";
 import { diagnosisReport } from "../../fakes/diagnosis.ts";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -209,6 +217,7 @@ async function setup(script: Script = {}) {
     jevDecisionClient: client,
     cwd: root,
     loadState: () => stateStore.loadState(),
+    humanQuestionPort: undefined as HumanQuestionPort | undefined,
     plannotatorGate: {
       openPlanReview: async (input: {
         planRef: ArtifactRef<"plan">;
@@ -1098,3 +1107,331 @@ test.each(["artifact", "state"] as const)(
     expect(h.trace).not.toContain("human:plan");
   },
 );
+
+function methodReply(
+  method: "STANDARD" | "TDD",
+  status: HumanReply["status"] = "answered",
+): HumanReply {
+  const q = developmentMethodQuestions[0];
+  return {
+    status,
+    questions: developmentMethodQuestions,
+    cancelled: status !== "answered",
+    answers: status === "answered" ? { [q.question]: method } : {},
+    selections:
+      status === "answered"
+        ? [
+            {
+              question: q.question,
+              header: q.header,
+              value: method,
+              labels: [method],
+              selectedIndices: [method === "STANDARD" ? 1 : 2],
+            },
+          ]
+        : [],
+  };
+}
+
+function methodPort(
+  h: Awaited<ReturnType<typeof setup>>,
+  ask: HumanQuestionPort["ask"],
+): HumanQuestionPort {
+  return { rootSessionId: "root-method-session", projectRoot: h.root, ask };
+}
+
+const tddPlan = plan.replace(
+  "## Development Method\nSTANDARD",
+  "## Development Method\nTDD\n## Test Seams\n- public route(input): behavior assertion and controllable public dependency seam; regression cases.",
+);
+
+test.each([
+  {
+    method: "STANDARD" as const,
+    classifier: "STANDARD" as const,
+    confidence: 0.6,
+  },
+  { method: "TDD" as const, classifier: "STANDARD" as const, confidence: 0.6 },
+  {
+    method: "STANDARD" as const,
+    classifier: "ESCALATE" as const,
+    confidence: 0.99,
+  },
+  { method: "TDD" as const, classifier: "ESCALATE" as const, confidence: 0.99 },
+])(
+  "Human $method resolves $classifier/$confidence through public questionnaire and automatically reaches Plan Gate",
+  async ({ method, classifier, confidence }) => {
+    const h = await setup({
+      method: classifier,
+      methodConfidence: confidence,
+      plannerOutput: method === "TDD" ? tddPlan : plan,
+    });
+    const events = new FakeSubagentRpc();
+    const bus = new AskUserQuestionIntegration(events);
+    const emitted = events.emit.bind(events);
+    vi.spyOn(events, "emit").mockImplementation((event, payload) => {
+      emitted(event, payload);
+      if (event !== QUESTION_REQUEST_EVENT || !isRecord(payload)) return;
+      void (async () => {
+        const state = await h.load();
+        const selection = JSON.parse(
+          await h.deps.artifactStore.readText(
+            state.planning.developmentMethodSelectionRef!,
+          ),
+        );
+        expect(selection).toMatchObject({
+          status: "pending",
+          workflowId: "routing",
+          projectRoot: h.root,
+          rootSessionId: "root-method-session",
+          decisionRef: state.planning.developmentMethodRef,
+          requestId: payload.requestId,
+        });
+        expect(selection.questions).toEqual(payload.questions);
+        expect(h.trace).not.toContain("child:planner");
+        h.trace.push("human:method");
+        events.deliver(
+          `pi-ask-user-question:reply:${String(payload.requestId)}`,
+          {
+            version: 1,
+            requestId: payload.requestId,
+            success: true,
+            result: methodReply(method),
+          },
+        );
+      })();
+    });
+    h.deps.humanQuestionPort = methodPort(h, bus.ask.bind(bus));
+    const result = await h.drive();
+    expect(result.state.phase).toBe("awaiting-plan-review");
+    expect(result.state.planning.approvedPlanRef).toBeUndefined();
+    expect(result.state.coding.workerAttemptRef).toBeUndefined();
+    const resolved = await h.decision(
+      result.state.planning.developmentMethodRef!,
+    );
+    expect(resolved).toMatchObject({
+      family: "method",
+      outcome: method,
+      rawDecision: { value: classifier, confidence },
+      humanSelectionRef: result.state.planning.developmentMethodSelectionRef,
+    });
+    const answer = JSON.parse(
+      await h.deps.artifactStore.readText(resolved.humanSelectionRef!),
+    );
+    expect(answer).toMatchObject({
+      status: "answered",
+      reply: methodReply(method),
+    });
+    expect(await h.decision(answer.decisionRef)).toMatchObject({
+      outcome: "ESCALATE",
+    });
+    expect(h.trace.indexOf("human:method")).toBeLessThan(
+      h.trace.indexOf("child:planner"),
+    );
+    const calls = h.inputs.length;
+    const resumed = await resumeWorkflow("routing", {
+      ...h.deps,
+      plannotatorGate: {
+        ...h.deps.plannotatorGate,
+        getPlanReview: async () => ({
+          ...result.state.planning.planReview!,
+          status: "pending",
+        }),
+      },
+    });
+    expect(resumed.state.phase).toBe("awaiting-plan-review");
+    expect(
+      events.emitted.filter(({ event }) => event === QUESTION_REQUEST_EVENT),
+    ).toHaveLength(1);
+    expect(h.inputs).toHaveLength(calls);
+  },
+);
+
+test("explicit resume of a saved method ESCALATE asks once, retains confirmed requirements and does not rerun the classifier", async () => {
+  const h = await setup({ methodConfidence: 0.6 });
+  const blocked = await h.drive();
+  const inputs = h.inputs.length;
+  const ask = vi.fn(async () => methodReply("STANDARD"));
+  h.deps.humanQuestionPort = methodPort(h, ask);
+  const result = await resumeWorkflow("routing", h.deps);
+  expect(result.state.phase).toBe("awaiting-plan-review");
+  expect(result.state.planning.context).toEqual(blocked.state.planning.context);
+  expect(ask).toHaveBeenCalledTimes(1);
+  expect(h.inputs).toHaveLength(inputs);
+  expect(result.state.planning.approvedPlanRef).toBeUndefined();
+});
+
+test.each([
+  "user-cancelled",
+  "caller-aborted",
+  "shutdown",
+  "unavailable",
+  "invalid",
+] as const)(
+  "method %s never becomes consent and is not blindly re-asked on resume",
+  async (failure) => {
+    const h = await setup({ methodConfidence: 0.6 });
+    const ask = vi.fn(async () => {
+      if (failure === "unavailable") throw Error("Questionnaire unavailable");
+      const reply = methodReply(
+        "STANDARD",
+        failure === "invalid" ? "answered" : failure,
+      );
+      if (failure === "invalid") reply.selections = [];
+      return reply;
+    });
+    h.deps.humanQuestionPort = methodPort(h, ask);
+    const first = await h.drive();
+    expect(first.state.phase).toBe("blocked");
+    expect(first.state.planning.developmentMethodSelectionRef).toBeDefined();
+    expect(h.trace).not.toContain("child:planner");
+    const resumed = await resumeWorkflow("routing", h.deps);
+    expect(resumed.state.phase).toBe("blocked");
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(
+      await h.decision(resumed.state.planning.developmentMethodRef!),
+    ).toMatchObject({ outcome: "ESCALATE" });
+  },
+);
+
+test.each([
+  "intent-artifact",
+  "intent-state",
+  "answer-state",
+  "resolved-state",
+] as const)(
+  "Human method %s persistence barrier prevents the next side effect; saved answers recover without re-asking",
+  async (fault) => {
+    const h = await setup({ methodConfidence: 0.6 });
+    const ask = vi.fn(async () => methodReply("STANDARD"));
+    h.deps.humanQuestionPort = methodPort(h, ask);
+    let injected = false;
+    const write = h.deps.artifactStore.writeText.bind(h.deps.artifactStore);
+    vi.spyOn(h.deps.artifactStore, "writeText").mockImplementation(
+      async (kind, file, content) => {
+        if (
+          !injected &&
+          fault === "intent-artifact" &&
+          file.startsWith("method-selection-")
+        ) {
+          injected = true;
+          throw Error("intent fault");
+        }
+        return write(kind, file, content);
+      },
+    );
+    const save = h.deps.stateStore.saveState.bind(h.deps.stateStore);
+    vi.spyOn(h.deps.stateStore, "saveState").mockImplementation(
+      async (state, revision, options) => {
+        if (!injected && state.phase === "planning") {
+          const ref = state.planning.developmentMethodSelectionRef;
+          const selection =
+            ref && JSON.parse(await h.deps.artifactStore.readText(ref));
+          const methodRef = state.planning.developmentMethodRef;
+          const method = methodRef && (await h.decision(methodRef));
+          if (
+            (fault === "intent-state" && selection?.status === "pending") ||
+            (fault === "answer-state" && selection?.status === "answered") ||
+            (fault === "resolved-state" && method?.humanSelectionRef)
+          ) {
+            injected = true;
+            throw Error("State persistence fault");
+          }
+        }
+        return save(state, revision, options);
+      },
+    );
+    expect((await h.drive()).state.phase).toBe("blocked");
+    expect(h.trace).not.toContain("child:planner");
+    expect(ask).toHaveBeenCalledTimes(fault.startsWith("intent-") ? 0 : 1);
+    const resumed = await resumeWorkflow("routing", h.deps);
+    expect(resumed.state.phase).toBe(
+      fault === "answer-state" ? "blocked" : "awaiting-plan-review",
+    );
+    expect(ask).toHaveBeenCalledTimes(1);
+  },
+);
+
+test.each([
+  "session",
+  "project",
+  "workspace",
+  "state",
+  "answer-corruption",
+] as const)("Human method rejects %s drift before Planner", async (drift) => {
+  const h = await setup({ methodConfidence: 0.6 });
+  const ask = vi.fn(async () => {
+    if (drift === "state") {
+      const state = await h.load();
+      await h.deps.stateStore.saveState(
+        { ...state, stateRevision: state.stateRevision + 1 },
+        state.stateRevision,
+      );
+    }
+    return methodReply("STANDARD");
+  });
+  h.deps.humanQuestionPort = methodPort(h, ask);
+  if (drift === "session" || drift === "project") {
+    // Save an answered selection, fail only final publication, then resume under drifted identity.
+    const save = h.deps.stateStore.saveState.bind(h.deps.stateStore);
+    const saveSpy = vi
+      .spyOn(h.deps.stateStore, "saveState")
+      .mockImplementation(async (state, revision, options) => {
+        if (
+          state.phase === "planning" &&
+          state.planning.developmentMethodRef &&
+          (await h.decision(state.planning.developmentMethodRef))
+            .humanSelectionRef
+        )
+          throw Error("Stop before final State");
+        return save(state, revision, options);
+      });
+    await h.drive();
+    saveSpy.mockRestore();
+    if (drift === "session")
+      h.deps.humanQuestionPort.rootSessionId = "different-root";
+    else h.deps.humanQuestionPort.projectRoot = "/different-project";
+    expect((await resumeWorkflow("routing", h.deps)).state.phase).toBe(
+      "blocked",
+    );
+  } else if (drift === "workspace") {
+    let validations = 0;
+    await driveWorkflow("routing", {
+      ...h.deps,
+      ownership: {
+        validate: async (state) => {
+          if (
+            state.planning.developmentMethodSelectionRef &&
+            ++validations === 2
+          ) {
+            const { advanceWorkflow } = await import(
+              "../../../src/runtime/orchestrator/advance-workflow.ts"
+            );
+            return advanceWorkflow(
+              state,
+              { type: "BLOCK", reason: "operator-attention-required" },
+              h.deps.stateStore,
+            );
+          }
+          return state;
+        },
+      },
+    });
+  } else if (drift === "answer-corruption") {
+    const write = h.deps.artifactStore.writeText.bind(h.deps.artifactStore);
+    vi.spyOn(h.deps.artifactStore, "writeText").mockImplementation(
+      async (kind, file, content) => {
+        const ref = await write(kind, file, content);
+        if (
+          file.startsWith("method-selection-") &&
+          JSON.parse(content).status === "answered"
+        )
+          await writeFile(join(h.runDirectory, ref.path), "corrupt");
+        return ref;
+      },
+    );
+    await h.drive();
+  } else await h.drive();
+  expect(h.trace).not.toContain("child:planner");
+  expect((await h.load()).phase).toBe("blocked");
+});

@@ -7,6 +7,8 @@ import { parsePlan } from "../../../src/runtime/planning/plan-parser.ts";
 import { parseWorkerAttempt } from "../../../src/runtime/worker/attempt-evidence.ts";
 import { parsePlanningDecisionArtifact } from "../../../src/core/decisions/planning-routing.ts";
 import { validateWorkerStrategy } from "../../../src/runtime/worker/development-strategy.ts";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const fixtures: PhaseCWorkflow[] = [];
 afterEach(async () => {
@@ -74,6 +76,66 @@ test.each([false, true])(
     const validation = await h.validate();
     expect(validation.state.phase).toBe("reviewing");
     expect(h.validations).toEqual([plan.validationContract]);
+  },
+);
+
+test.each(["STANDARD", "TDD"] as const)(
+  "Human-selected %s binds the approved Worker strategy and rejects corrupted historical selection",
+  async (method) => {
+    const h = await phaseCWorkflow({ method, methodConfidence: 0.6 });
+    fixtures.push(h);
+    const pending = await h.drive({
+      humanQuestionPort: {
+        projectRoot: h.repositoryCwd,
+        rootSessionId: "root-method-worker",
+        ask: async (_id, questions) => ({
+          status: "answered",
+          questions,
+          cancelled: false,
+          answers: { [questions[0].question]: method },
+          selections: [
+            {
+              question: questions[0].question,
+              header: questions[0].header,
+              value: method,
+              labels: [method],
+              selectedIndices: [method === "STANDARD" ? 1 : 2],
+            },
+          ],
+        }),
+      },
+    });
+    expect(pending.state.phase).toBe("awaiting-plan-review");
+    expect(h.children.filter((child) => child.agent === "worker")).toHaveLength(
+      0,
+    );
+    await h.settlePlan();
+    const implemented = await h.implement();
+    const attempt = await h.artifactStore.readJson(
+      implemented.state.coding.workerAttemptRef!,
+      parseWorkerAttempt,
+    );
+    expect(attempt.launch?.policy.skills).toEqual(
+      method === "TDD" ? ["tdd"] : [],
+    );
+    await expect(
+      validateWorkerStrategy(h.artifactStore, implemented.state, attempt),
+    ).resolves.toMatchObject({ developmentMethod: method });
+    const selected = JSON.parse(
+      await h.artifactStore.readText(
+        implemented.state.planning.developmentMethodSelectionRef!,
+      ),
+    );
+    await writeFile(
+      join(h.artifactStore.rootDirectory, selected.intentRef.path),
+      "corrupted intent",
+    );
+    await expect(
+      validateWorkerStrategy(h.artifactStore, implemented.state, attempt),
+    ).rejects.toThrow(/hash|Hash/u);
+    expect(h.children.filter((child) => child.agent === "worker")).toHaveLength(
+      1,
+    );
   },
 );
 
